@@ -77,6 +77,33 @@
   <div id="panes">
     <div id="viewport">
       <div id="drop-hint" data-i18n="welcome.drop">Перетащите файл модели сюда</div>
+
+      <!-- Параметры выбранного инструмента: там же, где работает рука. -->
+      <div id="tool-options">
+        <div class="opt-group" data-for="rect ellipse">
+          <span class="opt-label" data-i18n="shape.kind">Вид</span>
+          <div class="seg">
+            <button class="btn on" id="shape-fill" data-i18n="shape.fill">заливка</button>
+            <button class="btn" id="shape-outline" data-i18n="shape.outline">контур</button>
+          </div>
+          <span class="opt-sep"></span>
+          <span class="opt-label" data-i18n="shape.thickness">Толщина</span>
+          <input type="range" id="shape-thickness" min="1" max="40" step="1" value="4">
+          <span class="val" id="shape-thickness-val">4 px</span>
+        </div>
+
+        <div class="opt-group" data-for="text">
+          <span class="opt-label" data-i18n="shape.text">Текст</span>
+          <input type="text" id="shape-text" class="opt-text" value="Текст" spellcheck="false">
+          <span class="opt-sep"></span>
+          <span class="opt-label" data-i18n="shape.family">Шрифт</span>
+          <select id="shape-family" class="opt-select"></select>
+          <span class="opt-sep"></span>
+          <span class="opt-label" data-i18n="shape.font">Кегль</span>
+          <input type="range" id="shape-font" min="12" max="400" step="2" value="96">
+          <span class="val" id="shape-font-val">96 px</span>
+        </div>
+      </div>
       <div id="shape-preview"></div>
 
       <!-- Управление видом поверх вьюпорта: там же, где смотришь. -->
@@ -234,33 +261,6 @@
           <canvas id="uv-preview"></canvas>
         </div>
         <label class="check-row"><input type="checkbox" id="uv-preview-wire" checked> <span data-i18n="uv.previewWire">сетка UV</span></label>
-      </div>
-    </section>
-
-    <section class="section" data-open="0" data-key="shape">
-      <h3><i class="chev"></i><span data-i18n="sec.shape">Фигуры и текст</span></h3>
-      <div class="body">
-        <div class="row wide">
-          <label data-i18n="shape.kind">Вид</label>
-          <div class="seg">
-            <button class="btn on" id="shape-fill" data-i18n="shape.fill">заливка</button>
-            <button class="btn" id="shape-outline" data-i18n="shape.outline">контур</button>
-          </div>
-        </div>
-        <div class="row">
-          <label data-i18n="shape.thickness">Толщина</label>
-          <input type="range" id="shape-thickness" min="1" max="40" step="1" value="4">
-          <span class="val" id="shape-thickness-val">4 px</span>
-        </div>
-        <div class="row wide">
-          <label data-i18n="shape.text">Текст</label>
-          <input type="text" id="shape-text" class="hex" value="Текст" spellcheck="false" style="text-transform:none">
-        </div>
-        <div class="row">
-          <label data-i18n="shape.font">Кегль</label>
-          <input type="range" id="shape-font" min="12" max="400" step="2" value="96">
-          <span class="val" id="shape-font-val">96 px</span>
-        </div>
       </div>
     </section>
 

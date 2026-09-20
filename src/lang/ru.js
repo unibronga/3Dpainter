@@ -181,6 +181,8 @@ export default {
   'shape.outline': 'контур',
   'shape.thickness': 'Толщина',
   'shape.text': 'Текст',
+  'font.system': 'Системный',
+  'shape.family': 'Шрифт',
   'shape.font': 'Кегль',
   'shape.textDefault': 'Текст',
 

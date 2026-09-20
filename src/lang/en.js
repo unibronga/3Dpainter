@@ -182,6 +182,8 @@ export default {
   'shape.outline': 'outline',
   'shape.thickness': 'Thickness',
   'shape.text': 'Text',
+  'font.system': 'System',
+  'shape.family': 'Font',
   'shape.font': 'Size',
   'shape.textDefault': 'Text',
 

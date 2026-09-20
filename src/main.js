@@ -54,7 +54,7 @@ const state = {
   texture: null,              // своя картинка для покраски: {data, w, h, name}
   matName: () => t('mat.paint'),
   // Фигуры и текст: чем печатаем и какой толщины.
-  shape: { outline: false, thickness: 4, text: t('shape.textDefault'), font: 96 },
+  shape: { outline: false, thickness: 4, text: t('shape.textDefault'), font: 96, family: 'system' },
   pivot: 'local',             // вокруг чего вращаем вид
   sizePct: 4,        // диаметр кисти в % от габарита модели
   // Кисть одним объектом: её же получают ядро покраски и окно кистей.
@@ -382,11 +382,29 @@ function runFill(target, cache, faceIndex) {
 /* ── Фигуры и текст ────────────────────────────────────────────── */
 
 /** Картинка с надписью — из неё получается трафарет для печати текста. */
+/**
+ * Шрифты для надписей. Только те, что есть в системе без загрузки: надпись
+ * печатается в текстуру сразу, и ждать веб-шрифт посреди мазка нечем.
+ * Первый — системный, дальше по характеру: гротеск, антиква, машинопись,
+ * плакат.
+ */
+const FONTS = [
+  { name: 'system', key: 'font.system', css: '-apple-system, "SF Pro Text", system-ui, sans-serif' },
+  { name: 'Helvetica', css: 'Helvetica, Arial, sans-serif' },
+  { name: 'Verdana', css: 'Verdana, Geneva, sans-serif' },
+  { name: 'Trebuchet', css: '"Trebuchet MS", sans-serif' },
+  { name: 'Georgia', css: 'Georgia, serif' },
+  { name: 'Times', css: '"Times New Roman", Times, serif' },
+  { name: 'Courier', css: '"Courier New", Courier, monospace' },
+  { name: 'Impact', css: 'Impact, Haettenschweiler, sans-serif' },
+];
+
 function renderText(text, fontPx) {
   const pad = Math.ceil(fontPx * 0.25);
   const c = document.createElement('canvas');
   const ctx = c.getContext('2d', { willReadFrequently: true });
-  const font = `700 ${fontPx}px -apple-system, "SF Pro Text", system-ui, sans-serif`;
+  const семейство = (FONTS.find((f) => f.name === state.shape.family) || FONTS[0]).css;
+  const font = `700 ${fontPx}px ${семейство}`;
 
   ctx.font = font;
   const m = ctx.measureText(text);
@@ -582,6 +600,7 @@ document.querySelectorAll('.section > h3').forEach((h) => {
 function setTool(tool) {
   state.tool = tool;
   document.querySelectorAll('.tool').forEach((b) => b.classList.toggle('active', b.dataset.tool === tool));
+  syncToolOptions();
   syncLayers();
 }
 document.querySelectorAll('.tool').forEach((b) => {
@@ -604,17 +623,41 @@ $('brush-size').addEventListener('input', (e) => { state.sizePct = +e.target.val
 $('brush-hardness').addEventListener('input', (e) => { state.brush.hardness = +e.target.value / 100; syncBrushLabels(); });
 $('brush-flow').addEventListener('input', (e) => { state.brush.flow = +e.target.value / 100; syncBrushLabels(); });
 $('brush-frontface').addEventListener('change', (e) => { state.frontOnly = e.target.checked; });
+/**
+ * Полоска параметров показывает только то, что относится к выбранному
+ * инструменту: у кисти своих настроек в ней нет, и пустая рамка над моделью
+ * была бы просто помехой.
+ */
+function syncToolOptions() {
+  document.querySelectorAll('#tool-options .opt-group').forEach((g) => {
+    g.classList.toggle('on', g.dataset.for.split(' ').includes(state.tool));
+  });
+}
+
 function syncShapeUI() {
   $('shape-fill').classList.toggle('on', !state.shape.outline);
   $('shape-outline').classList.toggle('on', state.shape.outline);
   $('shape-thickness-val').textContent = state.shape.thickness + ' px';
   $('shape-font-val').textContent = state.shape.font + ' px';
+  $('shape-family').value = state.shape.family;
 }
 $('shape-fill').addEventListener('click', () => { state.shape.outline = false; syncShapeUI(); });
 $('shape-outline').addEventListener('click', () => { state.shape.outline = true; syncShapeUI(); });
 $('shape-thickness').addEventListener('input', (e) => { state.shape.thickness = +e.target.value; syncShapeUI(); });
 $('shape-font').addEventListener('input', (e) => { state.shape.font = +e.target.value; syncShapeUI(); });
 $('shape-text').addEventListener('input', (e) => { state.shape.text = e.target.value; });
+
+// Список шрифтов: каждый пункт написан своим шрифтом — выбирают по виду
+// буквы, а не по названию.
+for (const f of FONTS) {
+  const o = document.createElement('option');
+  o.value = f.name;
+  o.textContent = f.key ? t(f.key) : f.name;
+  if (f.key) o.dataset.i18n = f.key;
+  o.style.fontFamily = f.css;
+  $('shape-family').appendChild(o);
+}
+$('shape-family').addEventListener('change', (e) => { state.shape.family = e.target.value; });
 
 $('fill-angle').addEventListener('input', (e) => {
   state.fillAngle = +e.target.value;

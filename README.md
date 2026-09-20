@@ -92,7 +92,9 @@ Other commands:
 **Tools.** Brush with 16 presets (grain, spacing, scatter), eraser,
 eyedropper, three kinds of fill, mask brush, rectangle, ellipse and text.
 Shapes and text are printed by screen projection, so a rectangle stays a
-rectangle in frame no matter how the surface curves under it.
+rectangle in frame no matter how the surface curves under it. Text comes with
+a choice of eight system fonts. The options for whichever tool is selected
+appear in a strip above the model, on the left.
 
 **Material, not just color.** A material here is color + pattern + roughness
 + metalness + transparency, and all of it is painted per texel. "Paint this

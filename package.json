@@ -10,7 +10,7 @@
     "preview": "vite preview --port 5273",
     "desktop": "npm run build && electron .",
     "desktop:dev": "PAINT_TOOL_DEV_URL=http://localhost:5273 electron .",
-    "icon": "node scripts/make-icon.mjs",
+    "icon": "electron scripts/prepare-icon.cjs",
     "dist": "npm run icon && npm run build && electron-builder --mac"
   },
   "devDependencies": {
