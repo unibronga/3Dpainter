@@ -1,0 +1,256 @@
+/**
+ * Редактор развёртки.
+ *
+ * Показывает текстуру активного меша вместе с сеткой UV и даёт работать прямо
+ * по ней: кисть, ластик, пипетка, заливка по грани и по острову. Там, где на
+ * модели грань уходит из виду или слишком мелкая, по развёртке попасть проще.
+ *
+ * Сам ничего не красит — отдаёт координаты в текселях наружу, покраской
+ * занимается то же ядро, что и во вьюпорте.
+ */
+
+import { findTriangleAtUV } from './mesh-cache.js';
+
+export class UVEditor {
+  /**
+   * @param {HTMLElement} container
+   * @param {object} hooks
+   *   onBegin(tx, ty, shift)   — начало мазка, координаты в текселях
+   *   onMove(tx, ty)
+   *   onEnd()
+   *   onFill(triIndex, tx, ty) — щелчок инструментом заливки
+   *   onPick(tx, ty)           — пипетка
+   *   brushRadiusScreen()      — радиус кисти в пикселях экрана
+   *   currentTool()
+   */
+  constructor(container, hooks) {
+    this.container = container;
+    this.hooks = hooks;
+
+    this.canvas = document.createElement('canvas');
+    this.canvas.className = 'uv-canvas';
+    container.appendChild(this.canvas);
+    this.ctx = this.canvas.getContext('2d');
+
+    this.target = null;
+    this.cache = null;
+    this.showWire = true;
+    this.view = { scale: 1, ox: 0, oy: 0 }; // пикселей на единицу UV и сдвиг
+    this.cursor = null;
+    this.painting = false;
+    this.panning = false;
+    this.spaceDown = false;
+
+    this._bindEvents();
+    this._observer = new ResizeObserver(() => { this.resize(); });
+    this._observer.observe(container);
+    this.resize();
+  }
+
+  setTarget(target, cache) {
+    const first = !this.target || this.cache !== cache;
+    this.target = target;
+    this.cache = cache;
+    if (first || !(this.view.scale > 1)) this.fit();
+    this.draw();
+  }
+
+  setShowWire(v) { this.showWire = v; this.draw(); }
+
+  /* ── Преобразования ──────────────────────────────────────────── */
+
+  /** Экран → тексели. */
+  toTexel(clientX, clientY) {
+    const r = this.canvas.getBoundingClientRect();
+    const S = this.target ? this.target.size : 1024;
+    const x = clientX - r.left, y = clientY - r.top;
+    return {
+      tx: ((x - this.view.ox) / this.view.scale) * S,
+      ty: ((y - this.view.oy) / this.view.scale) * S,
+      u: (x - this.view.ox) / this.view.scale,
+      v: 1 - (y - this.view.oy) / this.view.scale,
+      inside: true,
+    };
+  }
+
+  /**
+   * Вписать квадрат развёртки в панель.
+   * @returns {boolean} удалось ли — у скрытой панели размера ещё нет
+   */
+  fit() {
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
+    if (!(w > 1 && h > 1)) return false;
+    const s = Math.min(w, h) * 0.88;
+    this.view.scale = s;
+    this.view.ox = (w - s) / 2;
+    this.view.oy = (h - s) / 2;
+    return true;
+  }
+
+  /* ── Отрисовка ───────────────────────────────────────────────── */
+
+  resize() {
+    const w = this.container.clientWidth || 1;
+    const h = this.container.clientHeight || 1;
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    this.canvas.width = Math.round(w * dpr);
+    this.canvas.height = Math.round(h * dpr);
+    this.canvas.style.width = w + 'px';
+    this.canvas.style.height = h + 'px';
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // Панель могли открыть до того, как у неё появился размер: тогда
+    // вписывание посчиталось по нулю и полотно осталось пустым. Как только
+    // размер есть — вписываем заново.
+    if (!(this.view.scale > 1)) this.fit();
+
+    this.draw();
+  }
+
+  draw() {
+    const ctx = this.ctx;
+    const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#15171a';
+    ctx.fillRect(0, 0, w, h);
+    if (!this.target) return;
+
+    const { ox, oy, scale } = this.view;
+
+    // Шахматка под текстурой — видно, где слой прозрачный.
+    this._checker(ox, oy, scale);
+
+    // При увеличении показываем тексели как есть, без сглаживания: инструмент
+    // рисует по пикселям, и видеть надо пиксели.
+    ctx.imageSmoothingEnabled = scale < this.target.size;
+    ctx.drawImage(this.target.canvas, ox, oy, scale, scale);
+
+    if (this.showWire && this.cache) this._wire(ox, oy, scale);
+
+    ctx.strokeStyle = 'rgba(224,163,85,0.75)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(ox + 0.5, oy + 0.5, scale, scale);
+
+    if (this.cursor) {
+      const r = Math.max(2, this.hooks.brushRadiusScreen());
+      ctx.beginPath();
+      ctx.arc(this.cursor.x, this.cursor.y, r, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+
+  _checker(ox, oy, scale) {
+    const ctx = this.ctx;
+    const step = Math.max(6, scale / 16);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(ox, oy, scale, scale);
+    ctx.clip();
+    ctx.fillStyle = '#2a2d32';
+    ctx.fillRect(ox, oy, scale, scale);
+    ctx.fillStyle = '#33373d';
+    for (let y = 0; y < scale; y += step) {
+      for (let x = ((y / step) | 0) % 2 ? step : 0; x < scale; x += step * 2) {
+        ctx.fillRect(ox + x, oy + y, step, step);
+      }
+    }
+    ctx.restore();
+  }
+
+  _wire(ox, oy, scale) {
+    const ctx = this.ctx;
+    const { uv, idx, triCount } = this.cache;
+    ctx.strokeStyle = 'rgba(255,255,255,0.42)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let t = 0; t < triCount; t++) {
+      const i0 = idx[t * 3], i1 = idx[t * 3 + 1], i2 = idx[t * 3 + 2];
+      const x0 = ox + uv[i0 * 2] * scale, y0 = oy + (1 - uv[i0 * 2 + 1]) * scale;
+      const x1 = ox + uv[i1 * 2] * scale, y1 = oy + (1 - uv[i1 * 2 + 1]) * scale;
+      const x2 = ox + uv[i2 * 2] * scale, y2 = oy + (1 - uv[i2 * 2 + 1]) * scale;
+      ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.lineTo(x2, y2); ctx.closePath();
+    }
+    ctx.stroke();
+  }
+
+  /* ── Ввод ────────────────────────────────────────────────────── */
+
+  _bindEvents() {
+    const cv = this.canvas;
+
+    cv.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    cv.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const r = cv.getBoundingClientRect();
+      const mx = e.clientX - r.left, my = e.clientY - r.top;
+      const k = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      const next = Math.max(24, Math.min(40000, this.view.scale * k));
+      const f = next / this.view.scale;
+      // Масштабируем вокруг курсора, а не вокруг угла панели.
+      this.view.ox = mx - (mx - this.view.ox) * f;
+      this.view.oy = my - (my - this.view.oy) * f;
+      this.view.scale = next;
+      this.draw();
+    }, { passive: false });
+
+    cv.addEventListener('pointerdown', (e) => {
+      // Захват указателя — удобство, а не условие: если он не даётся,
+      // работать всё равно надо.
+      try { cv.setPointerCapture(e.pointerId); } catch { /* не беда */ }
+
+      // Правая кнопка, средняя и пробел — перемещение полотна.
+      if (e.button === 2 || e.button === 1 || this.spaceDown) {
+        this.panning = { x: e.clientX, y: e.clientY };
+        return;
+      }
+      if (e.button !== 0 || !this.target) return;
+
+      const p = this.toTexel(e.clientX, e.clientY);
+      const tool = this.hooks.currentTool();
+
+      if (tool === 'eyedropper') { this.hooks.onPick(p.tx, p.ty); return; }
+      if (tool.startsWith('fill')) {
+        const tri = tool === 'fill-layer' ? -1 : findTriangleAtUV(this.cache, p.u, p.v);
+        this.hooks.onFill(tri, p.tx, p.ty);
+        this.draw();
+        return;
+      }
+      this.painting = true;
+      this.hooks.onBegin(p.tx, p.ty, e.shiftKey);
+    });
+
+    cv.addEventListener('pointermove', (e) => {
+      const r = cv.getBoundingClientRect();
+      this.cursor = { x: e.clientX - r.left, y: e.clientY - r.top };
+
+      if (this.panning) {
+        this.view.ox += e.clientX - this.panning.x;
+        this.view.oy += e.clientY - this.panning.y;
+        this.panning = { x: e.clientX, y: e.clientY };
+        this.draw();
+        return;
+      }
+      if (this.painting) {
+        const pts = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+        for (const q of (pts.length ? pts : [e])) {
+          const p = this.toTexel(q.clientX, q.clientY);
+          this.hooks.onMove(p.tx, p.ty);
+        }
+        return;
+      }
+      this.draw();
+    });
+
+    const stop = () => {
+      if (this.painting) { this.painting = false; this.hooks.onEnd(); }
+      this.panning = false;
+    };
+    cv.addEventListener('pointerup', stop);
+    cv.addEventListener('pointercancel', stop);
+    cv.addEventListener('pointerleave', () => { this.cursor = null; this.draw(); });
+  }
+}

@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Покраска по модели</title>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Меню программы (заполняется из src/menubar.js) ───────── -->
+  <div id="menubar"></div>
+
+  <!-- ── Верхняя панель быстрого доступа ─────────────────────── -->
+  <div id="topbar">
+    <div class="title">Покраска <span>· low-poly</span></div>
+    <div class="sep"></div>
+    <button class="btn" id="btn-open">Открыть GLB…</button>
+    <button class="btn" id="btn-demo">Демо</button>
+
+    <div class="spacer"></div>
+
+    <button class="btn" id="btn-uv" title="Развёртка на полэкрана (U)">Развёртка</button>
+    <div class="sep"></div>
+    <button class="btn" id="btn-undo" title="Отменить (Cmd/Ctrl+Z)">Отменить</button>
+    <button class="btn" id="btn-redo" title="Вернуть (Cmd/Ctrl+Shift+Z)">Вернуть</button>
+    <div class="sep"></div>
+    <button class="btn icon" id="btn-tools-toggle" title="Колонка инструментов">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="6" height="18" rx="1.5"/><rect x="11" y="3" width="10" height="18" rx="1.5" opacity=".35"/></svg>
+    </button>
+    <button class="btn icon" id="btn-side-toggle" title="Правая панель (Tab — скрыть всё)">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="10" height="18" rx="1.5" opacity=".35"/><rect x="15" y="3" width="6" height="18" rx="1.5"/></svg>
+    </button>
+    <div class="sep"></div>
+    <button class="btn accent" id="btn-save">Сохранить PNG</button>
+    <input type="file" id="file-input" accept=".glb,.gltf" hidden>
+  </div>
+
+  <!-- ── Колонка инструментов ────────────────────────────────── -->
+  <div id="toolbar">
+    <button class="tool active" data-tool="brush" title="Кисть (B)">
+      <svg viewBox="0 0 24 24"><path d="M9.5 14.5 4 20c1.8 1.2 4.3.9 5.7-.6 1-1 1.2-2.4.8-3.6z"/><path d="M11 13 20.2 3.8a1.6 1.6 0 0 1 2.3 2.3L13.3 15.3"/></svg>
+    </button>
+    <button class="tool" data-tool="eraser" title="Ластик (E)">
+      <svg viewBox="0 0 24 24"><path d="M4 16.5 11.5 9l6 6-4 4H7z"/><path d="M11.5 9l4-4a1.7 1.7 0 0 1 2.4 0l3.6 3.6a1.7 1.7 0 0 1 0 2.4l-4 4"/><path d="M3 21h18"/></svg>
+    </button>
+    <button class="tool" data-tool="eyedropper" title="Пипетка (I)">
+      <svg viewBox="0 0 24 24"><path d="m4 20 1-4 9-9 3 3-9 9z"/><path d="m14.5 6.5 2-2a2.1 2.1 0 0 1 3 3l-2 2"/></svg>
+    </button>
+    <div class="tool-sep"></div>
+    <button class="tool" data-tool="fill-faces" title="Заливка связанных граней (F)">
+      <svg viewBox="0 0 24 24"><path d="M3 12 12 3l9 9-9 9z"/><path d="M3 12h18"/></svg>
+    </button>
+    <button class="tool" data-tool="fill-island" title="Заливка UV-острова (G)">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8h8v8H8z"/></svg>
+    </button>
+    <button class="tool" data-tool="fill-layer" title="Залить весь слой">
+      <svg viewBox="0 0 24 24"><path d="M5 11 11 5l8 8-6 6z"/><path d="m5 11 8 8"/><path d="M19 17c0 1.1.9 2 2 2"/></svg>
+    </button>
+    <div class="tool-sep"></div>
+    <button class="tool" data-tool="rect" title="Прямоугольник (R) · Shift — квадрат">
+      <svg viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="13" rx="1.5"/></svg>
+    </button>
+    <button class="tool" data-tool="ellipse" title="Круг (C) · Shift — правильный">
+      <svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="8.5" ry="6.5"/></svg>
+    </button>
+    <button class="tool" data-tool="text" title="Текст (T)">
+      <svg viewBox="0 0 24 24"><path d="M5 6.5V5h14v1.5"/><path d="M12 5v14"/><path d="M8.5 19h7"/></svg>
+    </button>
+    <div class="tool-sep"></div>
+    <button class="tool" data-tool="mask" title="Кисть по маске (M) · Shift — вернуть">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none"/></svg>
+    </button>
+  </div>
+
+  <!-- ── Вьюпорт и развёртка ─────────────────────────────────── -->
+  <div id="panes">
+    <div id="viewport">
+      <div id="drop-hint">Отпустите — загружу GLB</div>
+      <div id="shape-preview"></div>
+
+      <!-- Управление видом поверх вьюпорта: там же, где смотришь. -->
+      <div id="view-overlay">
+        <div class="overlay-row">
+          <div class="pivot-seg" id="pivot-seg" title="Точка, вокруг которой вращается и приближается вид">
+            <button data-pivot="world" title="Вокруг начала координат мира (0, 0, 0)">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><ellipse cx="12" cy="12" rx="8.5" ry="3.6"/><path d="M12 3.5v17"/></svg>
+            </button>
+            <button data-pivot="local" title="Вокруг центра объекта">
+              <svg viewBox="0 0 24 24"><path d="M12 3.5 19.5 8v8L12 20.5 4.5 16V8z"/><path d="M4.5 8 12 12.2 19.5 8"/><path d="M12 12.2v8.3" opacity=".45"/><circle cx="12" cy="12.2" r="2" fill="currentColor" stroke="none"/></svg>
+            </button>
+            <button data-pivot="camera" title="Вокруг точки, на которую смотрим">
+              <svg viewBox="0 0 24 24"><path d="M3 8.5a2 2 0 0 1 2-2h3l1.4-2h5.2L16 6.5h3a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="12.5" r="3.2"/></svg>
+            </button>
+          </div>
+        <div class="overlay-strip">
+          <button class="obtn" id="ov-views" title="Виды: спереди, сзади, слева, справа, сверху, снизу (1–4, 6, 7, 0)">
+            <svg viewBox="0 0 24 24"><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5 12 12l8-4.5"/><path d="M12 12v9"/></svg>
+          </button>
+          <button class="obtn" id="ov-center" title="Вписать модель в кадр (Home)">
+            <svg viewBox="0 0 24 24"><path d="M4 9V5a1 1 0 0 1 1-1h4"/><path d="M15 4h4a1 1 0 0 1 1 1v4"/><path d="M20 15v4a1 1 0 0 1-1 1h-4"/><path d="M9 20H5a1 1 0 0 1-1-1v-4"/><circle cx="12" cy="12" r="2.6"/></svg>
+          </button>
+          <button class="obtn" id="ov-proj" title="Перспектива / ортография (5)">
+            <svg viewBox="0 0 24 24"><path d="M3 6.5 12 4l9 2.5v11L12 20l-9-2.5z"/><path d="M8 8.2v7.6"/><path d="M16 8.2v7.6"/></svg>
+          </button>
+          <button class="obtn" id="ov-display" title="Показ: материал / плоско">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none"/></svg>
+          </button>
+          <button class="obtn" id="ov-verts" title="Сетка модели: рёбра и вершины">
+            <svg viewBox="0 0 24 24"><path d="M12 4 19 8v8l-7 4-7-4V8z"/><circle cx="12" cy="4" r="1.7" fill="currentColor"/><circle cx="19" cy="8" r="1.7" fill="currentColor"/><circle cx="19" cy="16" r="1.7" fill="currentColor"/><circle cx="12" cy="20" r="1.7" fill="currentColor"/><circle cx="5" cy="16" r="1.7" fill="currentColor"/><circle cx="5" cy="8" r="1.7" fill="currentColor"/></svg>
+          </button>
+          <button class="obtn" id="ov-grid" title="Сетка пола">
+            <svg viewBox="0 0 24 24"><path d="M3 3h18v18H3z"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+          </button>
+        </div>
+        </div>
+
+        <div class="view-flyout" id="view-flyout">
+          <button data-view="front">спереди<i>1</i></button>
+          <button data-view="back">сзади<i>2</i></button>
+          <button data-view="left">слева<i>3</i></button>
+          <button data-view="right">справа<i>4</i></button>
+          <button data-view="top">сверху<i>6</i></button>
+          <button data-view="bottom">снизу<i>7</i></button>
+          <button data-view="user">3/4<i>0</i></button>
+        </div>
+
+        <div id="viewcube-host"></div>
+      </div>
+    </div>
+    <div id="splitter" title="Потянуть — ширина развёртки"></div>
+    <div id="uv-pane">
+      <div id="uv-head">
+        <span class="name">Развёртка</span>
+        <span id="uv-mesh" style="color:var(--text-dim)"></span>
+        <label><input type="checkbox" id="uv-wire" checked> сетка</label>
+        <div class="spacer"></div>
+        <button class="btn" id="uv-fit">Вписать</button>
+        <button class="btn" id="uv-close">Закрыть</button>
+      </div>
+      <div id="uv-body"></div>
+    </div>
+  </div>
+
+  <div id="side-splitter" title="Потянуть — ширина панели"></div>
+
+  <!-- ── Правая панель ───────────────────────────────────────── -->
+  <div id="sidebar">
+
+    <section class="section" data-open="1" data-key="brush">
+      <h3><i class="chev"></i>Кисть<button class="sec-btn" id="btn-brush-modal" title="Кисти: библиотека, зерно, форма…"><svg viewBox="0 0 24 24"><path d="M4 7h11M19 7h1M4 12h3M11 12h9M4 17h8M16 17h4"/><circle cx="17" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="14" cy="17" r="2"/></svg></button></h3>
+      <div class="body">
+        <div class="row">
+          <label>Размер</label>
+          <input type="range" id="brush-size" min="0.3" max="40" step="0.1" value="4">
+          <span class="val" id="brush-size-val">—</span>
+        </div>
+        <div class="row">
+          <label>Жёсткость</label>
+          <input type="range" id="brush-hardness" min="0" max="100" step="1" value="70">
+          <span class="val" id="brush-hardness-val">70%</span>
+        </div>
+        <div class="row">
+          <label>Нажим</label>
+          <input type="range" id="brush-flow" min="1" max="100" step="1" value="100">
+          <span class="val" id="brush-flow-val">100%</span>
+        </div>
+        <div class="row">
+          <label>Только видимое</label>
+          <input type="checkbox" id="brush-frontface" checked style="justify-self:start">
+          <span class="val"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" data-open="1" data-key="color">
+      <h3><i class="chev"></i>Материал<button class="sec-btn" id="btn-material-modal" title="Выбрать материал: цвет и поверхность…"><svg viewBox="0 0 24 24"><path d="M4 7h11M19 7h1M4 12h3M11 12h9M4 17h8M16 17h4"/><circle cx="17" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="14" cy="17" r="2"/></svg></button></h3>
+      <div class="body">
+        <button class="mat-chip" id="mat-chip" title="Открыть выбор материала">
+          <canvas id="mat-chip-ball" width="92" height="92"></canvas>
+          <span class="t">
+            <span class="n" id="mat-chip-name">Краска</span>
+            <span class="s" id="mat-chip-sub">—</span>
+          </span>
+        </button>
+        <div class="quick-mats" id="quick-mats"></div>
+      </div>
+    </section>
+
+    <section class="section" data-open="1" data-key="layers">
+      <h3><i class="chev"></i>Слои<span class="count" id="layer-count"></span></h3>
+      <div class="body">
+        <div class="layer-list" id="layer-list"></div>
+        <div class="btn-row">
+          <button class="btn" id="btn-layer-add" title="Новый слой">+ слой</button>
+          <button class="btn" id="btn-layer-mask" title="Маска слоя">маска</button>
+          <button class="btn" id="btn-layer-del" title="Удалить слой">удалить</button>
+        </div>
+        <div class="row" style="margin-top:6px">
+          <label>Непрозр.</label>
+          <input type="range" id="layer-opacity" min="0" max="100" step="1" value="100">
+          <span class="val" id="layer-opacity-val">100%</span>
+        </div>
+        <div class="row wide">
+          <label>Наложение</label>
+          <select id="layer-blend">
+            <option value="normal">обычное</option>
+            <option value="multiply">умножение</option>
+            <option value="screen">экран</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" data-open="1" data-key="history">
+      <h3><i class="chev"></i>История<span class="count" id="history-count"></span></h3>
+      <div class="body">
+        <div class="history-list" id="history-list"></div>
+        <div class="btn-row">
+          <button class="btn" id="btn-hist-undo">← шаг</button>
+          <button class="btn" id="btn-hist-redo">шаг →</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" data-open="1" data-key="uv">
+      <h3><i class="chev"></i>Развёртка
+        <button class="sec-btn" id="btn-uv-open" title="Открыть развёртку на полэкрана (U)">
+          <svg viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M21 3 13 11"/><path d="M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/></svg>
+        </button>
+      </h3>
+      <div class="body">
+        <div id="uv-preview-box" title="Щелчок — открыть развёртку на полэкрана">
+          <canvas id="uv-preview"></canvas>
+        </div>
+        <label class="check-row"><input type="checkbox" id="uv-preview-wire" checked> сетка UV</label>
+      </div>
+    </section>
+
+    <section class="section" data-open="0" data-key="shape">
+      <h3><i class="chev"></i>Фигуры и текст</h3>
+      <div class="body">
+        <div class="row wide">
+          <label>Вид</label>
+          <div class="seg">
+            <button class="btn on" id="shape-fill">заливка</button>
+            <button class="btn" id="shape-outline">контур</button>
+          </div>
+        </div>
+        <div class="row">
+          <label>Толщина</label>
+          <input type="range" id="shape-thickness" min="1" max="40" step="1" value="4">
+          <span class="val" id="shape-thickness-val">4 px</span>
+        </div>
+        <div class="row wide">
+          <label>Текст</label>
+          <input type="text" id="shape-text" class="hex" value="Текст" spellcheck="false" style="text-transform:none">
+        </div>
+        <div class="row">
+          <label>Кегль</label>
+          <input type="range" id="shape-font" min="12" max="400" step="2" value="96">
+          <span class="val" id="shape-font-val">96 px</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" data-open="0" data-key="fill">
+      <h3><i class="chev"></i>Заливка граней</h3>
+      <div class="body">
+        <div class="row">
+          <label>Порог угла</label>
+          <input type="range" id="fill-angle" min="1" max="180" step="1" value="40">
+          <span class="val" id="fill-angle-val">40°</span>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- ── Строка состояния ────────────────────────────────────── -->
+  <div id="statusbar">
+    <span id="stat-model">модель не загружена</span>
+    <span id="stat-tris"></span>
+    <span id="stat-perf"></span>
+    <span id="stat-uv"></span>
+    <span class="hint">ЛКМ — инструмент · ПКМ — вращать · пробел+ЛКМ — двигать · колесо — зум</span>
+  </div>
+
+</div>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

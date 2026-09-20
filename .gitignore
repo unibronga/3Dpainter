@@ -1,0 +1,16 @@
+# Зависимости и сборка
+node_modules/
+dist/
+release/
+build/
+
+# Рабочая кухня: заметки сессий и настройки помощника — не для репозитория
+.claude/
+CLAUDE.md
+PLAN.md
+SESSIONS.md
+
+# Системное
+.DS_Store
+*.log
+npm-debug.log*

@@ -1,0 +1,39 @@
+# Сборка установщика. Значок берётся из build/icon.png — его рисует
+# scripts/make-icon.mjs, поэтому отдельно класть картинку не нужно.
+
+appId: ru.lowpoly.painttool
+productName: Покраска
+copyright: Инструмент ручной покраски low-poly моделей
+
+directories:
+  output: release
+  buildResources: build
+
+# Кладём в приложение только собранную страницу и оболочку: исходники и
+# библиотеки Vite уже вшил в dist, тянуть их второй раз незачем.
+files:
+  - dist/**/*
+  - electron/**/*
+  - package.json
+
+# Нативных модулей нет — пересобирать нечего.
+npmRebuild: false
+
+mac:
+  category: public.app-category.graphics-design
+  # Сертификата разработчика нет, подпись отключаем явно: иначе сборка
+  # падает на попытке найти ключ в связке.
+  identity: null
+  target:
+    - dmg
+    - zip
+
+dmg:
+  title: Покраска
+  artifactName: Покраска-${version}-${arch}.dmg
+
+win:
+  target: nsis
+linux:
+  target: AppImage
+  category: Graphics
