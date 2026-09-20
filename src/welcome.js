@@ -9,6 +9,7 @@
  */
 
 import { t, onLangChange } from './i18n.js';
+import значокПрограммы from './app-icon.png';
 import { listRecent, getRecent, removeRecent } from './recent.js';
 
 const эл = (тег, класс, текст) => {
@@ -45,11 +46,21 @@ export function createWelcome(api) {
   const слой = эл('div', 'welcome-back');
   const окно = эл('div', 'welcome');
 
-  /* Шапка */
+  /* Шапка: значок, имя программы и одна строка о том, что она делает */
   const шапка = эл('div', 'welcome-head');
+
+  const значок = эл('img', 'welcome-icon');
+  значок.src = значокПрограммы;
+  значок.alt = '';
+  значок.width = 72;
+  значок.height = 72;
+
+  const надписи = эл('div', 'welcome-titles');
   const заголовок = эл('h1', 'welcome-title', t('welcome.title'));
   const подзаголовок = эл('p', 'welcome-sub', t('welcome.subtitle'));
-  шапка.append(заголовок, подзаголовок);
+  надписи.append(заголовок, подзаголовок);
+
+  шапка.append(значок, надписи);
 
   /* Две дороги: своя модель или демо */
   const карточки = эл('div', 'welcome-cards');

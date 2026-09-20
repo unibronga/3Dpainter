@@ -21,7 +21,7 @@ function createWindow() {
     height: 950,
     minWidth: 1024,
     minHeight: 680,
-    title: 'Покраска по модели',
+    title: '3DPainter',
     // Цвет фона совпадает с темой: иначе при открытии мигает белым.
     backgroundColor: '#1b1d21',
     webPreferences: {
@@ -52,6 +52,13 @@ function createWindow() {
             мешей: P ? P.viewport.paintables.length : 0,
             инструментов: document.querySelectorAll('.tool').length,
             меню: document.querySelectorAll('.menu-title').length,
+            // Значок начального экрана — картинка из сборки: в упакованном
+            // приложении путь другой, и битой она станет молча.
+            значок: (() => {
+              const i = document.querySelector('.welcome-icon');
+              return i ? (i.complete && i.naturalWidth > 0) : 'нет узла';
+            })(),
+            имя: document.querySelector('.welcome-title')?.textContent || '—',
             ошибки: P ? P.bootErrors : ['нет доступа к состоянию'],
           }));
         }, 2500));

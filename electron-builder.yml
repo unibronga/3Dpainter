@@ -1,9 +1,9 @@
 # Сборка установщика. Значок берётся из build/icon.png — его рисует
 # scripts/make-icon.mjs, поэтому отдельно класть картинку не нужно.
 
-appId: ru.lowpoly.painttool
-productName: Покраска
-copyright: Инструмент ручной покраски low-poly моделей
+appId: ru.lowpoly.painter3d
+productName: 3DPainter
+copyright: 3DPainter — ручная покраска low-poly моделей
 
 directories:
   output: release
@@ -29,8 +29,8 @@ mac:
     - zip
 
 dmg:
-  title: Покраска
-  artifactName: Покраска-${version}-${arch}.dmg
+  title: 3DPainter
+  artifactName: 3DPainter-${version}-${arch}.dmg
 
 win:
   target: nsis

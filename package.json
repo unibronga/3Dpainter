@@ -1,9 +1,9 @@
 {
-  "name": "paint-tool",
+  "name": "3dpainter",
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Инструмент ручной покраски low-poly моделей по поверхности",
+  "description": "3DPainter — ручная покраска low-poly моделей по поверхности",
   "scripts": {
     "dev": "vite --port 5273",
     "build": "vite build",
@@ -20,5 +20,5 @@
     "vite": "^7.1.0"
   },
   "main": "electron/main.cjs",
-  "author": "3D-моделист low-poly"
+  "author": "Kostiantyn"
 }

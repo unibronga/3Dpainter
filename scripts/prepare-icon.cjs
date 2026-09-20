@@ -22,6 +22,10 @@ const path = require('node:path');
 const КОРЕНЬ = path.resolve(__dirname, '..');
 const ИСХОДНИК = path.join(КОРЕНЬ, 'build', 'icon-source.png');
 const ВЫХОД = path.join(КОРЕНЬ, 'build', 'icon.png');
+// Второй выход — для начального экрана: тот же значок, но мелкий. Тащить
+// в интерфейс мегабайтный файл ради картинки в 72 пикселя незачем.
+const ВЫХОД_UI = path.join(КОРЕНЬ, 'src', 'app-icon.png');
+const РАЗМЕР_UI = 256;
 
 const РАЗМЕР = 1024;      // холст значка
 const ПОЛЕ = 0.085;       // доля холста на поле с каждой стороны
@@ -106,16 +110,36 @@ app.whenReady().then(async () => {
     og.drawImage(c, x0, y0, ш, в, левый, верхний, нш, нв);
     og.restore();
 
+    // Уменьшенная копия для интерфейса — без полей: там значок рисуется
+    // в своей рамке, и чужие поля только съели бы размер.
+    const ui = document.createElement('canvas');
+    ui.width = ui.height = ${РАЗМЕР_UI};
+    const ug = ui.getContext('2d');
+    ug.imageSmoothingQuality = 'high';
+    const uk = ${РАЗМЕР_UI} / Math.max(ш, в);
+    const uш = ш * uk, uв = в * uk;
+    const uрадиус = Math.min(uш, uв) * ${СКРУГЛЕНИЕ};
+    ug.save();
+    ug.beginPath();
+    ug.roundRect((${РАЗМЕР_UI} - uш) / 2, (${РАЗМЕР_UI} - uв) / 2, uш, uв, uрадиус);
+    ug.clip();
+    ug.drawImage(c, x0, y0, ш, в, (${РАЗМЕР_UI} - uш) / 2, (${РАЗМЕР_UI} - uв) / 2, uш, uв);
+    ug.restore();
+
     return JSON.stringify({
       исходный: [W, H],
       обрезано: [ш, в],
       png: out.toDataURL('image/png').split(',')[1],
+      ui: ui.toDataURL('image/png').split(',')[1],
     });
   })()`);
 
-  const { исходный, обрезано, png } = JSON.parse(итог);
+  const { исходный, обрезано, png, ui } = JSON.parse(итог);
   fs.writeFileSync(ВЫХОД, Buffer.from(png, 'base64'));
-  const кб = (fs.statSync(ВЫХОД).size / 1024).toFixed(0);
-  console.log(`[значок] ${исходный.join('×')} → обрезано ${обрезано.join('×')} → ${ВЫХОД} (${РАЗМЕР}×${РАЗМЕР}, ${кб} КБ)`);
+  fs.writeFileSync(ВЫХОД_UI, Buffer.from(ui, 'base64'));
+  const кб = (ф) => (fs.statSync(ф).size / 1024).toFixed(0);
+  console.log(`[значок] ${исходный.join('×')} → обрезано ${обрезано.join('×')}`);
+  console.log(`[значок] сборка:   ${ВЫХОД} (${РАЗМЕР}×${РАЗМЕР}, ${кб(ВЫХОД)} КБ)`);
+  console.log(`[значок] интерфейс: ${ВЫХОД_UI} (${РАЗМЕР_UI}×${РАЗМЕР_UI}, ${кб(ВЫХОД_UI)} КБ)`);
   app.exit(0);
 });

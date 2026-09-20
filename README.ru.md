@@ -1,4 +1,4 @@
-# 3D Painter — покраска по модели
+# 3DPainter — покраска по модели
 
 **Красить low-poly модель кистью прямо по поверхности — руками, а не настройками.**
 
@@ -176,7 +176,7 @@ npm run dev
 **«Открыть»** → **«Открыть»**, либо один раз снять карантин:
 
 ```bash
-xattr -dr com.apple.quarantine /Applications/Покраска.app
+xattr -dr com.apple.quarantine /Applications/3DPainter.app
 ```
 
 Сборки под Windows и Linux описаны в `electron-builder.yml`, но каждая

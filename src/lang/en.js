@@ -74,7 +74,7 @@ export default {
   'help.keys': 'Keys and tips…',
 
   /* ── Top bar ─────────────────────────────────────────────────── */
-  'ui.appName': '3D Painter',
+  'ui.appName': '3DPainter',
   'ui.open': 'Open…',
   'ui.demo': 'Demo',
   'ui.uv': 'UV',
@@ -378,8 +378,8 @@ export default {
   'modal.closeTip': 'Close without changes (Esc)',
 
   /* ── Start screen ────────────────────────────────────────────── */
-  'welcome.title': '3D Painter',
-  'welcome.subtitle': 'Paint a low-poly model with a brush, right on its surface',
+  'welcome.title': '3DPainter',
+  'welcome.subtitle': 'Paint low-poly models with a brush, right on the surface:\nopen a model, spin it around and paint.',
   'welcome.open': 'Open a model',
   'welcome.openHint': 'GLB, OBJ, FBX, DAE, 3MF, STL, PLY and more',
   'welcome.demo': 'Start with the demo model',

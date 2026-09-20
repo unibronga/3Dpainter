@@ -73,7 +73,7 @@ export default {
   'help.keys': 'Клавиши и приёмы…',
 
   /* ── Верхняя панель ──────────────────────────────────────────── */
-  'ui.appName': 'Покраска',
+  'ui.appName': '3DPainter',
   'ui.open': 'Открыть…',
   'ui.demo': 'Демо',
   'ui.uv': 'Развёртка',
@@ -377,8 +377,8 @@ export default {
   'modal.closeTip': 'Закрыть без изменений (Esc)',
 
   /* ── Начальный экран ─────────────────────────────────────────── */
-  'welcome.title': 'Покраска',
-  'welcome.subtitle': 'Красьте low-poly модель кистью прямо по поверхности',
+  'welcome.title': '3DPainter',
+  'welcome.subtitle': 'Покраска low-poly моделей кистью прямо по поверхности:\nоткройте модель, вращайте и красьте.',
   'welcome.open': 'Открыть модель',
   'welcome.openHint': 'GLB, OBJ, FBX, DAE, 3MF, STL, PLY и другие',
   'welcome.demo': 'Начать с демо-модели',

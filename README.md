@@ -1,4 +1,4 @@
-# 3D Painter
+# 3DPainter
 
 **Paint a low-poly model by hand — with a brush, directly on its surface.**
 
@@ -177,7 +177,7 @@ verify the developer. Either right-click the icon → **Open** → **Open**, or
 clear the quarantine flag once:
 
 ```bash
-xattr -dr com.apple.quarantine /Applications/Покраска.app
+xattr -dr com.apple.quarantine /Applications/3DPainter.app
 ```
 
 Windows and Linux targets are described in `electron-builder.yml`, but each
