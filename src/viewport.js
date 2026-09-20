@@ -63,6 +63,7 @@ export class Viewport {
     this._buildLights();
     this._buildHelpers();
     this._buildCursor();
+    this._buildPivotMarker();
 
     this.model = null;
     this.paintables = [];   // [{mesh, cache}]
@@ -134,6 +135,108 @@ export class Viewport {
     this.cursor.renderOrder = 999;
     this.cursor.visible = false;
     this.scene.add(this.cursor);
+  }
+
+  /**
+   * Значок точки вращения — как 3D-курсор в Blender: видно, вокруг чего
+   * поворачивается вид. Рисуется спрайтом поверх модели (`depthTest: false`),
+   * иначе точка на дальней стороне пряталась бы внутри меша, а она нужна
+   * именно тогда, когда непонятно, где она.
+   */
+  _buildPivotMarker() {
+    const S = 128;
+    const c = document.createElement('canvas');
+    c.width = c.height = S;
+    const g = c.getContext('2d');
+    const r = S * 0.3;
+    const mid = S / 2;
+
+    // Тёмная подложка под всем рисунком: без неё белые части значка
+    // пропадают на светлой модели, а именно там он и нужен чаще всего.
+    const контур = (рисовать) => {
+      g.strokeStyle = 'rgba(20, 20, 24, 0.85)';
+      g.lineWidth = S * 0.095;
+      рисовать();
+      g.lineWidth = S * 0.05;
+    };
+
+    const кольцо = (от, до) => { g.beginPath(); g.arc(mid, mid, r, от, до); g.stroke(); };
+    контур(() => кольцо(0, Math.PI * 2));
+
+    // Кольцо в белую и красную четверть — читается и на светлой модели,
+    // и на тёмном фоне, в отличие от однотонного.
+    for (let i = 0; i < 8; i++) {
+      g.strokeStyle = i % 2 ? '#ffffff' : '#d0674f';
+      кольцо((i / 8) * Math.PI * 2, ((i + 1) / 8) * Math.PI * 2);
+    }
+
+    // Перекрестие: короткие штрихи от кольца наружу.
+    const штрихи = () => {
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        g.beginPath();
+        g.moveTo(mid + dx * r * 1.3, mid + dy * r * 1.3);
+        g.lineTo(mid + dx * r * 2.05, mid + dy * r * 2.05);
+        g.stroke();
+      }
+    };
+    контур(штрихи);
+    g.strokeStyle = '#ffffff';
+    g.lineWidth = S * 0.04;
+    штрихи();
+
+    // Ядро — чтобы сама точка была видна, а не только кольцо вокруг неё.
+    g.beginPath();
+    g.fillStyle = 'rgba(20, 20, 24, 0.85)';
+    g.arc(mid, mid, S * 0.075, 0, Math.PI * 2);
+    g.fill();
+    g.beginPath();
+    g.fillStyle = '#ffffff';
+    g.arc(mid, mid, S * 0.045, 0, Math.PI * 2);
+    g.fill();
+
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false, transparent: true });
+    this.pivotMarker = new THREE.Sprite(mat);
+    this.pivotMarker.renderOrder = 1000;
+    this.pivotMarker.visible = false;
+    this.scene.add(this.pivotMarker);
+    this._pivotHideTimer = null;
+  }
+
+  /** Показать значок в точке; сам спрячется, когда жест кончится. */
+  showPivotMarker(point) {
+    if (!point || !this.pivotMarker) return;
+    clearTimeout(this._pivotHideTimer);
+    this._pivotHideTimer = null;
+    this.pivotMarker.position.copy(point);
+    this.pivotMarker.visible = true;
+  }
+
+  /** Спрятать — с задержкой, чтобы значок не мигал между движениями колеса. */
+  hidePivotMarker(delay = 700) {
+    if (!this.pivotMarker) return;
+    clearTimeout(this._pivotHideTimer);
+    this._pivotHideTimer = setTimeout(() => {
+      this.pivotMarker.visible = false;
+      this._pivotHideTimer = null;
+    }, delay);
+  }
+
+  /** Держать значок одного размера на экране, как бы близко ни стояла камера. */
+  _syncPivotMarker() {
+    const m = this.pivotMarker;
+    if (!m || !m.visible) return;
+
+    const px = 34;                       // желаемый размер значка в пикселях
+    const h = this.renderer.domElement.clientHeight || 1;
+    const cam = this.camera;
+
+    const span = cam.isOrthographicCamera
+      ? (cam.top - cam.bottom) / cam.zoom
+      : 2 * cam.position.distanceTo(m.position) * Math.tan((cam.fov * Math.PI) / 360);
+
+    m.scale.setScalar((px / h) * span);
   }
 
   /* ── Модель ──────────────────────────────────────────────────── */
@@ -427,11 +530,71 @@ export class Viewport {
    */
   setPivotMode(mode) { this.pivotMode = mode; }
 
-  /** Точка, вокруг которой вращаем и приближаем. */
+  /**
+   * Точка, вокруг которой вращаем и приближаем.
+   *
+   * 🔴 Для режима «камера» это не `controls.target`, а точка поверхности под
+   * центром кадра. Точка взгляда висит на той глубине, где её оставил
+   * предыдущий сдвиг: подведя предмет в центр экрана, человек видит его в
+   * прицеле, но вращение идёт вокруг пустоты перед ним или за ним, и предмет
+   * уезжает вбок. Луч из центра кадра берёт настоящую глубину того, на что
+   * смотрят. Луч мимо модели (пустое место в центре) — откат на точку взгляда.
+   */
   pivotPoint() {
     if (this.pivotMode === 'world') return new THREE.Vector3(0, 0, 0);
     if (this.pivotMode === 'local') return this.modelCenter();
-    return this.controls.target.clone();   // «камера» — куда смотрим сейчас
+    return this.centerSurfacePoint() || this.controls.target.clone();
+  }
+
+  /** Точка модели под центром кадра, либо null, если там пусто. */
+  centerSurfacePoint() {
+    const r = this.renderer.domElement.getBoundingClientRect();
+    const hit = this.pick(r.left + r.width / 2, r.top + r.height / 2);
+    return hit ? hit.world.clone() : null;
+  }
+
+  /** Экранные пиксели точки мира — для проверки, что она осталась на месте. */
+  _toScreen(v) {
+    const r = this.renderer.domElement.getBoundingClientRect();
+    const p = v.clone().project(this.camera);
+    return { x: (p.x * 0.5 + 0.5) * r.width, y: (-p.y * 0.5 + 0.5) * r.height };
+  }
+
+  /**
+   * Вернуть точку туда, где она была в кадре, сдвигая связку поперёк взгляда.
+   *
+   * 🔴 Нужно после выпрямления камеры по мировой вертикали: выпрямление —
+   * это доворот вокруг оси взгляда, и он уводит по экрану всё, что не лежит
+   * в центре кадра, включая саму точку вращения. Отсюда и брался уход в
+   * сотни пикселей при вертикальном вращении вокруг объекта или мира.
+   * Сдвиг считается по касательной, поэтому уточняется в несколько проходов:
+   * один даёт ~32 px промаха, три — сотые доли.
+   */
+  _keepOnScreen(point, was, passes = 3) {
+    const cam = this.camera;
+    const r = this.renderer.domElement.getBoundingClientRect();
+
+    for (let i = 0; i < passes; i++) {
+      const now = this._toScreen(point);
+      const dx = now.x - was.x;
+      const dy = now.y - was.y;
+      if (Math.hypot(dx, dy) < 0.05) break;
+
+      const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0).normalize();
+      const up = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1).normalize();
+
+      let k;
+      if (cam.isOrthographicCamera) {
+        k = (cam.top - cam.bottom) / cam.zoom / r.height;
+      } else {
+        const dist = cam.position.distanceTo(point);
+        k = (2 * dist * Math.tan((cam.fov * Math.PI) / 360)) / r.height;
+      }
+
+      cam.position.addScaledVector(right, dx * k).addScaledVector(up, -dy * k);
+      this.controls.target.addScaledVector(right, dx * k).addScaledVector(up, -dy * k);
+      cam.updateMatrixWorld(true);
+    }
   }
 
   /* ── Навигация вокруг точки ──────────────────────────────────── */
@@ -444,6 +607,11 @@ export class Viewport {
       if (e.button !== 2) return;          // вращение — правая кнопка
       e.preventDefault();
       try { el.setPointerCapture(e.pointerId); } catch { /* не беда */ }
+      // Точку берём один раз на весь жест: пересчитывай её на каждое
+      // движение — под центром кадра оказывалась бы то одна поверхность, то
+      // другая, и вид дёргался бы сам по себе.
+      this._pivotLock = this.pivotPoint();
+      this.showPivotMarker(this._pivotLock);
       drag = { x: e.clientX, y: e.clientY };
     });
 
@@ -453,13 +621,16 @@ export class Viewport {
       drag = { x: e.clientX, y: e.clientY };
     });
 
-    const stop = () => { drag = null; };
+    const stop = () => { drag = null; this._pivotLock = null; this.hidePivotMarker(); };
     el.addEventListener('pointerup', stop);
     el.addEventListener('pointercancel', stop);
 
     el.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1);
+      // Приближение идёт вокруг той же точки — показываем и её.
+      this.showPivotMarker(this.pivotPoint());
+      this.hidePivotMarker();
     }, { passive: false });
   }
 
@@ -470,8 +641,9 @@ export class Viewport {
    */
   orbitBy(dx, dy, speed = (2 * Math.PI) / 500) {
     const cam = this.camera;
-    const P = this.pivotPoint();
+    const P = this._pivotLock || this.pivotPoint();
     const target = this.controls.target;
+    const wasOnScreen = this._toScreen(P);
 
     const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0).normalize();
     const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -dx * speed);
@@ -488,6 +660,10 @@ export class Viewport {
 
     cam.up.set(0, 1, 0);
     cam.lookAt(target);
+    cam.updateMatrixWorld(true);
+
+    // Выпрямление довернуло кадр вокруг оси взгляда — возвращаем точку на место.
+    this._keepOnScreen(P, wasOnScreen);
     this.controls.update();
   }
 
@@ -672,6 +848,7 @@ export class Viewport {
 
   _tick() {
     this.controls.update();
+    this._syncPivotMarker();
     this.renderer.render(this.scene, this.camera);
     if (this.afterRender) this.afterRender();
   }

@@ -81,6 +81,7 @@ Other commands:
 | Brush size | **[** and **]** |
 | Tools | **B** brush · **E** eraser · **I** eyedropper · **F** fill faces · **G** fill UV island · **M** mask |
 | Views | **1**–**7** axis views · **0** three-quarter · **5** perspective ↔ orthographic |
+| Orbit pivot | three icons over the viewport: world, object, or **whatever is in the centre of the frame** |
 | Fit to frame | **Home** |
 | UV editor | **U** |
 | Hide all panels | **Tab** |
