@@ -12,18 +12,19 @@
  */
 
 import * as THREE from 'three';
+import { t, onLangChange } from './i18n.js';
 
 const SIZE = 92;          // сторона полотна в пикселях
 const EDGE = 0.34;        // от какой доли грани считаем, что задето ребро
 
 /** Порядок граней BoxGeometry: +X, −X, +Y, −Y, +Z, −Z. */
 const FACES = [
-  { dir: [1, 0, 0], label: 'ПРАВО' },
-  { dir: [-1, 0, 0], label: 'ЛЕВО' },
-  { dir: [0, 1, 0], label: 'ВЕРХ' },
-  { dir: [0, -1, 0], label: 'НИЗ' },
-  { dir: [0, 0, 1], label: 'ПЕРЕД' },
-  { dir: [0, 0, -1], label: 'ЗАД' },
+  { dir: [1, 0, 0], key: 'cube.right' },
+  { dir: [-1, 0, 0], key: 'cube.left' },
+  { dir: [0, 1, 0], key: 'cube.top' },
+  { dir: [0, -1, 0], key: 'cube.bottom' },
+  { dir: [0, 0, 1], key: 'cube.front' },
+  { dir: [0, 0, -1], key: 'cube.back' },
 ];
 
 function faceTexture(label) {
@@ -63,7 +64,8 @@ export class ViewCube {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
     this.renderer.setSize(SIZE, SIZE, false);
     this.renderer.domElement.className = 'viewcube-canvas';
-    this.renderer.domElement.title = 'Куб ориентации: щелчок по грани, ребру или углу — встать на этот вид';
+    this.renderer.domElement.dataset.i18nTitle = 'tip.cube';
+    this.renderer.domElement.title = t('tip.cube');
     container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
@@ -73,7 +75,7 @@ export class ViewCube {
     this.camera.position.set(0, 0, 3);
     this.camera.lookAt(0, 0, 0);
 
-    this.materials = FACES.map((f) => new THREE.MeshBasicMaterial({ map: faceTexture(f.label) }));
+    this.materials = FACES.map((f) => new THREE.MeshBasicMaterial({ map: faceTexture(t(f.key)) }));
     this.cube = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), this.materials);
     this.scene.add(this.cube);
 
@@ -90,6 +92,21 @@ export class ViewCube {
     this.drag = null;       // {x, y, moved} пока кнопка зажата
 
     this._bind();
+
+    // Подписи граней нарисованы в текстурах, поэтому смена языка их
+    // перерисовывает: переводом надписи на картинке не заменишь.
+    onLangChange(() => this._relabel());
+  }
+
+  /** Перерисовать подписи граней под текущий язык. */
+  _relabel() {
+    FACES.forEach((f, i) => {
+      this.materials[i].map?.dispose();
+      this.materials[i].map = faceTexture(t(f.key));
+      this.materials[i].needsUpdate = true;
+    });
+    this.renderer.domElement.title = t('tip.cube');
+    this.render?.();
   }
 
   /** Повернуть куб так, как сейчас повёрнут мир относительно камеры. */

@@ -3,6 +3,8 @@
  * Ничего не знает о покраске — получает данные и обработчики.
  */
 
+import { t } from './i18n.js';
+
 /** Палитра под интерьеры и уровни: земля, зелень, вода, дерево, камень. */
 export const PALETTE = [
   '#c8563c', '#e0a355', '#f2d6a2', '#8fae5a',
@@ -56,24 +58,24 @@ export function renderLayers(el, target, state, handlers) {
     const eye = document.createElement('div');
     eye.className = 'eye' + (L.visible ? '' : ' off');
     eye.innerHTML = L.visible ? EYE_ON : EYE_OFF;
-    eye.title = L.visible ? 'Скрыть слой' : 'Показать слой';
+    eye.title = t(L.visible ? 'layers.hide' : 'layers.show');
     eye.addEventListener('click', (e) => { e.stopPropagation(); handlers.onToggleVisible(i); });
 
     const name = document.createElement('div');
     name.className = 'name';
-    name.textContent = L.name;
-    name.title = 'Двойной щелчок — переименовать';
+    name.textContent = L.auto ? t('layers.name', L.auto) : L.name;
+    name.title = t('layers.renameTip');
     name.addEventListener('dblclick', (e) => {
       e.stopPropagation();
-      const v = prompt('Имя слоя', L.name);
+      const v = prompt(t('layers.renamePrompt'), L.name);
       if (v) handlers.onRename(i, v.trim());
     });
 
     const chip = document.createElement('div');
     chip.className = 'mask-chip' + (L.mask ? ' on' : '')
       + (i === state.activeIndex && state.maskEditing ? ' editing' : '');
-    chip.textContent = 'М';
-    chip.title = L.mask ? 'Маска есть — щелчок переключает правку маски' : 'Маски нет';
+    chip.textContent = t('layers.maskChip');
+    chip.title = t(L.mask ? 'layers.maskHas' : 'layers.maskNone');
     chip.addEventListener('click', (e) => { e.stopPropagation(); handlers.onToggleMaskEdit(i); });
 
     row.append(eye, name, chip);
@@ -124,6 +126,6 @@ export function drawUVPreview(canvas, target, cache, showWire) {
 
 /** Подпись размера кисти в метрах или сантиметрах — масштаб проекта метровый. */
 export function formatSize(metres) {
-  if (metres >= 1) return metres.toFixed(2).replace(/0$/, '') + ' м';
-  return Math.round(metres * 100) + ' см';
+  if (metres >= 1) return metres.toFixed(2).replace(/0$/, '') + ' ' + t('unit.m');
+  return Math.round(metres * 100) + ' ' + t('unit.cm');
 }

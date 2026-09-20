@@ -52,9 +52,9 @@ const state = {
   color2: [120, 50, 34],      // второй цвет узора
   pattern: { id: 'none', scale: 8, contrast: 1 },
   texture: null,              // своя картинка для покраски: {data, w, h, name}
-  matName: 'Краска',
+  matName: () => t('mat.paint'),
   // Фигуры и текст: чем печатаем и какой толщины.
-  shape: { outline: false, thickness: 4, text: 'Текст', font: 96 },
+  shape: { outline: false, thickness: 4, text: t('shape.textDefault'), font: 96 },
   pivot: 'local',             // вокруг чего вращаем вид
   sizePct: 4,        // диаметр кисти в % от габарита модели
   // Кисть одним объектом: её же получают ядро покраски и окно кистей.
@@ -78,6 +78,7 @@ const history = new History(40);
 const targets = new Map();
 let activeMesh = null;
 let modelName = '—';
+let lastReport = null;   // последний отчёт о загрузке: нужен, чтобы пересобрать статистику при смене языка
 
 const uvEditor = new UVEditor($('uv-body'), {
   currentTool: () => state.tool,
@@ -208,11 +209,15 @@ function strokeOpts(shift) {
   };
 }
 
+/**
+ * Ключ названия действия — не готовая строка: шаг истории живёт дольше,
+ * чем выбранный язык, и переводится при каждой отрисовке списка.
+ */
 function toolLabel() {
-  return { brush: 'Кисть', eraser: 'Ластик', mask: 'Маска',
-           'fill-faces': 'Заливка граней', 'fill-island': 'Заливка острова',
-           'fill-layer': 'Заливка слоя',
-           rect: 'Прямоугольник', ellipse: 'Круг', text: 'Текст' }[state.tool] || 'Правка';
+  return { brush: 'act.brush', eraser: 'act.eraser', mask: 'act.mask',
+           'fill-faces': 'act.fillFaces', 'fill-island': 'act.fillIsland',
+           'fill-layer': 'act.fillLayer',
+           rect: 'act.rect', ellipse: 'act.ellipse', text: 'act.text' }[state.tool] || 'act.edit';
 }
 
 const SHAPE_TOOLS = new Set(['rect', 'ellipse', 'text']);
@@ -339,7 +344,7 @@ function uvFill(tri) {
   const target = activeTarget();
   if (!target || !activeMesh) return;
   const cache = activeMesh.userData.paintCache;
-  if (tri < 0 && state.tool !== 'fill-layer') { setStatusHint('мимо развёртки'); return; }
+  if (tri < 0 && state.tool !== 'fill-layer') { setStatusHint(t('status.missedUV')); return; }
   runFill(target, cache, tri);
 }
 
@@ -348,7 +353,7 @@ function uvPick(tx, ty) {
   if (!target) return;
   const S = target.size;
   // Пипетка берёт материал целиком: цвет и поверхность под ним.
-  setMaterial({ ...target.sampleMaterialUV(tx / S, 1 - ty / S), name: 'С модели' });
+  setMaterial({ ...target.sampleMaterialUV(tx / S, 1 - ty / S), name: () => t('mat.fromModel') });
 }
 
 /* Заливки ---------------------------------------------------------- */
@@ -364,7 +369,7 @@ function runFill(target, cache, faceIndex) {
     const set = floodFaces(cache, faceIndex,
       island ? 180 : state.fillAngle, island ? 'uv' : 'geom');
     s.fillTriangles(set);
-    setStatusHint(`залито граней: ${set.size}`);
+    setStatusHint(t('status.filled', set.size));
   }
 
   const entry = s.end(toolLabel());
@@ -410,7 +415,7 @@ function shapeStencil(kind, a, b) {
   // Текст: тянем — задаём кегль высотой протяжки, щёлкаем — берём из панели.
   const h = Math.abs(b.y - a.y);
   const px = Math.max(8, h > 6 ? h : font);
-  const img = renderText(text || 'Текст', px);
+  const img = renderText(text || t('shape.textDefault'), px);
   return { fn: imageStencil(img.data, img.w, img.h, a.x - img.w / 2, a.y - img.h / 2), img };
 }
 
@@ -445,7 +450,7 @@ function applyShape3D(mesh, a, b) {
 
   const entry = s.end(toolLabel());
   if (entry) history.push(entry);
-  else setStatusHint('фигура не легла на модель');
+  else setStatusHint(t('status.shapeMissed'));
   state.painted = true;
   viewport.syncTransparency();
   refreshUV();
@@ -491,7 +496,7 @@ el.addEventListener('pointerdown', (e) => {
   switch (state.tool) {
     case 'eyedropper': {
       const t = targets.get(hit.mesh);
-      if (t && hit.uv) setMaterial({ ...t.sampleMaterialUV(hit.uv.x, hit.uv.y), name: 'С модели' });
+      if (t && hit.uv) setMaterial({ ...t.sampleMaterialUV(hit.uv.x, hit.uv.y), name: () => t('mat.fromModel') });
       break;
     }
     case 'fill-faces':
@@ -616,12 +621,22 @@ $('fill-angle').addEventListener('input', (e) => {
   $('fill-angle-val').textContent = e.target.value + '°';
 });
 
-function setColor(rgb) { setMaterial({ color: rgb, name: 'Краска' }); }
+function setColor(rgb) { setMaterial({ color: rgb, name: () => t('mat.paint') }); }
 
 /**
  * Сменить материал кисти целиком или частями.
  * @param {object} patch {color, color2, pattern, roughness, metalness, opacity, alpha, name}
  */
+/** Имя модели: у файла это его имя, у демо — подпись, зависящая от языка. */
+function имяМодели() {
+  return typeof modelName === 'function' ? modelName() : modelName;
+}
+
+/** Имя материала: готовая строка или функция, считающая её под язык. */
+function имяМатериала() {
+  return typeof state.matName === 'function' ? state.matName() : state.matName;
+}
+
 function setMaterial(patch) {
   if (patch.color) state.color = patch.color;
   if (patch.color2) state.color2 = patch.color2;
@@ -653,14 +668,14 @@ function syncMaterialChip() {
     alpha: state.opacity, checker: true,
   });
 
-  $('mat-chip-name').textContent = state.matName;
+  $('mat-chip-name').textContent = имяМатериала();
 
   const bits = [UI.rgbToHex(state.color).toUpperCase()];
-  bits.push(`шерох. ${Math.round(state.roughness * 100)}%`);
-  if (state.metalness > 0.01) bits.push(`металл ${Math.round(state.metalness * 100)}%`);
-  if (state.opacity < 0.99) bits.push(`прозр. ${Math.round((1 - state.opacity) * 100)}%`);
-  if (state.pattern.id === 'image') bits.push('своя текстура');
-  else if (state.pattern.id !== 'none') bits.push('узор');
+  bits.push(t('mat.roughShort', Math.round(state.roughness * 100)));
+  if (state.metalness > 0.01) bits.push(t('mat.metalShort', Math.round(state.metalness * 100)));
+  if (state.opacity < 0.99) bits.push(t('mat.opacityShort', Math.round((1 - state.opacity) * 100)));
+  if (state.pattern.id === 'image') bits.push(t('mat.ownTexture'));
+  else if (state.pattern.id !== 'none') bits.push(t('mat.patternShort'));
   $('mat-chip-sub').textContent = bits.join(' · ');
 }
 
@@ -669,7 +684,7 @@ UI.renderSwatches($('quick-mats'), (hex) => setMaterial({
   color: UI.hexToRgb(hex),
   pattern: { id: 'none' },
   roughness: 0.9, metalness: 0, opacity: 1,
-  name: `Краска · ${hex.toUpperCase()}`,
+  name: () => t('mat.chipName', hex.toUpperCase()),
 }));
 
 /* ── Слои ──────────────────────────────────────────────────────── */
@@ -684,7 +699,7 @@ function syncLayers() {
         eachTarget((t) => { t.layers[i].visible = vis; t.compositeRect(null); });
         syncLayers(); refreshUV();
       },
-      onRename: (i, name) => { eachTarget((t) => { t.layers[i].name = name; }); syncLayers(); },
+      onRename: (i, name) => { eachTarget((t) => { t.layers[i].name = name; t.layers[i].auto = null; }); syncLayers(); },
       onToggleMaskEdit: (i) => {
         setActiveLayer(i);
         eachTarget((t) => t.layers[i].ensureMask(t.size));
@@ -747,8 +762,8 @@ function renderHistory() {
     list.appendChild(d);
   };
 
-  row('Исходное состояние', -1);
-  history.entries.forEach((e, i) => row(`${i + 1}. ${e.label}`, i));
+  row(t('hist.start'), -1);
+  history.entries.forEach((e, i) => row(`${i + 1}. ${t(e.label)}`, i));
 
   $('history-count').textContent = history.entries.length ? String(history.entries.length) : '';
   const cur = list.querySelector('.hist.current');
@@ -976,7 +991,7 @@ const materialModal = createMaterialModal({
     opacity: state.opacity,
     roughness: state.roughness,
     metalness: state.metalness,
-    name: state.matName,
+    name: имяМатериала(),
   }),
   setMaterial: (patch) => setMaterial(patch),
 });
@@ -1027,6 +1042,7 @@ function setActiveMesh(mesh) {
 function afterModelLoaded(report) {
   const downgraded = buildTargets(viewport.paintables);
   modelName = report.name;
+  lastReport = report;
 
   syncLayers();
   syncBrushLabels();
@@ -1036,16 +1052,17 @@ function afterModelLoaded(report) {
   syncPerf();
   if (state.uvOpen) { uvEditor.setTarget(null, null); refreshUV(); uvEditor.fit(); uvEditor.draw(); }
 
-  $('stat-tris').textContent = `${(report.tris || 0).toLocaleString('ru')} трис · ${report.meshes} меш(ей)`;
+  $('stat-tris').textContent = t('status.tris',
+    (report.tris || 0).toLocaleString(getLang() === 'en' ? 'en-US' : 'ru'), report.meshes);
 
   const notes = [];
-  if (downgraded) notes.push(`мешей много — текстура ${downgraded}`);
-  if (report.noUV?.length) notes.push(`без развёртки, не красится: ${report.noUV.join(', ')}`);
+  if (downgraded) notes.push(t('status.manyMeshes', downgraded));
+  if (report.noUV?.length) notes.push(t('status.noUVList', report.noUV.join(', ')));
   if (report.overlapping?.length) {
     // Наложенная развёртка — не мелочь: мазок по одной грани проступит на
     // другой. Лучше сказать сразу, чем гадать, почему кисть «мажет мимо».
     const worst = Math.round(Math.max(...report.overlapping.map((o) => o.ratio)) * 100);
-    notes.push(`⚠ развёртка с наложением (${worst}%): ${report.overlapping.map((o) => o.name).join(', ')} — мазок продублируется`);
+    notes.push(t('status.overlap', worst, report.overlapping.map((o) => o.name).join(', ')));
   }
   const uvEl = $('stat-uv');
   uvEl.textContent = notes.join(' · ');
@@ -1055,19 +1072,23 @@ function afterModelLoaded(report) {
 }
 
 function syncStatusModel() {
-  $('stat-model').innerHTML = `<b>${modelName}</b> · меш: ${activeMesh?.name || '—'}`;
+  // Надпись пишется кодом, поэтому ключа в разметке у неё нет: applyDOM()
+  // затирал бы имя модели каждой сменой языка.
+  $('stat-model').innerHTML = viewport.model
+    ? `<b>${имяМодели()}</b> · ${t('status.mesh', activeMesh?.name || '—')}`
+    : t('status.noModel');
 }
 function syncPerf() {
-  $('stat-perf').textContent = perfMs > 0.05 ? `кисть ${perfMs.toFixed(1)} мс/кадр` : '';
+  $('stat-perf').textContent = perfMs > 0.05 ? t('status.perf', perfMs.toFixed(1)) : '';
 }
 
 let hintTimer = null;
-const HINT = 'ЛКМ — инструмент · ПКМ — вращать · пробел+ЛКМ — двигать · колесо — зум';
+const HINT = () => t('status.hint');
 function setStatusHint(text) {
   const hint = document.querySelector('#statusbar .hint');
   clearTimeout(hintTimer);
   hint.textContent = text;
-  hintTimer = setTimeout(() => { hint.textContent = HINT; }, 2500);
+  hintTimer = setTimeout(() => { hint.textContent = HINT(); }, 2500);
 }
 
 $('btn-demo').addEventListener('click', () => afterModelLoaded(viewport.loadDemo()));
@@ -1132,7 +1153,7 @@ el.addEventListener('drop', async (e) => {
 
 function setTexSize(next) {
   if (next === state.texSize) return;
-  if (state.painted && !confirm('Смена размера текстуры сотрёт покраску. Продолжить?')) return;
+  if (state.painted && !confirm(t('confirm.texSize'))) return;
   state.texSize = next;
   const tris = $('stat-tris').textContent;
   afterModelLoaded({ name: modelName, meshes: viewport.paintables.length, tris: 0, noUV: [] });
@@ -1178,7 +1199,7 @@ async function saveAs(формат) {
     return 0;
   }
 
-  const основа = modelName.replace(/\.[^.]+$/, '') || 'model';
+  const основа = имяМодели().replace(/\.[^.]+$/, '') || 'model';
 
   if (формат === 'png') { saveTextures(); return targets.size; }
 
@@ -1227,7 +1248,7 @@ function hasMaterialPaint(t) {
 
 function saveTextures() {
   if (!targets.size) return;
-  const base = modelName.replace(/\.[^.]+$/, '') || 'model';
+  const base = имяМодели().replace(/\.[^.]+$/, '') || 'model';
   let files = 0;
   let i = 0;
 
@@ -1244,7 +1265,7 @@ function saveTextures() {
     }
     i += 1;
   }
-  setStatusHint(`сохранено файлов: ${files} (цвет${files > targets.size ? ' и материал' : ''})`);
+  setStatusHint(t(files > targets.size ? 'status.savedBoth' : 'status.savedColor', files));
 }
 $('btn-save').addEventListener('click', saveTextures);
 
@@ -1395,8 +1416,28 @@ const menuBar = new MenuBar($('menubar'), [
   ] },
 ]);
 
-// Смена языка не пересобирает меню: структура та же, меняются только надписи.
-onLangChange(() => { menuBar.relabel(); applyDOM(); });
+/**
+ * Смена языка на лету. Меню и разметка перечитывают ключи, а всё, что
+ * собрано из строк в коде — подписи кисти, имя материала, слои, история,
+ * строка состояния, — пересчитывается заново. Покраска при этом остаётся:
+ * ради переключения языка терять работу незачем.
+ */
+onLangChange(() => {
+  menuBar.relabel();
+  applyDOM();
+
+  syncBrushLabels();
+  syncMaterialChip();
+  syncLayers();
+  renderHistory();
+  syncStatusModel();
+  syncPerf();
+  syncShapeUI();
+  $('stat-tris').textContent = lastReport
+    ? t('status.tris', (lastReport.tris || 0).toLocaleString(getLang() === 'en' ? 'en-US' : 'ru'), lastReport.meshes)
+    : '';
+  document.querySelector('#statusbar .hint').textContent = HINT();
+});
 
 /* ── Старт ─────────────────────────────────────────────────────── */
 
@@ -1417,7 +1458,7 @@ onLangChange(() => { menuBar.relabel(); applyDOM(); });
   setUVOpen(!!p.uvOpen);
 })();
 
-setMaterial({ color: state.color, name: 'Краска' });
+setMaterial({ color: state.color, name: () => t('mat.paint') });
 syncShapeUI();
 setTool('brush');
 setProjection('persp');
@@ -1429,6 +1470,7 @@ syncViewUI();
 
 // Перевести разметку и принимать все форматы, которые умеем читать.
 applyDOM();
+syncStatusModel();   // applyDOM() прошёл по разметке — вернуть имя модели на место
 $('file-input').accept = acceptAttribute();
 
 // Начальный экран — поверх готовой программы: под ним уже стоит демо-модель,

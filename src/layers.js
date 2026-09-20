@@ -12,13 +12,22 @@
  * к пикселям, через 2D-контекст это было бы на порядок медленнее.
  */
 
+import { t } from './i18n.js';
+
 import * as THREE from 'three';
 
 export const BLEND_MODES = ['normal', 'multiply', 'screen'];
 
 export class Layer {
-  constructor(size, name) {
+  /**
+   * @param {number} size сторона текстуры
+   * @param {string} name готовое имя, либо null — тогда имя даётся номером
+   * @param {number} [auto] номер для автоимени: оно переводится вместе с
+   *   интерфейсом, а переименованный вручную слой остаётся как назвали
+   */
+  constructor(size, name, auto) {
     this.name = name;
+    this.auto = auto ?? null;
     this.rgba = new Uint8ClampedArray(size * size * 4); // прозрачный
     this.rough = new Uint8Array(size * size);           // 0..255 → 0..1
     this.metal = new Uint8Array(size * size);
@@ -49,7 +58,7 @@ export class PaintTarget {
     this.bgMetal = 0;
     this.hasTransparency = false;
 
-    this.layers = [new Layer(size, 'Слой 1')];
+    this.layers = [new Layer(size, null, 1)];
     this.activeIndex = 0;
 
     this.composite = new Uint8ClampedArray(size * size * 4);
@@ -80,7 +89,7 @@ export class PaintTarget {
   get activeLayer() { return this.layers[this.activeIndex]; }
 
   addLayer(name) {
-    const l = new Layer(this.size, name || `Слой ${this.layers.length + 1}`);
+    const l = new Layer(this.size, name || null, name ? null : this.layers.length + 1);
     this.layers.splice(this.activeIndex + 1, 0, l);
     this.activeIndex += 1;
     return l;

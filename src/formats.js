@@ -222,7 +222,7 @@ export async function exportOBJ(модель, карты, основа) {
   текст = `mtllib ${основа}.mtl\n${текст}`;
 
   const mtl = [
-    '# Материал покраски',
+    '# Painted material',
     'newmtl painted',
     'Ka 1.000 1.000 1.000',
     'Kd 1.000 1.000 1.000',

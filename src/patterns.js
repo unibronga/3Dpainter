@@ -94,16 +94,16 @@ const FN = {
 };
 
 export const PATTERNS = [
-  { id: 'none', name: 'Без узора' },
-  { id: 'wood', name: 'Волокно' },
-  { id: 'stone', name: 'Крап' },
-  { id: 'brick', name: 'Кладка' },
-  { id: 'noise', name: 'Крошка' },
-  { id: 'stripes', name: 'Полосы' },
-  { id: 'checker', name: 'Клетка' },
-  { id: 'scratch', name: 'Царапины' },
-  { id: 'grass', name: 'Трава' },
-  { id: 'rust', name: 'Потёки' },
+  { id: 'none', key: 'pattern.none' },
+  { id: 'wood', key: 'pattern.wood' },
+  { id: 'stone', key: 'pattern.stone' },
+  { id: 'brick', key: 'pattern.brick' },
+  { id: 'noise', key: 'pattern.noise' },
+  { id: 'stripes', key: 'pattern.stripes' },
+  { id: 'checker', key: 'pattern.checker' },
+  { id: 'scratch', key: 'pattern.scratch' },
+  { id: 'grass', key: 'pattern.grass' },
+  { id: 'rust', key: 'pattern.rust' },
 ];
 
 export const DEFAULT_PATTERN = { id: 'none', scale: 8, contrast: 1 };

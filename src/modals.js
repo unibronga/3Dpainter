@@ -17,22 +17,22 @@ import { t, onLangChange, LANGS } from './i18n.js';
 /* ── Библиотека кистей ─────────────────────────────────────────── */
 
 export const BRUSH_PRESETS = [
-  { name: 'Жёсткая круглая', brush: { hardness: 1, flow: 1, grain: 0, shape: 'round', spacing: 0.25, scatter: 0 } },
-  { name: 'Мягкая круглая', brush: { hardness: 0.15, flow: 1, grain: 0, shape: 'round', spacing: 0.2, scatter: 0 } },
-  { name: 'Маркер', brush: { hardness: 0.9, flow: 0.85, grain: 0, shape: 'round', spacing: 0.12, scatter: 0 } },
-  { name: 'Тушь', brush: { hardness: 1, flow: 1, grain: 0, shape: 'round', spacing: 0.05, scatter: 0 } },
-  { name: 'Карандаш', brush: { hardness: 0.95, flow: 0.55, grain: 0.3, shape: 'round', spacing: 0.08, scatter: 0.03 } },
-  { name: 'Аэрограф', brush: { hardness: 0, flow: 0.22, grain: 0, shape: 'round', spacing: 0.06, scatter: 0 } },
-  { name: 'Пастель', brush: { hardness: 0.5, flow: 0.9, grain: 0.5, shape: 'round', spacing: 0.18, scatter: 0.06 } },
-  { name: 'Сухая кисть', brush: { hardness: 0.6, flow: 0.95, grain: 0.7, shape: 'round', spacing: 0.3, scatter: 0.12 } },
-  { name: 'Мел', brush: { hardness: 0.35, flow: 1, grain: 0.85, shape: 'round', spacing: 0.22, scatter: 0.05 } },
-  { name: 'Губка', brush: { hardness: 0.25, flow: 0.7, grain: 0.9, shape: 'round', spacing: 0.45, scatter: 0.4 } },
-  { name: 'Брызги', brush: { hardness: 0.5, flow: 0.8, grain: 0.55, shape: 'round', spacing: 0.6, scatter: 0.7 } },
-  { name: 'Царапины', brush: { hardness: 1, flow: 0.9, grain: 0.8, shape: 'round', spacing: 0.75, scatter: 0.85 } },
-  { name: 'Квадратная', brush: { hardness: 1, flow: 1, grain: 0, shape: 'square', spacing: 0.3, scatter: 0 } },
-  { name: 'Плоский резец', brush: { hardness: 0.85, flow: 1, grain: 0.15, shape: 'square', spacing: 0.15, scatter: 0 } },
-  { name: 'Мягкий квадрат', brush: { hardness: 0.25, flow: 1, grain: 0, shape: 'square', spacing: 0.2, scatter: 0 } },
-  { name: 'Штукатурка', brush: { hardness: 0.7, flow: 1, grain: 0.6, shape: 'square', spacing: 0.5, scatter: 0.45 } },
+  { key: 'preset.hardRound', brush: { hardness: 1, flow: 1, grain: 0, shape: 'round', spacing: 0.25, scatter: 0 } },
+  { key: 'preset.softRound', brush: { hardness: 0.15, flow: 1, grain: 0, shape: 'round', spacing: 0.2, scatter: 0 } },
+  { key: 'preset.marker', brush: { hardness: 0.9, flow: 0.85, grain: 0, shape: 'round', spacing: 0.12, scatter: 0 } },
+  { key: 'preset.ink', brush: { hardness: 1, flow: 1, grain: 0, shape: 'round', spacing: 0.05, scatter: 0 } },
+  { key: 'preset.pencil', brush: { hardness: 0.95, flow: 0.55, grain: 0.3, shape: 'round', spacing: 0.08, scatter: 0.03 } },
+  { key: 'preset.airbrush', brush: { hardness: 0, flow: 0.22, grain: 0, shape: 'round', spacing: 0.06, scatter: 0 } },
+  { key: 'preset.pastel', brush: { hardness: 0.5, flow: 0.9, grain: 0.5, shape: 'round', spacing: 0.18, scatter: 0.06 } },
+  { key: 'preset.dryBrush', brush: { hardness: 0.6, flow: 0.95, grain: 0.7, shape: 'round', spacing: 0.3, scatter: 0.12 } },
+  { key: 'preset.chalk', brush: { hardness: 0.35, flow: 1, grain: 0.85, shape: 'round', spacing: 0.22, scatter: 0.05 } },
+  { key: 'preset.sponge', brush: { hardness: 0.25, flow: 0.7, grain: 0.9, shape: 'round', spacing: 0.45, scatter: 0.4 } },
+  { key: 'preset.spatter', brush: { hardness: 0.5, flow: 0.8, grain: 0.55, shape: 'round', spacing: 0.6, scatter: 0.7 } },
+  { key: 'preset.scratches', brush: { hardness: 1, flow: 0.9, grain: 0.8, shape: 'round', spacing: 0.75, scatter: 0.85 } },
+  { key: 'preset.squareBrush', brush: { hardness: 1, flow: 1, grain: 0, shape: 'square', spacing: 0.3, scatter: 0 } },
+  { key: 'preset.flatChisel', brush: { hardness: 0.85, flow: 1, grain: 0.15, shape: 'square', spacing: 0.15, scatter: 0 } },
+  { key: 'preset.softSquare', brush: { hardness: 0.25, flow: 1, grain: 0, shape: 'square', spacing: 0.2, scatter: 0 } },
+  { key: 'preset.plaster', brush: { hardness: 0.7, flow: 1, grain: 0.6, shape: 'square', spacing: 0.5, scatter: 0.45 } },
 ];
 
 const BRUSH_KEYS = ['hardness', 'flow', 'grain', 'shape', 'spacing', 'scatter'];
@@ -47,29 +47,29 @@ const BRUSH_KEYS = ['hardness', 'flow', 'grain', 'shape', 'spacing', 'scatter'];
 export const MATERIAL_GROUPS = [
   // Обычная краска: ни узора, ни блеска — просто цвет. Самый частый случай,
   // поэтому стоит первым.
-  { name: 'Краска', roughness: 0.9, metalness: 0, colors: PALETTE },
+  { key: 'matgroup.paint', roughness: 0.9, metalness: 0, colors: PALETTE },
 
-  { name: 'Дерево', roughness: 0.95, metalness: 0, pattern: { id: 'wood', scale: 9, contrast: 1.2 },
+  { key: 'matgroup.wood', roughness: 0.95, metalness: 0, pattern: { id: 'wood', scale: 9, contrast: 1.2 },
     colors: ['#9b7653', '#6b4f3a', '#c8a074', '#4a3728', '#b98c5a', '#7d5d42'] },
-  { name: 'Камень', roughness: 0.92, metalness: 0, pattern: { id: 'stone', scale: 7, contrast: 1.1 },
+  { key: 'matgroup.stone', roughness: 0.92, metalness: 0, pattern: { id: 'stone', scale: 7, contrast: 1.1 },
     colors: ['#a8a49b', '#6e6a63', '#d9d4c7', '#4a4844', '#8d9096', '#5d5f63'] },
-  { name: 'Кладка', roughness: 0.95, metalness: 0, pattern: { id: 'brick', scale: 5, contrast: 1.4 },
+  { key: 'matgroup.brick', roughness: 0.95, metalness: 0, pattern: { id: 'brick', scale: 5, contrast: 1.4 },
     colors: ['#b0563c', '#8d4a36', '#c98f6b', '#6d6a66', '#a89880', '#7a3f2e'] },
-  { name: 'Металл', roughness: 0.3, metalness: 1, pattern: { id: 'scratch', scale: 8, contrast: 1 },
+  { key: 'matgroup.metal', roughness: 0.3, metalness: 1, pattern: { id: 'scratch', scale: 8, contrast: 1 },
     colors: ['#b9bec6', '#7d848d', '#565c66', '#c9a227', '#b87333', '#3f444b'] },
-  { name: 'Зелень', roughness: 1, metalness: 0, pattern: { id: 'grass', scale: 9, contrast: 1.2 },
+  { key: 'matgroup.green', roughness: 1, metalness: 0, pattern: { id: 'grass', scale: 9, contrast: 1.2 },
     colors: ['#8fae5a', '#4f7a4b', '#2f5d50', '#b5c96a', '#35553a', '#6d9150'] },
-  { name: 'Земля', roughness: 1, metalness: 0, pattern: { id: 'noise', scale: 9, contrast: 0.8 },
+  { key: 'matgroup.earth', roughness: 1, metalness: 0, pattern: { id: 'noise', scale: 9, contrast: 0.8 },
     colors: ['#b08050', '#8a5e3c', '#d9b483', '#5e4530', '#c99a6b', '#6f4e33'] },
-  { name: 'Вода', roughness: 0.1, metalness: 0, opacity: 0.8,
+  { key: 'matgroup.water', roughness: 0.1, metalness: 0, opacity: 0.8,
     colors: ['#56809e', '#2f4858', '#7fb0c4', '#1e3644', '#9fd0d9', '#3d6b83'] },
-  { name: 'Ткань', roughness: 1, metalness: 0, pattern: { id: 'noise', scale: 14, contrast: 0.5 },
+  { key: 'matgroup.fabric', roughness: 1, metalness: 0, pattern: { id: 'noise', scale: 14, contrast: 0.5 },
     colors: ['#c8563c', '#e0a355', '#f2d6a2', '#7a4b6b', '#3c4a6b', '#a33f2e'] },
-  { name: 'Стекло', roughness: 0.06, metalness: 0, opacity: 0.25,
+  { key: 'matgroup.glass', roughness: 0.06, metalness: 0, opacity: 0.25,
     colors: ['#cfe3e8', '#9fc2cc', '#6f97a4', '#d6c9e0', '#b7d6b2', '#e8e4dc'] },
-  { name: 'Ржавчина', roughness: 0.85, metalness: 0.35, pattern: { id: 'rust', scale: 8, contrast: 1.3 },
+  { key: 'matgroup.rust', roughness: 0.85, metalness: 0.35, pattern: { id: 'rust', scale: 8, contrast: 1.3 },
     colors: ['#8a4b2a', '#6d3a20', '#a86336', '#4f2e1c', '#93664a', '#5c4534'] },
-  { name: 'Свет и тень', roughness: 0.85, metalness: 0,
+  { key: 'matgroup.lightShadow', roughness: 0.85, metalness: 0,
     colors: ['#ffffff', '#e8e4dc', '#a09c94', '#3c3a37', '#1e1c1a', '#ffd9a0'] },
 ];
 
@@ -85,16 +85,16 @@ export function materialFrom(group, hex) {
     roughness: group.roughness,
     metalness: group.metalness,
     opacity: group.opacity ?? 1,
-    name: `${group.name} · ${hex.toUpperCase()}`,
+    name: () => `${t(group.key)} · ${hex.toUpperCase()}`,
   };
 }
 
 /** Поверхность — только для показа: в выдачу материалы идут плоскими. */
 export const SURFACES = [
-  { name: 'Матовая', roughness: 1.0, metalness: 0 },
-  { name: 'Обычная', roughness: 0.9, metalness: 0 },
-  { name: 'Гладкая', roughness: 0.45, metalness: 0 },
-  { name: 'Металл', roughness: 0.3, metalness: 1 },
+  { key: 'surface.matte', roughness: 1.0, metalness: 0 },
+  { key: 'surface.normal', roughness: 0.9, metalness: 0 },
+  { key: 'surface.smooth', roughness: 0.45, metalness: 0 },
+  { key: 'surface.metal', roughness: 0.3, metalness: 1 },
 ];
 
 /* ── Преобразования цвета ──────────────────────────────────────── */
@@ -143,15 +143,33 @@ function el(tag, cls, text) {
   return n;
 }
 
+/**
+ * Узел с переводимой надписью: текст ставится сразу, а ключ остаётся в
+ * разметке, и applyDOM() перечитает его при смене языка. Так окна не надо
+ * пересобирать — а пересобрать их значило бы потерять начатый выбор.
+ */
+function elT(tag, cls, ключ) {
+  const n = el(tag, cls, t(ключ));
+  n.dataset.i18n = ключ;
+  return n;
+}
+
+/** То же для подсказки. */
+function tip(узел, ключ) {
+  узел.dataset.i18nTitle = ключ;
+  узел.title = t(ключ);
+  return узел;
+}
+
 class Modal {
-  constructor(title, cls = '') {
+  constructor(titleKey, cls = '') {
     this.back = el('div', 'modal-back');
     this.box = el('div', 'modal ' + cls);
 
     const head = el('div', 'modal-head');
-    head.appendChild(el('span', 't', title));
+    head.appendChild(elT('span', 't', titleKey));
     const x = el('button', 'modal-x', '×');
-    x.title = 'Закрыть без изменений (Esc)';
+    tip(x, 'modal.closeTip');
     x.addEventListener('click', () => this.cancel());
     head.appendChild(x);
 
@@ -192,9 +210,9 @@ window.addEventListener('keydown', (e) => {
 
 /* ── Ряд с ползунком ───────────────────────────────────────────── */
 
-function slider(parent, label, min, max, step, get, set, fmt) {
+function slider(parent, labelKey, min, max, step, get, set, fmt) {
   const row = el('div', 'row');
-  row.appendChild(el('label', null, label));
+  row.appendChild(elT('label', null, labelKey));
   const inp = el('input');
   inp.type = 'range';
   inp.min = min; inp.max = max; inp.step = step;
@@ -211,13 +229,13 @@ function slider(parent, label, min, max, step, get, set, fmt) {
 /* ── Окно кистей ───────────────────────────────────────────────── */
 
 export function createBrushModal(api) {
-  const m = new Modal('Кисти', 'wide');
+  const m = new Modal('brush.modalTitle', 'wide');
 
   const preview = el('canvas', 'brush-preview');
   preview.width = 600; preview.height = 96;
   m.body.appendChild(preview);
 
-  m.body.appendChild(el('div', 'modal-sub', 'Готовые кисти'));
+  m.body.appendChild(elT('div', 'modal-sub', 'brush.presets'));
   const grid = el('div', 'brush-grid');
   m.body.appendChild(grid);
 
@@ -225,13 +243,13 @@ export function createBrushModal(api) {
     const card = el('button', 'brush-card');
     const c = el('canvas');
     c.width = 150; c.height = 46;
-    card.append(c, el('span', 'n', p.name));
+    card.append(c, elT('span', 'n', p.key));
     card.addEventListener('click', () => { api.setBrush({ ...p.brush }); refresh(); });
     grid.appendChild(card);
     return { card, canvas: c, preset: p };
   });
 
-  m.body.appendChild(el('div', 'modal-sub', 'Настройки'));
+  m.body.appendChild(elT('div', 'modal-sub', 'brush.settings'));
   const opts = el('div', 'modal-grid2');
   m.body.appendChild(opts);
   const colA = el('div'); const colB = el('div');
@@ -251,18 +269,18 @@ export function createBrushModal(api) {
   const tweak = (patch) => { api.setBrush(patch); redraw(); };
 
   const syncs = [];
-  syncs.push(slider(colA, 'Размер', 0.3, 40, 0.1, api.getSizePct, (v) => { api.setSizePct(v); redraw(); }, (v) => api.sizeLabel(v)));
-  syncs.push(slider(colA, 'Жёсткость', 0, 100, 1, () => Math.round(b().hardness * 100), (v) => tweak({ hardness: v / 100 }), (v) => v + '%'));
-  syncs.push(slider(colA, 'Нажим', 1, 100, 1, () => Math.round(b().flow * 100), (v) => tweak({ flow: v / 100 }), (v) => v + '%'));
-  syncs.push(slider(colB, 'Зерно', 0, 100, 1, () => Math.round((b().grain || 0) * 100), (v) => tweak({ grain: v / 100 }), (v) => v + '%'));
-  syncs.push(slider(colB, 'Интервал', 3, 80, 1, () => Math.round((b().spacing ?? 0.25) * 100), (v) => tweak({ spacing: v / 100 }), (v) => v + '%'));
-  syncs.push(slider(colB, 'Разброс', 0, 100, 1, () => Math.round((b().scatter || 0) * 100), (v) => tweak({ scatter: v / 100 }), (v) => v + '%'));
+  syncs.push(slider(colA, 'brush.size', 0.3, 40, 0.1, api.getSizePct, (v) => { api.setSizePct(v); redraw(); }, (v) => api.sizeLabel(v)));
+  syncs.push(slider(colA, 'brush.hardness', 0, 100, 1, () => Math.round(b().hardness * 100), (v) => tweak({ hardness: v / 100 }), (v) => v + '%'));
+  syncs.push(slider(colA, 'brush.flow', 1, 100, 1, () => Math.round(b().flow * 100), (v) => tweak({ flow: v / 100 }), (v) => v + '%'));
+  syncs.push(slider(colB, 'brush.grain', 0, 100, 1, () => Math.round((b().grain || 0) * 100), (v) => tweak({ grain: v / 100 }), (v) => v + '%'));
+  syncs.push(slider(colB, 'brush.spacing', 3, 80, 1, () => Math.round((b().spacing ?? 0.25) * 100), (v) => tweak({ spacing: v / 100 }), (v) => v + '%'));
+  syncs.push(slider(colB, 'brush.scatter', 0, 100, 1, () => Math.round((b().scatter || 0) * 100), (v) => tweak({ scatter: v / 100 }), (v) => v + '%'));
 
   const shapeRow = el('div', 'row wide');
-  shapeRow.appendChild(el('label', null, 'Форма'));
+  shapeRow.appendChild(elT('label', null, 'brush.shape'));
   const shapeBox = el('div', 'seg');
-  const shapeBtns = [['round', 'круг'], ['square', 'квадрат']].map(([id, name]) => {
-    const btn = el('button', 'btn', name);
+  const shapeBtns = [['round', 'brush.round'], ['square', 'brush.square']].map(([id, ключ]) => {
+    const btn = elT('button', 'btn', ключ);
     btn.addEventListener('click', () => { tweak({ shape: id }); syncShape(); });
     shapeBox.appendChild(btn);
     return { btn, id };
@@ -289,6 +307,7 @@ export function createBrushModal(api) {
   }
 
   m.onOpen = refresh;
+  onLangChange(() => refresh());
   return { open: () => m.open(), refresh, modal: m };
 }
 
@@ -300,7 +319,7 @@ export function createBrushModal(api) {
  *   setMaterial(patch)
  */
 export function createMaterialModal(api) {
-  const m = new Modal('Материал', 'xwide');
+  const m = new Modal('mat.modalTitle', 'xwide');
   let snapshot = null;   // состояние на момент открытия — для «Отмены»
 
   const cols = el('div', 'mat-cols');
@@ -308,7 +327,7 @@ export function createMaterialModal(api) {
 
   /* ── Колонка 1: подбор цвета ─────────────────────────────── */
   const colPick = el('div', 'mat-col');
-  colPick.appendChild(el('div', 'modal-sub', 'Цвет'));
+  colPick.appendChild(elT('div', 'modal-sub', 'mat.color'));
 
   const pick = el('div', 'picker');
   const sv = el('canvas', 'picker-sv');
@@ -322,25 +341,25 @@ export function createMaterialModal(api) {
   hex.spellcheck = false;
   colPick.appendChild(hex);
 
-  colPick.appendChild(el('div', 'modal-sub', 'Оттенки'));
+  colPick.appendChild(elT('div', 'modal-sub', 'mat.shades'));
   const shadeRow = el('div', 'shade-row');
   colPick.appendChild(shadeRow);
 
   /* ── Колонка 2: что получилось ───────────────────────────── */
   const colMat = el('div', 'mat-col');
-  colMat.appendChild(el('div', 'modal-sub', 'Чем красим'));
+  colMat.appendChild(elT('div', 'modal-sub', 'mat.whatWePaint'));
 
   const bigBall = el('canvas', 'mat-big');
   bigBall.width = 180; bigBall.height = 180;
   colMat.appendChild(bigBall);
 
-  const matName = el('div', 'mat-current-name', 'Краска');
+  const matName = el('div', 'mat-current-name', t('mat.paint'));
   colMat.appendChild(matName);
 
-  colMat.appendChild(el('div', 'modal-sub', 'Поверхность'));
+  colMat.appendChild(elT('div', 'modal-sub', 'mat.surface'));
   const surf = el('div', 'seg-grid');
   const surfBtns = SURFACES.map((sp) => {
-    const btn = el('button', 'btn', sp.name);
+    const btn = elT('button', 'btn', sp.key);
     btn.addEventListener('click', () => {
       api.setMaterial({ roughness: sp.roughness, metalness: sp.metalness });
       refreshSurface();
@@ -352,24 +371,22 @@ export function createMaterialModal(api) {
 
   const surfOpts = el('div');
   colMat.appendChild(surfOpts);
-  const syncRough = slider(surfOpts, 'Шерохов.', 0, 100, 1,
+  const syncRough = slider(surfOpts, 'mat.rough', 0, 100, 1,
     () => Math.round(api.getMaterial().roughness * 100),
     (v) => { api.setMaterial({ roughness: v / 100 }); refreshSurface(); }, (v) => v + '%');
-  const syncMetal = slider(surfOpts, 'Металл', 0, 100, 1,
+  const syncMetal = slider(surfOpts, 'mat.metal', 0, 100, 1,
     () => Math.round(api.getMaterial().metalness * 100),
     (v) => { api.setMaterial({ metalness: v / 100 }); refreshSurface(); }, (v) => v + '%');
   // Потолок 90%: материал, прозрачный полностью, ничем не отличается от
   // нетронутой поверхности — такой ползунок только сбивает с толку.
-  const syncOpacity = slider(surfOpts, 'Прозрачность', 0, 90, 1,
+  const syncOpacity = slider(surfOpts, 'mat.opacity', 0, 90, 1,
     () => Math.round((1 - api.getMaterial().opacity) * 100),
     (v) => { api.setMaterial({ opacity: 1 - v / 100 }); refreshSurface(); }, (v) => v + '%');
 
-  colMat.appendChild(el('div', 'modal-note',
-    'Прозрачность — это стекло: сквозь закрашенное место видно модель насквозь. '
-    + 'Насколько сильно ложится сама краска, задаёт «Нажим» кисти.'));
+  colMat.appendChild(elT('div', 'modal-note', 'mat.opacityNote'));
 
   /* Узор материала */
-  colMat.appendChild(el('div', 'modal-sub', 'Узор'));
+  colMat.appendChild(elT('div', 'modal-sub', 'mat.patternTitle'));
   const patGrid = el('div', 'pat-grid');
   colMat.appendChild(patGrid);
 
@@ -384,7 +401,7 @@ export function createMaterialModal(api) {
   const imgCard = el('button', 'pat-card');
   const imgCanvas = el('canvas');
   imgCanvas.width = 72; imgCanvas.height = 40;
-  const imgLabel = el('span', 'n', 'Своя…');
+  const imgLabel = el('span', 'n', t('mat.own'));
   imgCard.append(imgCanvas, imgLabel);
   imgCard.addEventListener('click', () => {
     if (api.getMaterial().texture) api.setMaterial({ pattern: { id: 'image' } });
@@ -392,7 +409,7 @@ export function createMaterialModal(api) {
     refreshPattern();
   });
   imgCard.addEventListener('contextmenu', (e) => { e.preventDefault(); fileInput.click(); });
-  imgCard.title = 'Загрузить свою текстуру · правая кнопка — выбрать другую';
+  tip(imgCard, 'mat.ownTip');
 
   fileInput.addEventListener('change', async (e) => {
     const f = e.target.files[0];
@@ -403,7 +420,7 @@ export function createMaterialModal(api) {
       api.setMaterial({ texture: tex, pattern: { id: 'image' } });
       refreshPattern();
     } catch (err) {
-      imgLabel.textContent = 'не прочлось';
+      imgLabel.textContent = t('mat.readFailed');
       console.error(err);
     }
   });
@@ -412,7 +429,7 @@ export function createMaterialModal(api) {
     const card = el('button', 'pat-card');
     const cv = el('canvas');
     cv.width = 72; cv.height = 40;
-    card.append(cv, el('span', 'n', pt.name));
+    card.append(cv, elT('span', 'n', pt.key));
     card.addEventListener('click', () => {
       api.setMaterial({ pattern: { id: pt.id } });
       refreshPattern();
@@ -423,16 +440,16 @@ export function createMaterialModal(api) {
 
   const patOpts = el('div');
   colMat.appendChild(patOpts);
-  const syncScale = slider(patOpts, 'Повтор', 1, 30, 1,
+  const syncScale = slider(patOpts, 'mat.repeat', 1, 30, 1,
     () => Math.round(api.getMaterial().pattern.scale),
     (v) => { api.setMaterial({ pattern: { scale: v } }); refreshPattern(); }, (v) => String(v));
-  const syncContrast = slider(patOpts, 'Контраст', 10, 250, 5,
+  const syncContrast = slider(patOpts, 'mat.contrast', 10, 250, 5,
     () => Math.round(api.getMaterial().pattern.contrast * 100),
     (v) => { api.setMaterial({ pattern: { contrast: v / 100 } }); refreshPattern(); }, (v) => v + '%');
 
   /* ── Колонка 3: библиотека ───────────────────────────────── */
   const colLib = el('div', 'mat-col lib');
-  colLib.appendChild(el('div', 'modal-sub', 'Библиотека материалов'));
+  colLib.appendChild(elT('div', 'modal-sub', 'mat.library'));
   const lib = el('div', 'mat-lib');
   colLib.appendChild(lib);
 
@@ -442,7 +459,7 @@ export function createMaterialModal(api) {
     group.dataset.open = gi === 0 ? '1' : '0';
 
     const head = el('button', 'mat-group-head');
-    head.append(el('i', 'chev'), el('span', 'gn', g.name), el('span', 'cnt', String(g.colors.length)));
+    head.append(el('i', 'chev'), elT('span', 'gn', g.key), el('span', 'cnt', String(g.colors.length)));
     head.addEventListener('click', () => {
       group.dataset.open = group.dataset.open === '1' ? '0' : '1';
     });
@@ -453,7 +470,7 @@ export function createMaterialModal(api) {
       const cv = el('canvas');
       cv.width = cv.height = 108;   // рисуем крупнее, показываем мельче — края чище
       btn.appendChild(cv);
-      btn.title = `${g.name} · ${c.toUpperCase()}`;
+      btn.title = `${t(g.key)} · ${c.toUpperCase()}`;
       const mat = materialFrom(g, c);
       btn.addEventListener('click', () => { api.setMaterial(mat); refresh(); });
       body.appendChild(btn);
@@ -468,9 +485,9 @@ export function createMaterialModal(api) {
   cols.append(colPick, colMat, colLib);
 
   /* ── Подвал ──────────────────────────────────────────────── */
-  const hint = el('div', 'foot-hint', 'Выбранным материалом будет красить кисть');
-  const cancelBtn = el('button', 'btn', 'Отмена');
-  const okBtn = el('button', 'btn accent', 'ОК');
+  const hint = elT('div', 'foot-hint', 'mat.footHint');
+  const cancelBtn = elT('button', 'btn', 'mat.cancel');
+  const okBtn = elT('button', 'btn accent', 'mat.ok');
   cancelBtn.addEventListener('click', () => m.cancel());
   okBtn.addEventListener('click', () => m.close());
   m.foot.append(hint, cancelBtn, okBtn);
@@ -517,7 +534,7 @@ export function createMaterialModal(api) {
     // Гасим шар и плотностью краски, и прозрачностью самого материала.
     drawMaterialBall(bigBall, { ...mt, alpha: mt.opacity, checker: true });
     hex.value = rgbToHex(mt.color).toUpperCase();
-    matName.textContent = mt.name;
+    matName.textContent = typeof mt.name === 'function' ? mt.name() : mt.name;
   }
 
   function refreshPattern() {
@@ -530,7 +547,7 @@ export function createMaterialModal(api) {
 
     const tex = mt.texture;
     imgCard.classList.toggle('active', mt.pattern.id === 'image');
-    imgLabel.textContent = tex ? (tex.name.length > 9 ? tex.name.slice(0, 8) + '…' : tex.name) : 'Своя…';
+    imgLabel.textContent = tex ? (tex.name.length > 9 ? tex.name.slice(0, 8) + '…' : tex.name) : t('mat.own');
     const ic = imgCanvas.getContext('2d');
     ic.clearRect(0, 0, imgCanvas.width, imgCanvas.height);
     if (tex) {
@@ -555,7 +572,7 @@ export function createMaterialModal(api) {
       const sw = el('button', 'swatch');
       sw.style.background = `rgb(${rgb.join(',')})`;
       sw.title = rgbToHex(rgb).toUpperCase();
-      sw.addEventListener('click', () => { api.setMaterial({ color: rgb, name: 'Оттенок' }); refresh(); });
+      sw.addEventListener('click', () => { api.setMaterial({ color: rgb, name: () => t('mat.shade') }); refresh(); });
       shadeRow.appendChild(sw);
     }
   }
@@ -569,7 +586,7 @@ export function createMaterialModal(api) {
   }
 
   function setFromHsv() {
-    api.setMaterial({ color: hsvToRgb(hsv[0], hsv[1], hsv[2]), name: 'Краска' });
+    api.setMaterial({ color: hsvToRgb(hsv[0], hsv[1], hsv[2]), name: () => t('mat.paint') });
     paintSV(); paintShades(); refreshPattern();
   }
 
@@ -598,7 +615,7 @@ export function createMaterialModal(api) {
   hex.addEventListener('change', () => {
     const v = hex.value.trim();
     if (/^#?[0-9a-fA-F]{6}$/.test(v)) {
-      api.setMaterial({ color: hexToRgb(v.startsWith('#') ? v : '#' + v), name: 'Краска' });
+      api.setMaterial({ color: hexToRgb(v.startsWith('#') ? v : '#' + v), name: () => t('mat.paint') });
       refresh();
     } else paintCurrent();
   });
@@ -624,6 +641,10 @@ export function createMaterialModal(api) {
     snapshot = { ...api.getMaterial() };
     refresh();
   };
+
+  // Имя материала и подписи шаров собираются из состояния, а не из
+  // разметки: смена языка их не тронет, пока окно само не пересчитает.
+  onLangChange(() => refresh());
 
   return { open: () => m.open(), refresh, modal: m };
 }
@@ -660,74 +681,73 @@ export async function loadTextureFile(file) {
  * рассинхронизируются в первый же день.
  */
 export const HELP = [
-  { title: 'Мышь во вьюпорте', rows: [
-    ['ЛКМ', 'работать выбранным инструментом'],
-    ['ПКМ', 'вращать вид'],
-    ['пробел + ЛКМ', 'двигать вид'],
-    ['средняя кнопка', 'двигать вид'],
-    ['колесо', 'приближать и отдалять'],
+  { key: 'help.mouse', rows: [
+    ['key.lmb', 'help.mouse.lmb'],
+    ['key.rmb', 'help.mouse.rmb'],
+    ['key.spaceLmb', 'help.mouse.space'],
+    ['key.middle', 'help.mouse.middle'],
+    ['key.wheel', 'help.mouse.wheel'],
   ] },
-  { title: 'Куб ориентации', rows: [
-    ['протяжка', 'вращать вид, будто взялись за куб'],
-    ['щелчок по грани', 'встать на осевой вид'],
-    ['щелчок по ребру', 'вид под 45°'],
-    ['щелчок по углу', 'изометрия'],
+  { key: 'help.cube', rows: [
+    ['key.drag', 'help.cube.drag'],
+    ['key.clickFace', 'help.cube.face'],
+    ['key.clickEdge', 'help.cube.edge'],
+    ['key.clickCorner', 'help.cube.corner'],
   ] },
-  { title: 'Инструменты', rows: [
-    ['B', 'кисть'],
-    ['E', 'ластик'],
-    ['I', 'пипетка — берёт материал целиком'],
-    ['F', 'заливка связанных граней'],
-    ['G', 'заливка UV-острова'],
-    ['M', 'кисть по маске · Shift — вернуть'],
-    ['R', 'прямоугольник · Shift — квадрат'],
-    ['C', 'круг · Shift — правильный'],
-    ['T', 'текст'],
-    ['[  ]', 'размер кисти'],
+  { key: 'help.tools', rows: [
+    ['B', 'help.tools.brush'],
+    ['E', 'help.tools.eraser'],
+    ['I', 'help.tools.eyedropper'],
+    ['F', 'help.tools.fillFaces'],
+    ['G', 'help.tools.fillIsland'],
+    ['M', 'help.tools.mask'],
+    ['R', 'help.tools.rect'],
+    ['C', 'help.tools.ellipse'],
+    ['T', 'help.tools.text'],
+    ['[  ]', 'help.tools.size'],
   ] },
-  { title: 'Вид', rows: [
-    ['1 · 2', 'спереди · сзади'],
-    ['3 · 4', 'слева · справа'],
-    ['6 · 7', 'сверху · снизу'],
-    ['0', 'три четверти'],
-    ['5', 'перспектива ↔ ортография'],
-    ['Home', 'вписать модель в кадр'],
+  { key: 'help.view', rows: [
+    ['1 · 2', 'help.view.fb'],
+    ['3 · 4', 'help.view.lr'],
+    ['6 · 7', 'help.view.tb'],
+    ['0', 'help.view.user'],
+    ['5', 'help.view.proj'],
+    ['Home', 'help.view.fit'],
   ] },
-  { title: 'Панели', rows: [
-    ['U', 'развёртка на полэкрана'],
-    ['Tab', 'скрыть или показать панели'],
-    ['Esc', 'закрыть окно без изменений'],
+  { key: 'help.panels', rows: [
+    ['U', 'help.panels.uv'],
+    ['Tab', 'help.panels.tab'],
+    ['Esc', 'help.panels.esc'],
   ] },
-  { title: 'Правка', rows: [
-    ['⌘Z', 'отменить'],
-    ['⇧⌘Z', 'вернуть'],
-    ['щелчок по шагу истории', 'перейти к этому состоянию'],
+  { key: 'help.edit', rows: [
+    ['⌘Z', 'help.edit.undo'],
+    ['⇧⌘Z', 'help.edit.redo'],
+    ['key.histStep', 'help.edit.step'],
   ] },
-  { title: 'В развёртке', rows: [
-    ['ЛКМ', 'тот же инструмент, что и на модели'],
-    ['ПКМ или пробел', 'двигать полотно'],
-    ['колесо', 'зум вокруг курсора'],
+  { key: 'help.uv', rows: [
+    ['key.lmb', 'help.uv.lmb'],
+    ['key.rmbSpace', 'help.uv.pan'],
+    ['key.wheel', 'help.uv.zoom'],
   ] },
-  { title: 'Стоит знать', rows: [
-    ['красная строка внизу', 'развёртка с наложением — мазок продублируется'],
-    ['«Только видимое»', 'не красить грани, отвёрнутые от камеры'],
-    ['«Нажим» кисти', 'насколько плотно ложится краска'],
-    ['«Прозрачность» материала', 'стекло: модель видно насквозь'],
-    ['Сохранить PNG', 'цвет и, если красили поверхностью, карту материала'],
+  { key: 'help.know', rows: [
+    ['key.redLine', 'help.know.overlap'],
   ] },
 ];
 
 export function createHelpModal() {
-  const m = new Modal('Справка', 'xwide');
+  const m = new Modal('help.title', 'xwide');
 
   const grid = el('div', 'help-grid');
   for (const block of HELP) {
     const box = el('div', 'help-block');
-    box.appendChild(el('div', 'modal-sub', block.title));
+    box.appendChild(elT('div', 'modal-sub', block.key));
     const list = el('div', 'help-rows');
     for (const [key, what] of block.rows) {
       const row = el('div', 'help-row');
-      row.append(el('kbd', null, key), el('span', null, what));
+      // Клавиша бывает буквой (её не переводят) и бывает словом вроде
+      // «протяжка» — тогда это ключ и его надо перевести.
+      const подпись = key.includes('.') ? elT('kbd', null, key) : el('kbd', null, key);
+      row.append(подпись, elT('span', null, what));
       list.appendChild(row);
     }
     box.appendChild(list);
@@ -735,9 +755,8 @@ export function createHelpModal() {
   }
   m.body.appendChild(grid);
 
-  const hint = el('div', 'foot-hint',
-    'Полное описание — в README.md и СПРАВКА.md рядом с программой');
-  const ok = el('button', 'btn accent', 'Понятно');
+  const hint = elT('div', 'foot-hint', 'help.foot');
+  const ok = elT('button', 'btn accent', 'help.ok');
   ok.addEventListener('click', () => m.close());
   m.foot.append(hint, ok);
 
@@ -756,7 +775,7 @@ export function createHelpModal() {
  * @param {{save: (формат: string) => Promise<number>}} api
  */
 export function createSaveAsModal(api) {
-  const m = new Modal(t('save.title'));
+  const m = new Modal('save.title');
 
   const ФОРМАТЫ = [
     { id: 'glb',  kind: 'model', key: 'save.glb' },
@@ -768,14 +787,14 @@ export function createSaveAsModal(api) {
   let выбран = 'glb';
   const кнопки = new Map();
 
-  const подпись = el('div', 'modal-sub', t('save.format'));
+  const подпись = elT('div', 'modal-sub', 'save.format');
   const список = el('div', 'save-list');
 
   for (const ф of ФОРМАТЫ) {
     const строка = el('button', 'save-row');
     строка.append(
       el('span', 'save-dot'),
-      el('span', 'save-text', t(ф.key)),
+      elT('span', 'save-text', ф.key),
     );
     строка.addEventListener('click', () => { выбран = ф.id; синхронизировать(); });
     список.appendChild(строка);
@@ -784,24 +803,20 @@ export function createSaveAsModal(api) {
 
   const пояснение = el('div', 'foot-hint');
 
+  // Надписи переводит applyDOM() по ключам; здесь — только то, что зависит
+  // от выбора: подсветка строки и пояснение под ней.
   function синхронизировать() {
-    кнопки.forEach(({ строка, ф }, id) => {
-      строка.classList.toggle('on', id === выбран);
-      строка.querySelector('.save-text').textContent = t(ф.key);
-    });
+    кнопки.forEach((_, id) => кнопки.get(id).строка.classList.toggle('on', id === выбран));
     const ф = ФОРМАТЫ.find((x) => x.id === выбран);
-    пояснение.textContent = ф.kind === 'model' ? t('save.modelHint') : t('save.mapsHint');
-    подпись.textContent = t('save.format');
-    m.box.querySelector('.modal-head .t').textContent = t('save.title');
-    отмена.textContent = t('save.cancel');
-    готово.textContent = t('save.go');
+    пояснение.dataset.i18n = ф.kind === 'model' ? 'save.modelHint' : 'save.mapsHint';
+    пояснение.textContent = t(пояснение.dataset.i18n);
   }
 
   m.body.append(подпись, список);
 
-  const отмена = el('button', 'btn', t('save.cancel'));
+  const отмена = elT('button', 'btn', 'save.cancel');
   отмена.addEventListener('click', () => m.close());
-  const готово = el('button', 'btn accent', t('save.go'));
+  const готово = elT('button', 'btn accent', 'save.go');
   готово.addEventListener('click', async () => {
     готово.disabled = true;
     try { await api.save(выбран); } finally { готово.disabled = false; m.close(); }
@@ -824,18 +839,18 @@ export function createSaveAsModal(api) {
  * @param {{getLang, setLang, getTexSize, setTexSize, getStartup, setStartup}} api
  */
 export function createSettingsModal(api) {
-  const m = new Modal(t('settings.title'));
+  const m = new Modal('settings.title');
 
   /** Ряд: подпись слева, управление справа, пояснение под ними. */
   function ряд(родитель, ключПодписи, ключПояснения, control) {
     const блок = el('div', 'set-block');
     const шапка = el('div', 'set-row');
-    const подпись = el('label', 'set-label', t(ключПодписи));
+    const подпись = elT('label', 'set-label', ключПодписи);
     шапка.append(подпись, control);
     блок.appendChild(шапка);
     let пояснение = null;
     if (ключПояснения) {
-      пояснение = el('div', 'set-hint', t(ключПояснения));
+      пояснение = elT('div', 'set-hint', ключПояснения);
       блок.appendChild(пояснение);
     }
     родитель.appendChild(блок);
@@ -873,21 +888,15 @@ export function createSettingsModal(api) {
   галкаСтарта.checked = api.getStartup();
   галкаСтарта.addEventListener('change', () => api.setStartup(галкаСтарта.checked));
   ряды.push(ряд(m.body, 'settings.startup', null, галкаСтарта));
-  const подписьСтарта = el('div', 'set-hint', t('settings.startupShow'));
+  const подписьСтарта = elT('div', 'set-hint', 'settings.startupShow');
   m.body.appendChild(подписьСтарта);
 
-  const готово = el('button', 'btn accent', t('settings.close'));
+  const готово = elT('button', 'btn accent', 'settings.close');
   готово.addEventListener('click', () => m.close());
   m.foot.append(готово);
 
+  // Надписи переводит applyDOM(); здесь — только значения управления.
   function синхронизировать() {
-    m.box.querySelector('.modal-head .t').textContent = t('settings.title');
-    for (const р of ряды) {
-      р.подпись.textContent = t(р.ключПодписи);
-      if (р.пояснение) р.пояснение.textContent = t(р.ключПояснения);
-    }
-    подписьСтарта.textContent = t('settings.startupShow');
-    готово.textContent = t('settings.close');
     выборЯзыка.value = api.getLang();
     выборТекстуры.value = api.getTexSize();
     галкаСтарта.checked = api.getStartup();

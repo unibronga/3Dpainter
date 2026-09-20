@@ -4,6 +4,8 @@
  * знает только через попадание луча.
  */
 
+import { t } from './i18n.js';
+
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -139,7 +141,7 @@ export class Viewport {
   loadDemo() {
     const g = new THREE.Group();
     g.add(buildDemoMesh());
-    return this.setModel(g, 'Демо: хижина');
+    return this.setModel(g, () => t('model.demo'));
   }
 
   async loadGLB(arrayBuffer, name) {
@@ -162,7 +164,7 @@ export class Viewport {
    * Поставить модель в сцену. Возвращает отчёт: что удалось взять в покраску,
    * а что нет — меш без развёртки красить нечем, об этом надо сказать вслух.
    */
-  setModel(object3D, name = 'модель') {
+  setModel(object3D, name = t('model.default')) {
     this.clearModel();
 
     this.model = object3D;
@@ -174,7 +176,7 @@ export class Viewport {
       if (!o.isMesh) return;
       const cache = buildMeshCache(o.geometry);
       if (!cache) {
-        report.noUV.push(o.name || 'без имени');
+        report.noUV.push(o.name || t('model.unnamed'));
         o.material = new THREE.MeshStandardMaterial({ color: 0x55585e, roughness: 1 });
         return;
       }
@@ -192,7 +194,7 @@ export class Viewport {
     for (const { mesh, cache } of this.paintables) {
       const ov = measureUVOverlap(cache, tol);
       cache.overlap = ov.ratio;
-      if (ov.ratio > 0.02) report.overlapping.push({ name: mesh.name || 'без имени', ratio: ov.ratio });
+      if (ov.ratio > 0.02) report.overlapping.push({ name: mesh.name || t('model.unnamed'), ratio: ov.ratio });
     }
 
     return report;

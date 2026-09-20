@@ -10,6 +10,7 @@
  * сразу. Здесь у каждой грани своя клетка атласа.
  */
 
+
 import * as THREE from 'three';
 
 const GRID = 6;          // атлас 6×6 клеток: по клетке на каждую грань
@@ -117,7 +118,7 @@ export function buildDemoMesh() {
   b.quad([0.45, 0.0, dz], [0.45, 2.0, dz], [0.45, 2.0, 1.8], [0.45, 0.0, 1.8], cell(25));
   b.quad([-0.45, 2.0, 1.8], [0.45, 2.0, 1.8], [0.45, 2.0, dz], [-0.45, 2.0, dz], cell(26));
 
-  const mesh = new THREE.Mesh(b.build('Хижина'), new THREE.MeshStandardMaterial({ color: 0xffffff }));
-  mesh.name = 'Хижина';
+  const mesh = new THREE.Mesh(b.build('Cabin'), new THREE.MeshStandardMaterial({ color: 0xffffff }));
+  mesh.name = 'Cabin';   // имя объекта техническое, его не переводят
   return mesh;
 }

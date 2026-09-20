@@ -113,6 +113,12 @@ paint baked in, via **File ▸ Save as…**.
 **Settings** (File ▸ Settings…) hold the interface language, the default
 texture size and whether the start screen appears on launch.
 
+**Languages.** The whole interface speaks English and Russian, and switches
+live — your paint is kept. Dictionaries are one file per language in
+`src/lang/`, flat `'section.name'` keys; adding a language means adding a
+file and one line in `LANGS`, with no other code touched. Code comments
+stay Russian.
+
 ## How it works
 
 Three decisions carry the whole thing:
@@ -149,12 +155,9 @@ Working and usable, version 0.2.0. Not yet done:
 
 - Saving a painting session (layers, masks) — right now only the final PNG
   is baked, so you cannot pick the work up the next day.
-- **Finishing the English interface.** The menus, the start screen, saving
-  and settings are translated; the side panels and the brush/material
-  windows are still Russian. Switching the language is already in
-  **File ▸ Settings…** and applies without losing your work.
 - Reading the texture that comes with a model: an opened file starts with
   clean layers, so existing paint is not picked up for editing.
+- Reading the `.mtl` that sits next to an `.obj`.
 - Occlusion for shapes and text: back-facing polygons are skipped, but a
   chimney does not cast a "shadow" onto the roof behind it.
 - Layer reordering and duplication; symmetry, straight-line strokes, stroke

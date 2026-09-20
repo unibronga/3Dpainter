@@ -12,6 +12,7 @@
  * стороны шва лежат треугольники, и оба попадают в шар.
  */
 
+
 import { cutRect } from './layers.js';
 import { queryGrid } from './mesh-cache.js';
 import { patternAt, hasPattern } from './patterns.js';
@@ -495,7 +496,7 @@ export class Stroke {
    * Закрыть мазок и вернуть запись для журнала отмены (или null).
    * Правка трогает несколько буферов сразу, поэтому запись хранит их списком.
    */
-  end(label = 'Мазок') {
+  end(label = 'act.stroke') {
     this.flush();
     if (isEmptyRect(this.dirty)) return null;
 
