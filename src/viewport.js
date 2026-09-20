@@ -149,6 +149,16 @@ export class Viewport {
   }
 
   /**
+   * Открыть файл модели любого поддерживаемого формата. Загрузчик выбирается
+   * по расширению; сама сцена дальше живёт одинаково, откуда бы ни пришла.
+   */
+  async loadFile(arrayBuffer, name) {
+    const { parseModel } = await import('./formats.js');
+    const object = await parseModel(arrayBuffer, name);
+    return this.setModel(object, name);
+  }
+
+  /**
    * Поставить модель в сцену. Возвращает отчёт: что удалось взять в покраску,
    * а что нет — меш без развёртки красить нечем, об этом надо сказать вслух.
    */

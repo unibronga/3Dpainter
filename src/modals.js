@@ -12,6 +12,7 @@ import { drawMaterialBall } from './matball.js';
 import { PATTERNS, drawPatternSample } from './patterns.js';
 import { PALETTE } from './ui.js';
 import { rgbToHex, hexToRgb } from './ui.js';
+import { t, onLangChange, LANGS } from './i18n.js';
 
 /* ── Библиотека кистей ─────────────────────────────────────────── */
 
@@ -741,4 +742,158 @@ export function createHelpModal() {
   m.foot.append(hint, ok);
 
   return { open: () => m.open(), modal: m };
+}
+
+/* ── Окно «Сохранить как» ──────────────────────────────────────── */
+
+/**
+ * Выбор того, что уходит из инструмента наружу.
+ *
+ * Развилка одна и важная: отдать карты (их кладут на модель сами) или отдать
+ * модель вместе с покраской — файл, который откроется в редакторе уже
+ * покрашенным. Второе людям нужно чаще, поэтому стоит первым.
+ *
+ * @param {{save: (формат: string) => Promise<number>}} api
+ */
+export function createSaveAsModal(api) {
+  const m = new Modal(t('save.title'));
+
+  const ФОРМАТЫ = [
+    { id: 'glb',  kind: 'model', key: 'save.glb' },
+    { id: 'gltf', kind: 'model', key: 'save.gltf' },
+    { id: 'obj',  kind: 'model', key: 'save.obj' },
+    { id: 'png',  kind: 'maps',  key: 'save.png' },
+  ];
+
+  let выбран = 'glb';
+  const кнопки = new Map();
+
+  const подпись = el('div', 'modal-sub', t('save.format'));
+  const список = el('div', 'save-list');
+
+  for (const ф of ФОРМАТЫ) {
+    const строка = el('button', 'save-row');
+    строка.append(
+      el('span', 'save-dot'),
+      el('span', 'save-text', t(ф.key)),
+    );
+    строка.addEventListener('click', () => { выбран = ф.id; синхронизировать(); });
+    список.appendChild(строка);
+    кнопки.set(ф.id, { строка, ф });
+  }
+
+  const пояснение = el('div', 'foot-hint');
+
+  function синхронизировать() {
+    кнопки.forEach(({ строка, ф }, id) => {
+      строка.classList.toggle('on', id === выбран);
+      строка.querySelector('.save-text').textContent = t(ф.key);
+    });
+    const ф = ФОРМАТЫ.find((x) => x.id === выбран);
+    пояснение.textContent = ф.kind === 'model' ? t('save.modelHint') : t('save.mapsHint');
+    подпись.textContent = t('save.format');
+    m.box.querySelector('.modal-head .t').textContent = t('save.title');
+    отмена.textContent = t('save.cancel');
+    готово.textContent = t('save.go');
+  }
+
+  m.body.append(подпись, список);
+
+  const отмена = el('button', 'btn', t('save.cancel'));
+  отмена.addEventListener('click', () => m.close());
+  const готово = el('button', 'btn accent', t('save.go'));
+  готово.addEventListener('click', async () => {
+    готово.disabled = true;
+    try { await api.save(выбран); } finally { готово.disabled = false; m.close(); }
+  });
+  m.foot.append(пояснение, отмена, готово);
+
+  onLangChange(синхронизировать);
+  синхронизировать();
+
+  return { open: () => { синхронизировать(); m.open(); }, modal: m };
+}
+
+/* ── Окно настроек ─────────────────────────────────────────────── */
+
+/**
+ * Настройки программы. Нарочно короткие: сюда попадает то, что человек
+ * ставит один раз и забывает. Всё, что крутят по ходу работы, остаётся на
+ * панелях — иначе за настройками начнут ходить каждую минуту.
+ *
+ * @param {{getLang, setLang, getTexSize, setTexSize, getStartup, setStartup}} api
+ */
+export function createSettingsModal(api) {
+  const m = new Modal(t('settings.title'));
+
+  /** Ряд: подпись слева, управление справа, пояснение под ними. */
+  function ряд(родитель, ключПодписи, ключПояснения, control) {
+    const блок = el('div', 'set-block');
+    const шапка = el('div', 'set-row');
+    const подпись = el('label', 'set-label', t(ключПодписи));
+    шапка.append(подпись, control);
+    блок.appendChild(шапка);
+    let пояснение = null;
+    if (ключПояснения) {
+      пояснение = el('div', 'set-hint', t(ключПояснения));
+      блок.appendChild(пояснение);
+    }
+    родитель.appendChild(блок);
+    return { подпись, пояснение, ключПодписи, ключПояснения };
+  }
+
+  const ряды = [];
+
+  // Язык
+  const выборЯзыка = el('select', 'set-select');
+  for (const [код, имя] of Object.entries(LANGS)) {
+    const o = el('option', null, имя);
+    o.value = код;
+    выборЯзыка.appendChild(o);
+  }
+  выборЯзыка.value = api.getLang();
+  выборЯзыка.addEventListener('change', () => api.setLang(выборЯзыка.value));
+  ряды.push(ряд(m.body, 'settings.language', 'settings.languageHint', выборЯзыка));
+
+  // Размер текстуры
+  const выборТекстуры = el('select', 'set-select');
+  for (const размер of [512, 1024, 2048]) {
+    const o = el('option', null, `${размер} × ${размер}`);
+    o.value = размер;
+    выборТекстуры.appendChild(o);
+  }
+  выборТекстуры.value = api.getTexSize();
+  выборТекстуры.addEventListener('change', () => api.setTexSize(+выборТекстуры.value));
+  ряды.push(ряд(m.body, 'settings.texture', 'settings.textureHint', выборТекстуры));
+
+  // Начальный экран
+  const галкаСтарта = el('input');
+  галкаСтарта.type = 'checkbox';
+  галкаСтарта.className = 'set-check';
+  галкаСтарта.checked = api.getStartup();
+  галкаСтарта.addEventListener('change', () => api.setStartup(галкаСтарта.checked));
+  ряды.push(ряд(m.body, 'settings.startup', null, галкаСтарта));
+  const подписьСтарта = el('div', 'set-hint', t('settings.startupShow'));
+  m.body.appendChild(подписьСтарта);
+
+  const готово = el('button', 'btn accent', t('settings.close'));
+  готово.addEventListener('click', () => m.close());
+  m.foot.append(готово);
+
+  function синхронизировать() {
+    m.box.querySelector('.modal-head .t').textContent = t('settings.title');
+    for (const р of ряды) {
+      р.подпись.textContent = t(р.ключПодписи);
+      if (р.пояснение) р.пояснение.textContent = t(р.ключПояснения);
+    }
+    подписьСтарта.textContent = t('settings.startupShow');
+    готово.textContent = t('settings.close');
+    выборЯзыка.value = api.getLang();
+    выборТекстуры.value = api.getTexSize();
+    галкаСтарта.checked = api.getStartup();
+  }
+
+  onLangChange(синхронизировать);
+
+  return { open: () => { синхронизировать(); m.open(); }, modal: m };
 }

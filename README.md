@@ -6,7 +6,7 @@
 
 ![The tool with a painted demo cabin](docs/screenshot.png)
 
-Open a `.glb`, spin it around, and paint. No UV wrangling, no texture editor,
+Open a model, spin it around, and paint. No UV wrangling, no texture editor,
 no round trip to another program: you click on the roof, and the roof gets
 painted. When you are done, the tool hands you a PNG you can drop straight
 back onto the model.
@@ -40,9 +40,26 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5273`. It starts with a demo cabin, so you can paint
-immediately — no model of your own required. To use your own, press
-**Open GLB…** or drag a `.glb` file onto the viewport.
+Open `http://localhost:5273`. A start screen offers two ways in: open your
+own model, or begin with the demo cabin and paint right away. Models you
+have opened before are listed there too. You can also drop a file straight
+onto the viewport.
+
+### Supported formats
+
+| Reading | Writing |
+|---|---|
+| glTF / GLB, OBJ, FBX, Collada (DAE), 3MF, VRML | GLB, glTF, OBJ + MTL, PNG maps |
+| STL, PLY, AMF — geometry only, see below | |
+
+**Painting needs UVs.** glTF, OBJ, FBX, DAE and 3MF carry them. STL, PLY and
+AMF do not store UVs at all: such a file opens and displays, but there is
+nothing to paint on — unwrap it first (Smart UV Project in Blender).
+
+**Saving** offers the choice that matters: the maps alone, or the model
+together with the paint — a file that opens in another editor already
+painted. GLB packs everything into one file; OBJ comes with its `.mtl` and
+the color map beside it.
 
 Other commands:
 
@@ -90,7 +107,11 @@ unwrap — handy when a face is too small or hidden on the model itself.
 
 **Output.** A PNG of the color map, plus a second `<name>_material.png` when
 you actually painted with surface properties (roughness in green, metalness
-in blue — the packing three.js reads directly).
+in blue — the packing three.js reads directly). Or the whole model with the
+paint baked in, via **File ▸ Save as…**.
+
+**Settings** (File ▸ Settings…) hold the interface language, the default
+texture size and whether the start screen appears on launch.
 
 ## How it works
 
@@ -128,8 +149,12 @@ Working and usable, version 0.2.0. Not yet done:
 
 - Saving a painting session (layers, masks) — right now only the final PNG
   is baked, so you cannot pick the work up the next day.
-- **An English interface.** The program's menus, panels and built-in help
-  (F1) are currently Russian only.
+- **Finishing the English interface.** The menus, the start screen, saving
+  and settings are translated; the side panels and the brush/material
+  windows are still Russian. Switching the language is already in
+  **File ▸ Settings…** and applies without losing your work.
+- Reading the texture that comes with a model: an opened file starts with
+  clean layers, so existing paint is not picked up for editing.
 - Occlusion for shapes and text: back-facing polygons are skipped, but a
   chimney does not cast a "shadow" onto the roof behind it.
 - Layer reordering and duplication; symmetry, straight-line strokes, stroke

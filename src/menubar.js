@@ -5,7 +5,13 @@
  *
  * Пункт: { label, hint, action, checked?, radio?, disabled? }
  * Разделитель: строка '-'
+ *
+ * `title` и `label` бывают функциями: так надписи переживают смену языка —
+ * достаточно вызвать relabel(), не пересобирая меню и не теряя состояние.
  */
+
+/** Надпись бывает строкой или функцией, возвращающей строку. */
+const надпись = (что) => (typeof что === 'function' ? что() : что);
 
 export class MenuBar {
   /**
@@ -21,7 +27,7 @@ export class MenuBar {
     menus.forEach((m, i) => {
       const btn = document.createElement('button');
       btn.className = 'menu-title';
-      btn.textContent = m.title;
+      btn.textContent = надпись(m.title);
       btn.addEventListener('pointerdown', (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -72,7 +78,7 @@ export class MenuBar {
 
       const label = document.createElement('span');
       label.className = 'label';
-      label.textContent = item.label;
+      label.textContent = надпись(item.label);
 
       const hint = document.createElement('span');
       hint.className = 'hint';
@@ -89,6 +95,17 @@ export class MenuBar {
       item._row = row;
       drop.appendChild(row);
     }
+  }
+
+  /** Перечитать надписи: смена языка меняет тексты, но не структуру меню. */
+  relabel() {
+    this.menus.forEach((m, i) => {
+      this.els[i].btn.textContent = надпись(m.title);
+      for (const item of m.items) {
+        if (item === '-' || !item._row) continue;
+        item._row.querySelector('.label').textContent = надпись(item.label);
+      }
+    });
   }
 
   /** Обновить галочки и доступность — вызывается перед показом. */

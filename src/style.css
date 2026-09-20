@@ -907,3 +907,152 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
   white-space: normal;
   line-height: 1.25;
 }
+
+/* ── Начальный экран ───────────────────────────────────────────── */
+
+.welcome-back {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(14, 15, 17, .82);
+  backdrop-filter: blur(3px);
+}
+.welcome-back.open { display: flex; }
+.welcome-back.drag .welcome { border-color: var(--accent); }
+
+.welcome {
+  width: 640px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, .55);
+  padding: 26px 26px 14px;
+}
+
+.welcome-head { margin-bottom: 20px; }
+.welcome-title {
+  margin: 0;
+  font-size: 23px;
+  font-weight: 600;
+  letter-spacing: .01em;
+}
+.welcome-sub { margin: 5px 0 0; color: var(--text-dim); font-size: 12px; }
+
+.welcome-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+.welcome-card {
+  display: block;
+  text-align: left;
+  padding: 16px 16px 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.welcome-card:hover { background: var(--panel-3); border-color: #4a5058; }
+.welcome-card:active { background: #2a2e34; }
+.welcome-ico { color: var(--accent); margin-bottom: 9px; }
+.welcome-card-name { font-weight: 600; margin-bottom: 3px; }
+.welcome-card-hint { color: var(--text-dim); font-size: 11px; line-height: 1.45; }
+
+.welcome-recent { margin-top: 20px; min-height: 0; display: flex; flex-direction: column; }
+.welcome-recent-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-dim);
+  margin-bottom: 7px;
+}
+.welcome-recent-list { overflow: auto; min-height: 0; }
+.welcome-recent-list::-webkit-scrollbar { width: 9px; }
+.welcome-recent-list::-webkit-scrollbar-thumb { background: var(--line); border-radius: 5px; }
+
+.welcome-recent-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 9px;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.welcome-recent-row:hover { background: var(--panel-2); }
+.welcome-recent-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.welcome-recent-meta { color: var(--text-dim); font-size: 11px; flex: none; }
+.welcome-recent-empty { color: var(--text-dim); font-size: 11px; padding: 7px 9px; }
+
+.welcome-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.welcome-check { display: flex; align-items: center; gap: 6px; color: var(--text-dim); font-size: 11px; cursor: pointer; }
+.welcome-check input { accent-color: var(--accent); }
+
+/* ── Окно «Сохранить как» ──────────────────────────────────────── */
+
+.save-list { display: flex; flex-direction: column; gap: 4px; }
+
+.save-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.save-row:hover { background: var(--panel-3); }
+.save-row.on { border-color: var(--accent); background: var(--accent-dim); color: #ffd9a0; }
+
+.save-dot {
+  flex: none;
+  width: 11px;
+  height: 11px;
+  border: 1px solid var(--text-dim);
+  border-radius: 50%;
+}
+.save-row.on .save-dot { border-color: #ffd9a0; box-shadow: inset 0 0 0 3px #ffd9a0; }
+.save-text { flex: 1; }
+
+/* ── Окно настроек ─────────────────────────────────────────────── */
+
+.set-block { padding: 11px 0; border-bottom: 1px solid var(--line); }
+.set-block:last-of-type { border-bottom: 0; }
+.set-row { display: flex; align-items: center; gap: 12px; }
+.set-label { flex: 1; }
+.set-hint { color: var(--text-dim); font-size: 11px; margin-top: 4px; line-height: 1.45; }
+
+.set-select {
+  flex: none;
+  min-width: 150px;
+  height: 26px;
+  padding: 0 7px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font: inherit;
+}
+.set-check { accent-color: var(--accent); width: 15px; height: 15px; }

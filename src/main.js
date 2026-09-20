@@ -13,8 +13,13 @@ import { Stroke, rectStencil, ellipseStencil, imageStencil } from './painter.js'
 import * as THREE from 'three';
 import { floodFaces } from './mesh-cache.js';
 import * as UI from './ui.js';
-import { createBrushModal, createMaterialModal, createHelpModal } from './modals.js';
+import { createBrushModal, createMaterialModal, createHelpModal,
+         createSaveAsModal, createSettingsModal } from './modals.js';
 import { drawMaterialBall } from './matball.js';
+import { t, setLang, getLang, onLangChange, applyDOM, LANGS } from './i18n.js';
+import { acceptAttribute, isSupported, extensionOf, exportGLTF, exportOBJ } from './formats.js';
+import { createWelcome } from './welcome.js';
+import { addRecent } from './recent.js';
 
 // Сбор ошибок с самого начала загрузки: в консоли браузера вперемешку лежат
 // сообщения от прошлых версий модулей, и по ней не понять, живая ошибка или
@@ -978,6 +983,31 @@ const materialModal = createMaterialModal({
 
 const helpModal = createHelpModal();
 
+const saveAsModal = createSaveAsModal({ save: (формат) => saveAs(формат) });
+
+const settingsModal = createSettingsModal({
+  getLang,
+  setLang,
+  getTexSize: () => state.texSize,
+  setTexSize: (v) => setTexSize(v),
+  getStartup: () => loadPrefs().showWelcome !== false,
+  setStartup: (v) => savePrefs({ showWelcome: v }),
+});
+
+/**
+ * Начальный экран. Показывается на старте, пока человек не снимет галку, и
+ * открывается из меню — чтобы вернуться к нему было чем, а не только
+ * перезапуском программы.
+ */
+const welcome = createWelcome({
+  openFile: (файл) => openFile(файл),
+  openBuffer: (буфер, имя) => openBuffer(буфер, имя),
+  openDemo: () => afterModelLoaded(viewport.loadDemo()),
+  pickFile: () => $('file-input').click(),
+  getShowOnStartup: () => loadPrefs().showWelcome !== false,
+  setShowOnStartup: (v) => savePrefs({ showWelcome: v }),
+});
+
 // Кнопки сидят в заголовках секций, а заголовок сворачивает секцию —
 // нажатие до него доходить не должно.
 $('btn-brush-modal').addEventListener('click', (e) => { e.stopPropagation(); brushModal.open(); });
@@ -1048,13 +1078,46 @@ $('file-input').addEventListener('change', async (e) => {
   e.target.value = '';
 });
 
+/** Положить файл в недавние. Не удалось (квота, приватный режим) — не беда. */
+function rememberRecent(name, buffer) {
+  addRecent(name, buffer).catch(() => { /* список недавних — удобство, не обязанность */ });
+}
+
+/** Открыть модель из уже прочитанного буфера — так возвращаются недавние. */
+async function openBuffer(buffer, name) {
+  setStatusHint(t('load.loading', name));
+  try {
+    const report = await viewport.loadFile(buffer.slice(0), name);
+    if (!report.meshes && !report.noUV?.length) { setStatusHint(t('load.noMesh')); return false; }
+    afterModelLoaded(report);
+    return true;
+  } catch (err) {
+    setStatusHint(t('load.failed', name, err.message));
+    console.error(err);
+    return false;
+  }
+}
+
 async function openFile(file) {
+  if (!isSupported(file.name)) {
+    setStatusHint(t('load.unknown', extensionOf(file.name) || file.name));
+    return false;
+  }
+  setStatusHint(t('load.loading', file.name));
   try {
     const buf = await file.arrayBuffer();
-    afterModelLoaded(await viewport.loadGLB(buf, file.name));
+    const report = await viewport.loadFile(buf, file.name);
+    if (!report.meshes && !report.noUV?.length) {
+      setStatusHint(t('load.noMesh'));
+      return false;
+    }
+    afterModelLoaded(report);
+    rememberRecent(file.name, buf);
+    return true;
   } catch (err) {
-    setStatusHint('не прочиталось: ' + err.message);
+    setStatusHint(t('load.failed', file.name, err.message));
     console.error(err);
+    return false;
   }
 }
 
@@ -1064,7 +1127,7 @@ el.addEventListener('drop', async (e) => {
   e.preventDefault();
   el.classList.remove('dragover');
   const f = e.dataTransfer.files[0];
-  if (f && /\.(glb|gltf)$/i.test(f.name)) await openFile(f);
+  if (f) await openFile(f);
 });
 
 function setTexSize(next) {
@@ -1077,6 +1140,72 @@ function setTexSize(next) {
 }
 
 /* ── Сохранение ────────────────────────────────────────────────── */
+
+/** Отдать готовый blob файлом — тем же способом, что и картинки. */
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/**
+ * Карты покраски по мешам — в том виде, в каком их ждёт экспортёр.
+ * Карта материала прикладывается только если по ней красили: пустая
+ * заставила бы редактор считать всю модель шероховатым металлом.
+ */
+function картыДляЭкспорта() {
+  const карты = new Map();
+  for (const [mesh, t] of targets) {
+    карты.set(mesh, {
+      colorCanvas: t.canvas,
+      ormCanvas: hasMaterialPaint(t) ? t.ormCanvas : null,
+      transparent: !!mesh.material?.transparent,
+    });
+  }
+  return карты;
+}
+
+/**
+ * Сохранить наружу. Карты кладут на модель сами; модель с покраской
+ * открывается в редакторе уже готовой — это разные потребности, и формат
+ * выбирает человек.
+ */
+async function saveAs(формат) {
+  if (!targets.size || !viewport.model) {
+    setStatusHint(t('save.nothing'));
+    return 0;
+  }
+
+  const основа = modelName.replace(/\.[^.]+$/, '') || 'model';
+
+  if (формат === 'png') { saveTextures(); return targets.size; }
+
+  const карты = картыДляЭкспорта();
+  let файлов = 0;
+
+  try {
+    if (формат === 'glb' || формат === 'gltf') {
+      const blob = await exportGLTF(viewport.model, карты, формат === 'glb');
+      downloadBlob(blob, `${основа}.${формат}`);
+      файлов = 1;
+    } else if (формат === 'obj') {
+      const { obj, mtl } = await exportOBJ(viewport.model, карты, основа);
+      downloadBlob(obj, `${основа}.obj`);
+      downloadBlob(mtl, `${основа}.mtl`);
+      файлов = 2;
+      // OBJ ссылается на карту по имени: без самой картинки рядом редактор
+      // откроет модель серой, и покраска окажется «потерянной».
+      for (const [, t] of targets) { download(t.canvas, `${основа}.png`); файлов += 1; break; }
+    }
+    setStatusHint(t('save.done', файлов));
+  } catch (err) {
+    setStatusHint(t('load.failed', основа, err.message));
+    console.error(err);
+  }
+  return файлов;
+}
 
 function download(canvas, name) {
   canvas.toBlob((blob) => {
@@ -1098,7 +1227,7 @@ function hasMaterialPaint(t) {
 
 function saveTextures() {
   if (!targets.size) return;
-  const base = modelName.replace(/\.(glb|gltf)$/i, '') || 'model';
+  const base = modelName.replace(/\.[^.]+$/, '') || 'model';
   let files = 0;
   let i = 0;
 
@@ -1174,92 +1303,100 @@ window.addEventListener('blur', releaseSpace);
 const MOD = navigator.userAgent.includes('Mac') ? '⌘' : 'Ctrl+';
 
 const menuBar = new MenuBar($('menubar'), [
-  { title: 'Файл', items: [
-    { label: 'Открыть GLB…', action: () => $('file-input').click() },
-    { label: 'Демо-модель', action: () => afterModelLoaded(viewport.loadDemo()) },
+  { title: () => t('menu.file'), items: [
+    { label: () => t('file.start'), action: () => welcome.show() },
     '-',
-    { label: 'Сохранить PNG', disabled: () => !targets.size, action: saveTextures },
+    { label: () => t('file.open'), action: () => $('file-input').click() },
+    { label: () => t('file.demo'), action: () => afterModelLoaded(viewport.loadDemo()) },
     '-',
-    { label: 'Текстура 512', radio: () => state.texSize === 512, action: () => setTexSize(512) },
-    { label: 'Текстура 1024', radio: () => state.texSize === 1024, action: () => setTexSize(1024) },
-    { label: 'Текстура 2048', radio: () => state.texSize === 2048, action: () => setTexSize(2048) },
+    { label: () => t('file.saveAs'), disabled: () => !targets.size, action: () => saveAsModal.open() },
+    { label: () => t('file.savePng'), disabled: () => !targets.size, action: saveTextures },
+    '-',
+    { label: () => `${t('file.texSize')}: 512`, radio: () => state.texSize === 512, action: () => setTexSize(512) },
+    { label: () => `${t('file.texSize')}: 1024`, radio: () => state.texSize === 1024, action: () => setTexSize(1024) },
+    { label: () => `${t('file.texSize')}: 2048`, radio: () => state.texSize === 2048, action: () => setTexSize(2048) },
+    '-',
+    { label: () => t('file.settings'), action: () => settingsModal.open() },
   ] },
 
-  { title: 'Правка', items: [
-    { label: 'Отменить', hint: MOD + 'Z', disabled: () => !history.canUndo, action: () => history.undo() },
-    { label: 'Вернуть', hint: '⇧' + MOD + 'Z', disabled: () => !history.canRedo, action: () => history.redo() },
+  { title: () => t('menu.edit'), items: [
+    { label: () => t('edit.undo'), hint: MOD + 'Z', disabled: () => !history.canUndo, action: () => history.undo() },
+    { label: () => t('edit.redo'), hint: '⇧' + MOD + 'Z', disabled: () => !history.canRedo, action: () => history.redo() },
     '-',
-    { label: 'К исходному состоянию', disabled: () => !history.canUndo, action: () => history.goto(-1) },
-    { label: 'К последнему шагу', disabled: () => !history.canRedo, action: () => history.goto(history.entries.length - 1) },
+    { label: () => t('edit.toStart'), disabled: () => !history.canUndo, action: () => history.goto(-1) },
+    { label: () => t('edit.toEnd'), disabled: () => !history.canRedo, action: () => history.goto(history.entries.length - 1) },
   ] },
 
-  { title: 'Слой', items: [
-    { label: 'Новый слой', action: addLayer },
-    { label: 'Маска слоя', action: () => $('btn-layer-mask').click() },
-    { label: 'Удалить слой', disabled: () => (refLayers()?.length ?? 0) <= 1, action: removeLayer },
+  { title: () => t('menu.layer'), items: [
+    { label: () => t('layer.new'), action: addLayer },
+    { label: () => t('layer.mask'), action: () => $('btn-layer-mask').click() },
+    { label: () => t('layer.remove'), disabled: () => (refLayers()?.length ?? 0) <= 1, action: removeLayer },
     '-',
-    { label: 'Наложение: обычное', radio: () => currentBlend() === 'normal', action: () => setBlend('normal') },
-    { label: 'Наложение: умножение', radio: () => currentBlend() === 'multiply', action: () => setBlend('multiply') },
-    { label: 'Наложение: экран', radio: () => currentBlend() === 'screen', action: () => setBlend('screen') },
+    { label: () => t('layer.blend.normal'), radio: () => currentBlend() === 'normal', action: () => setBlend('normal') },
+    { label: () => t('layer.blend.multiply'), radio: () => currentBlend() === 'multiply', action: () => setBlend('multiply') },
+    { label: () => t('layer.blend.screen'), radio: () => currentBlend() === 'screen', action: () => setBlend('screen') },
   ] },
 
-  { title: 'Вид', items: [
-    { label: 'Спереди', hint: '1', radio: () => viewport.currentViewName() === 'front', action: () => applyView('front') },
-    { label: 'Сзади', hint: '2', radio: () => viewport.currentViewName() === 'back', action: () => applyView('back') },
-    { label: 'Слева', hint: '3', radio: () => viewport.currentViewName() === 'left', action: () => applyView('left') },
-    { label: 'Справа', hint: '4', radio: () => viewport.currentViewName() === 'right', action: () => applyView('right') },
-    { label: 'Сверху', hint: '6', radio: () => viewport.currentViewName() === 'top', action: () => applyView('top') },
-    { label: 'Снизу', hint: '7', radio: () => viewport.currentViewName() === 'bottom', action: () => applyView('bottom') },
-    { label: 'Три четверти', hint: '0', action: () => applyView('user') },
+  { title: () => t('menu.view'), items: [
+    { label: () => t('view.front'), hint: '1', radio: () => viewport.currentViewName() === 'front', action: () => applyView('front') },
+    { label: () => t('view.back'), hint: '2', radio: () => viewport.currentViewName() === 'back', action: () => applyView('back') },
+    { label: () => t('view.left'), hint: '3', radio: () => viewport.currentViewName() === 'left', action: () => applyView('left') },
+    { label: () => t('view.right'), hint: '4', radio: () => viewport.currentViewName() === 'right', action: () => applyView('right') },
+    { label: () => t('view.top'), hint: '6', radio: () => viewport.currentViewName() === 'top', action: () => applyView('top') },
+    { label: () => t('view.bottom'), hint: '7', radio: () => viewport.currentViewName() === 'bottom', action: () => applyView('bottom') },
+    { label: () => t('view.user'), hint: '0', action: () => applyView('user') },
     '-',
-    { label: 'Ортография', hint: '5', checked: () => viewport.projection === 'ortho',
+    { label: () => t('view.ortho'), hint: '5', checked: () => viewport.projection === 'ortho',
       action: () => setProjection(viewport.projection === 'ortho' ? 'persp' : 'ortho') },
-    { label: 'Вписать в кадр', hint: 'Home', action: () => viewport.centerCamera() },
+    { label: () => t('view.fit'), hint: 'Home', action: () => viewport.centerCamera() },
     '-',
-    { label: 'Вращать вокруг мира', radio: () => state.pivot === 'world', action: () => setPivot('world') },
-    { label: 'Вращать вокруг объекта', radio: () => state.pivot === 'local', action: () => setPivot('local') },
-    { label: 'Вращать вокруг точки взгляда', radio: () => state.pivot === 'camera', action: () => setPivot('camera') },
+    { label: () => t('view.pivot.world'), radio: () => state.pivot === 'world', action: () => setPivot('world') },
+    { label: () => t('view.pivot.local'), radio: () => state.pivot === 'local', action: () => setPivot('local') },
+    { label: () => t('view.pivot.camera'), radio: () => state.pivot === 'camera', action: () => setPivot('camera') },
     '-',
-    { label: 'Показ плоско', checked: () => state.display === 'flat',
+    { label: () => t('view.flat'), checked: () => state.display === 'flat',
       action: () => setDisplayMode(state.display === 'flat' ? 'material' : 'flat') },
-    { label: 'Сетка пола', checked: () => state.grid, action: () => setGrid(!state.grid) },
-    { label: 'Сетка модели', checked: () => state.vertices, action: () => setVertices(!state.vertices) },
+    { label: () => t('view.grid'), checked: () => state.grid, action: () => setGrid(!state.grid) },
+    { label: () => t('view.wire'), checked: () => state.vertices, action: () => setVertices(!state.vertices) },
   ] },
 
-  { title: 'Инструмент', items: [
-    { label: 'Кисть', hint: 'B', radio: () => state.tool === 'brush', action: () => setTool('brush') },
-    { label: 'Ластик', hint: 'E', radio: () => state.tool === 'eraser', action: () => setTool('eraser') },
-    { label: 'Пипетка', hint: 'I', radio: () => state.tool === 'eyedropper', action: () => setTool('eyedropper') },
+  { title: () => t('menu.tool'), items: [
+    { label: () => t('tool.brush'), hint: 'B', radio: () => state.tool === 'brush', action: () => setTool('brush') },
+    { label: () => t('tool.eraser'), hint: 'E', radio: () => state.tool === 'eraser', action: () => setTool('eraser') },
+    { label: () => t('tool.eyedropper'), hint: 'I', radio: () => state.tool === 'eyedropper', action: () => setTool('eyedropper') },
     '-',
-    { label: 'Заливка связанных граней', hint: 'F', radio: () => state.tool === 'fill-faces', action: () => setTool('fill-faces') },
-    { label: 'Заливка UV-острова', hint: 'G', radio: () => state.tool === 'fill-island', action: () => setTool('fill-island') },
-    { label: 'Залить весь слой', radio: () => state.tool === 'fill-layer', action: () => setTool('fill-layer') },
+    { label: () => t('tool.fillFaces'), hint: 'F', radio: () => state.tool === 'fill-faces', action: () => setTool('fill-faces') },
+    { label: () => t('tool.fillIsland'), hint: 'G', radio: () => state.tool === 'fill-island', action: () => setTool('fill-island') },
+    { label: () => t('tool.fillLayer'), radio: () => state.tool === 'fill-layer', action: () => setTool('fill-layer') },
     '-',
-    { label: 'Кисть по маске', hint: 'M', radio: () => state.tool === 'mask', action: () => setTool('mask') },
+    { label: () => t('tool.mask'), hint: 'M', radio: () => state.tool === 'mask', action: () => setTool('mask') },
     '-',
-    { label: 'Прямоугольник', hint: 'R', radio: () => state.tool === 'rect', action: () => setTool('rect') },
-    { label: 'Круг', hint: 'C', radio: () => state.tool === 'ellipse', action: () => setTool('ellipse') },
-    { label: 'Текст', hint: 'T', radio: () => state.tool === 'text', action: () => setTool('text') },
+    { label: () => t('tool.rect'), hint: 'R', radio: () => state.tool === 'rect', action: () => setTool('rect') },
+    { label: () => t('tool.ellipse'), hint: 'C', radio: () => state.tool === 'ellipse', action: () => setTool('ellipse') },
+    { label: () => t('tool.text'), hint: 'T', radio: () => state.tool === 'text', action: () => setTool('text') },
     '-',
-    { label: 'Кисти…', action: () => brushModal.open() },
-    { label: 'Материалы и цвет…', action: () => materialModal.open() },
+    { label: () => t('tool.brushes'), action: () => brushModal.open() },
+    { label: () => t('tool.materials'), action: () => materialModal.open() },
   ] },
 
-  { title: 'Панели', items: [
-    { label: 'Развёртка', hint: 'U', checked: () => state.uvOpen, action: () => setUVOpen(!state.uvOpen) },
-    { label: 'Сетка развёртки', checked: () => state.showWire, action: () => setShowWire(!state.showWire) },
+  { title: () => t('menu.panels'), items: [
+    { label: () => t('panels.uv'), hint: 'U', checked: () => state.uvOpen, action: () => setUVOpen(!state.uvOpen) },
+    { label: () => t('panels.uvWire'), checked: () => state.showWire, action: () => setShowWire(!state.showWire) },
     '-',
-    { label: 'Колонка инструментов', checked: () => !app.classList.contains('no-tools'),
+    { label: () => t('panels.tools'), checked: () => !app.classList.contains('no-tools'),
       action: () => togglePanel('no-tools', $('btn-tools-toggle')) },
-    { label: 'Правая панель', checked: () => !app.classList.contains('no-side'),
+    { label: () => t('panels.side'), checked: () => !app.classList.contains('no-side'),
       action: () => togglePanel('no-side', $('btn-side-toggle')) },
-    { label: 'Скрыть всё', hint: 'Tab', action: toggleAllPanels },
+    { label: () => t('panels.hideAll'), hint: 'Tab', action: toggleAllPanels },
   ] },
 
-  { title: 'Справка', items: [
-    { label: 'Клавиши и приёмы…', hint: 'F1', action: () => helpModal.open() },
+  { title: () => t('menu.help'), items: [
+    { label: () => t('help.keys'), hint: 'F1', action: () => helpModal.open() },
   ] },
 ]);
+
+// Смена языка не пересобирает меню: структура та же, меняются только надписи.
+onLangChange(() => { menuBar.relabel(); applyDOM(); });
 
 /* ── Старт ─────────────────────────────────────────────────────── */
 
@@ -1290,6 +1427,16 @@ afterModelLoaded(viewport.loadDemo());
 setPivot(loadPrefs().pivot || 'local');
 syncViewUI();
 
+// Перевести разметку и принимать все форматы, которые умеем читать.
+applyDOM();
+$('file-input').accept = acceptAttribute();
+
+// Начальный экран — поверх готовой программы: под ним уже стоит демо-модель,
+// поэтому закрыть его можно в любой момент и сразу красить.
+if (loadPrefs().showWelcome !== false) welcome.show();
+
 // Доступ из консоли браузера — чтобы проверять инструмент вручную и видеть,
 // куда попадает луч, не угадывая координаты по скриншоту.
-window.__paint = { viewport, uvEditor, viewCube, menuBar, brushModal, materialModal, helpModal, targets, state, history, setTool, setColor, setMaterial, bootErrors };
+window.__paint = { viewport, uvEditor, viewCube, menuBar, brushModal, materialModal, helpModal,
+  saveAsModal, settingsModal, welcome, targets, state, history,
+  setTool, setColor, setMaterial, setLang, getLang, saveAs, openBuffer, bootErrors };

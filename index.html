@@ -33,7 +33,7 @@
     </button>
     <div class="sep"></div>
     <button class="btn accent" id="btn-save">Сохранить PNG</button>
-    <input type="file" id="file-input" accept=".glb,.gltf" hidden>
+    <input type="file" id="file-input" accept=".glb,.gltf,.obj,.fbx,.dae,.3mf,.wrl,.vrml,.stl,.ply,.amf" hidden>
   </div>
 
   <!-- ── Колонка инструментов ────────────────────────────────── -->
@@ -76,7 +76,7 @@
   <!-- ── Вьюпорт и развёртка ─────────────────────────────────── -->
   <div id="panes">
     <div id="viewport">
-      <div id="drop-hint">Отпустите — загружу GLB</div>
+      <div id="drop-hint" data-i18n="welcome.drop">Перетащите файл модели сюда</div>
       <div id="shape-preview"></div>
 
       <!-- Управление видом поверх вьюпорта: там же, где смотришь. -->
