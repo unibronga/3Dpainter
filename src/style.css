@@ -161,7 +161,13 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 
 #panes { display: flex; min-width: 0; overflow: hidden; }
 
-#viewport { position: relative; flex: 1 1 auto; min-width: 0; overflow: hidden; background: #15171a; }
+/* container-type: полоска параметров перестраивается по ширине самого
+   вьюпорта — она меняется от развёртки и правой панели, а не от окна. */
+#viewport {
+  position: relative; flex: 1 1 auto; min-width: 0; overflow: hidden;
+  background: #15171a;
+  container: viewport / inline-size;
+}
 .viewport-canvas { display: block; width: 100%; height: 100%; }
 
 #drop-hint {
@@ -1070,6 +1076,18 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
   pointer-events: none;
 }
 
+/* Полоска и значки вида делят верх вьюпорта. Когда развёртка съедает
+   ширину, места на одну строку не хватает, и полоска уходит под значки —
+   каскадом, вместо того чтобы лезть под них. Меряем сам вьюпорт, а не окно:
+   его ширина зависит от развёртки и правой панели. */
+@container viewport (max-width: 900px) {
+  #tool-options { top: 46px; right: 8px; }
+}
+@container viewport (max-width: 620px) {
+  .opt-group { flex-wrap: wrap; max-width: calc(100vw - 32px); }
+  .opt-group input[type="range"] { width: 90px; }
+}
+
 .opt-group {
   display: none;
   align-items: center;
@@ -1117,9 +1135,9 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
   max-width: 150px;
 }
 
-/* Узкое окно: полоска не должна залезать под значки вида. */
-@media (max-width: 1100px) {
-  #tool-options { right: 210px; }
-  .opt-group input[type="range"] { width: 80px; }
-  .opt-text { width: 110px; }
+/* Совсем узкий вьюпорт: ползунки и поле ужимаются, чтобы полоска влезла. */
+@container viewport (max-width: 520px) {
+  .opt-group input[type="range"] { width: 70px; }
+  .opt-text { width: 100px; }
+  .opt-select { max-width: 110px; }
 }

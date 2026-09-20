@@ -105,8 +105,9 @@ procedural patterns are included, or you can load your own image.
 The history panel lets you click any step and land in it, not just step back
 one at a time.
 
-**A UV editor** on half the screen, where the same tools work directly on the
-unwrap — handy when a face is too small or hidden on the model itself.
+**A UV editor** on half the screen, where the whole toolset works directly on
+the unwrap — brush, fills, eyedropper, shapes and text. Handy when a face is
+too small or hidden on the model itself.
 
 **Output.** A PNG of the color map, plus a second `<name>_material.png` when
 you actually painted with surface properties (roughness in green, metalness

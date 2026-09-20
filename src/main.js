@@ -88,6 +88,7 @@ const uvEditor = new UVEditor($('uv-body'), {
   onEnd: uvEnd,
   onFill: uvFill,
   onPick: uvPick,
+  onShape: uvShape,
 });
 
 /* ── Настройки интерфейса переживают перезагрузку ──────────────── */
@@ -339,6 +340,51 @@ function uvMove(tx, ty) {
 }
 
 function uvEnd() { endStroke(); }
+
+/**
+ * Напечатать фигуру или надпись прямо по развёртке.
+ *
+ * На модели трафарет кладётся проекцией на экран — там иначе нельзя, грань
+ * повёрнута. Здесь развёртка и есть плоскость текстуры, поэтому тот же
+ * трафарет считается прямо в текселях, без проекции.
+ */
+function uvShape(a, b, shift) {
+  const target = activeTarget();
+  const cache = activeMesh?.userData.paintCache;
+  if (!target || !cache) return;
+  target.activeIndex = state.activeLayer;
+
+  let ax = a.tx, ay = a.ty, bx = b.tx, by = b.ty;
+
+  // Shift равняет стороны — квадрат и правильный круг, как и на модели.
+  if (shift && state.tool !== 'text') {
+    const d = Math.max(Math.abs(bx - ax), Math.abs(by - ay));
+    bx = ax + Math.sign(bx - ax || 1) * d;
+    by = ay + Math.sign(by - ay || 1) * d;
+  }
+
+  const st = shapeStencil(state.tool, { x: ax, y: ay }, { x: bx, y: by });
+  const fn = st.fn || st;
+
+  // Область печати: рамка с запасом на толщину контура, у надписи — её
+  // собственный размер. Без запаса контур срезало бы по краю рамки.
+  const пад = Math.ceil((state.shape.thickness || 1) + 2);
+  const box = st.img
+    ? { x0: ax - st.img.w / 2, y0: ay - st.img.h / 2, x1: ax + st.img.w / 2, y1: ay + st.img.h / 2 }
+    : { x0: Math.min(ax, bx) - пад, y0: Math.min(ay, by) - пад,
+        x1: Math.max(ax, bx) + пад, y1: Math.max(ay, by) + пад };
+
+  const s = new Stroke(target, cache, strokeOpts(false));
+  s.stampStencil2D(fn, box, state.brush);
+
+  const entry = s.end(toolLabel());
+  if (entry) history.push(entry);
+  state.painted = true;
+
+  renderHistory();
+  syncHistoryButtons();
+  refreshUV();
+}
 
 function uvFill(tri) {
   const target = activeTarget();

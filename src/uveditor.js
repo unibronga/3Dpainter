@@ -11,6 +11,9 @@
 
 import { findTriangleAtUV } from './mesh-cache.js';
 
+/** Инструменты, которые тянутся рамкой, а не мажут по пути. */
+const SHAPE_TOOLS = new Set(['rect', 'ellipse', 'text']);
+
 export class UVEditor {
   /**
    * @param {HTMLElement} container
@@ -38,6 +41,7 @@ export class UVEditor {
     this.view = { scale: 1, ox: 0, oy: 0 }; // пикселей на единицу UV и сдвиг
     this.cursor = null;
     this.painting = false;
+    this.shaping = null;     // тянущаяся рамка фигуры или текста
     this.panning = false;
     this.spaceDown = false;
 
@@ -132,7 +136,28 @@ export class UVEditor {
     ctx.lineWidth = 1;
     ctx.strokeRect(ox + 0.5, oy + 0.5, scale, scale);
 
-    if (this.cursor) {
+    // Рамка тянущейся фигуры: показывает, куда она ляжет, до того как легла.
+    if (this.shaping) {
+      const { a, b } = this.shaping;
+      const x0 = ox + (a.tx / this.target.size) * scale;
+      const y0 = oy + (a.ty / this.target.size) * scale;
+      const x1 = ox + (b.tx / this.target.size) * scale;
+      const y1 = oy + (b.ty / this.target.size) * scale;
+
+      ctx.save();
+      ctx.setLineDash([4, 3]);
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = 1;
+      if (this.hooks.currentTool() === 'ellipse') {
+        ctx.beginPath();
+        ctx.ellipse((x0 + x1) / 2, (y0 + y1) / 2, Math.abs(x1 - x0) / 2, Math.abs(y1 - y0) / 2, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      } else {
+        ctx.strokeRect(Math.min(x0, x1) + 0.5, Math.min(y0, y1) + 0.5, Math.abs(x1 - x0), Math.abs(y1 - y0));
+      }
+      ctx.restore();
+    } else if (this.cursor && !SHAPE_TOOLS.has(this.hooks.currentTool())) {
+      // Круг курсора — про кисть; у фигур свой размер задаётся протяжкой.
       const r = Math.max(2, this.hooks.brushRadiusScreen());
       ctx.beginPath();
       ctx.arc(this.cursor.x, this.cursor.y, r, 0, Math.PI * 2);
@@ -219,6 +244,13 @@ export class UVEditor {
         this.draw();
         return;
       }
+      // Фигуры и текст здесь тянутся рамкой — тем же движением, что и на
+      // модели: инструмент один, значит и повадки у него должны быть одни.
+      if (SHAPE_TOOLS.has(tool)) {
+        this.shaping = { a: p, b: p, shift: e.shiftKey };
+        this.draw();
+        return;
+      }
       this.painting = true;
       this.hooks.onBegin(p.tx, p.ty, e.shiftKey);
     });
@@ -231,6 +263,12 @@ export class UVEditor {
         this.view.ox += e.clientX - this.panning.x;
         this.view.oy += e.clientY - this.panning.y;
         this.panning = { x: e.clientX, y: e.clientY };
+        this.draw();
+        return;
+      }
+      if (this.shaping) {
+        this.shaping.b = this.toTexel(e.clientX, e.clientY);
+        this.shaping.shift = e.shiftKey;
         this.draw();
         return;
       }
@@ -247,6 +285,12 @@ export class UVEditor {
 
     const stop = () => {
       if (this.painting) { this.painting = false; this.hooks.onEnd(); }
+      if (this.shaping) {
+        const { a, b, shift } = this.shaping;
+        this.shaping = null;
+        this.hooks.onShape(a, b, shift);
+        this.draw();
+      }
       this.panning = false;
     };
     cv.addEventListener('pointerup', stop);
