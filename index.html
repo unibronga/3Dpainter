@@ -13,15 +13,42 @@
 
   <!-- ── Верхняя панель быстрого доступа ─────────────────────── -->
   <div id="topbar">
-    <div class="title"><span data-i18n="ui.appName">3DPainter</span> <span>· low-poly</span></div>
-    <div class="sep"></div>
-    <button class="btn" id="btn-open" data-i18n="ui.open" data-i18n-title="tip.open" title="Открыть модель">Открыть…</button>
-    <button class="btn" id="btn-demo" data-i18n="ui.demo">Демо</button>
+    <!-- Параметры выбранного инструмента: первое, к чему тянется рука после
+         выбора самого инструмента. Пусто у тех, у кого своих настроек нет. -->
+    <div id="tool-options">
+      <div class="opt-group" data-for="rect ellipse">
+        <span class="opt-label" data-i18n="shape.kind">Вид</span>
+        <div class="seg">
+        <button class="btn on" id="shape-fill" data-i18n="shape.fill">заливка</button>
+        <button class="btn" id="shape-outline" data-i18n="shape.outline">контур</button>
+        </div>
+        <span class="opt-sep"></span>
+        <span class="opt-label" data-i18n="shape.thickness">Толщина</span>
+        <input type="range" id="shape-thickness" min="1" max="40" step="1" value="4">
+        <span class="val" id="shape-thickness-val">4 px</span>
+      </div>
+
+      <div class="opt-group" data-for="text">
+        <span class="opt-label" data-i18n="shape.text">Текст</span>
+        <input type="text" id="shape-text" class="opt-text" value="Текст" spellcheck="false">
+        <span class="opt-sep"></span>
+        <span class="opt-label" data-i18n="shape.family">Шрифт</span>
+        <select id="shape-family" class="opt-select"></select>
+        <span class="opt-sep"></span>
+        <span class="opt-label" data-i18n="shape.font">Кегль</span>
+        <input type="range" id="shape-font" min="12" max="400" step="2" value="96">
+        <span class="val" id="shape-font-val">96 px</span>
+      </div>
+
+      <div class="opt-group" data-for="fill-faces">
+        <span class="opt-label" data-i18n="fill.angle">Порог угла</span>
+        <input type="range" id="fill-angle" min="1" max="180" step="1" value="40">
+        <span class="val" id="fill-angle-val">40°</span>
+      </div>
+    </div>
 
     <div class="spacer"></div>
 
-    <button class="btn" id="btn-uv" data-i18n="ui.uv" data-i18n-title="tip.uv" title="Развёртка на полэкрана (U)">Развёртка</button>
-    <div class="sep"></div>
     <button class="btn" id="btn-undo" data-i18n="ui.undo" data-i18n-title="tip.undo" title="Отменить (Cmd/Ctrl+Z)">Отменить</button>
     <button class="btn" id="btn-redo" data-i18n="ui.redo" data-i18n-title="tip.redo" title="Вернуть (Cmd/Ctrl+Shift+Z)">Вернуть</button>
     <div class="sep"></div>
@@ -38,6 +65,10 @@
 
   <!-- ── Колонка инструментов ────────────────────────────────── -->
   <div id="toolbar">
+    <button class="tool" data-tool="select" data-i18n-title="tip.select" title="Выбор объекта (V)">
+      <svg viewBox="0 0 24 24"><path d="M5 3.2 18.3 11l-5.6 1.4-2.3 5.4z" fill="currentColor" stroke="none"/><path d="M5 3.2 18.3 11l-5.6 1.4-2.3 5.4z"/></svg>
+    </button>
+    <div class="tool-sep"></div>
     <button class="tool active" data-tool="brush" data-i18n-title="tip.brush" title="Кисть (B)">
       <svg viewBox="0 0 24 24"><path d="M9.5 14.5 4 20c1.8 1.2 4.3.9 5.7-.6 1-1 1.2-2.4.8-3.6z"/><path d="M11 13 20.2 3.8a1.6 1.6 0 0 1 2.3 2.3L13.3 15.3"/></svg>
     </button>
@@ -78,38 +109,6 @@
     <div id="viewport">
       <div id="drop-hint" data-i18n="welcome.drop">Перетащите файл модели сюда</div>
 
-      <!-- Параметры выбранного инструмента: там же, где работает рука. -->
-      <div id="tool-options">
-        <div class="opt-group" data-for="rect ellipse">
-          <span class="opt-label" data-i18n="shape.kind">Вид</span>
-          <div class="seg">
-            <button class="btn on" id="shape-fill" data-i18n="shape.fill">заливка</button>
-            <button class="btn" id="shape-outline" data-i18n="shape.outline">контур</button>
-          </div>
-          <span class="opt-sep"></span>
-          <span class="opt-label" data-i18n="shape.thickness">Толщина</span>
-          <input type="range" id="shape-thickness" min="1" max="40" step="1" value="4">
-          <span class="val" id="shape-thickness-val">4 px</span>
-        </div>
-
-        <div class="opt-group" data-for="text">
-          <span class="opt-label" data-i18n="shape.text">Текст</span>
-          <input type="text" id="shape-text" class="opt-text" value="Текст" spellcheck="false">
-          <span class="opt-sep"></span>
-          <span class="opt-label" data-i18n="shape.family">Шрифт</span>
-          <select id="shape-family" class="opt-select"></select>
-          <span class="opt-sep"></span>
-          <span class="opt-label" data-i18n="shape.font">Кегль</span>
-          <input type="range" id="shape-font" min="12" max="400" step="2" value="96">
-          <span class="val" id="shape-font-val">96 px</span>
-        </div>
-
-        <div class="opt-group" data-for="fill-faces">
-          <span class="opt-label" data-i18n="fill.angle">Порог угла</span>
-          <input type="range" id="fill-angle" min="1" max="180" step="1" value="40">
-          <span class="val" id="fill-angle-val">40°</span>
-        </div>
-      </div>
       <div id="shape-preview"></div>
 
       <!-- Управление видом поверх вьюпорта: там же, где смотришь. -->
@@ -263,9 +262,9 @@
         </button>
       </h3>
       <div class="body">
-        <div id="uv-preview-box" data-i18n-title="tip.uvPreview" title="Щелчок — открыть развёртку на полэкрана">
-          <canvas id="uv-preview"></canvas>
-        </div>
+        <!-- Список развёрток модели: по карте на меш. Щелчок делает меш
+             активным и открывает его развёртку; повторный — закрывает. -->
+        <div id="uv-list"></div>
         <label class="check-row"><input type="checkbox" id="uv-preview-wire" checked> <span data-i18n="uv.previewWire">сетка UV</span></label>
       </div>
     </section>

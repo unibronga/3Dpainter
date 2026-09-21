@@ -112,7 +112,12 @@ export function drawUVPreview(canvas, target, cache, showWire) {
   // На плотной сетке линии в квадрате двести пикселей сливаются в серую
   // заливку — показывать нечего, а построение слоя стоит секунды.
   if (!showWire || !cache || cache.triCount > ПОРОГ_СЕТКИ) return;
+  // Вычитанием, а не белым поверх: после растекания цвета островов атлас
+  // у светлой модели белый, и белая линия по нему не видна вовсе.
+  ctx.save();
+  ctx.globalCompositeOperation = 'difference';
   ctx.drawImage(сеткаПревью(cache, S, dpr), 0, 0);
+  ctx.restore();
 }
 
 /** Выше этого числа треугольников сетка в превью не рисуется. */

@@ -196,22 +196,39 @@ export class UVEditor {
     const k = scale / S;
     const ctx = this.ctx;
 
-    // Поля в тексель: край мазка сглажен, и ровно по границе остаётся шов.
-    const t0x = Math.max(0, rect.x0 - 1), t0y = Math.max(0, rect.y0 - 1);
-    const t1x = Math.min(S, rect.x1 + 2), t1y = Math.min(S, rect.y1 + 2);
+    // Поля по краям: край мазка сглажен, и ровно по границе остался бы шов.
+    // Берём не меньше двух пикселей кадра — ниже по ним выравнивается вырез.
+    const поле = Math.max(2, Math.ceil(2 / k));
+    const t0x = Math.max(0, rect.x0 - поле), t0y = Math.max(0, rect.y0 - поле);
+    const t1x = Math.min(S, rect.x1 + поле + 1), t1y = Math.min(S, rect.y1 + поле + 1);
     if (t1x <= t0x || t1y <= t0y) return;
 
-    const x = ox + t0x * k, y = oy + t0y * k;
-    const w = (t1x - t0x) * k, h = (t1y - t0y) * k;
+    // 🔴 Кусок кадра берём по ЦЕЛЫМ пикселям. У дробного прямоугольника края
+    // накрыты частично, а шахматка рисуется под текстурой и по такому краю
+    // просвечивает: за мазком оставалась гребёнка тонких тёмных рамок, по
+    // рамке на отпечаток (замер: 220,80,55 в полной отрисовке против
+    // 102–209 здесь).
+    const вx = Math.floor(ox + t0x * k);
+    const вy = Math.floor(oy + t0y * k);
+    const вw = Math.ceil(ox + t1x * k) - вx;
+    const вh = Math.ceil(oy + t1y * k) - вy;
+    if (вw <= 0 || вh <= 0) return;
 
     ctx.save();
     ctx.beginPath();
-    ctx.rect(x, y, w, h);
+    ctx.rect(вx, вy, вw, вh);
     ctx.clip();
 
     this._checker(ox, oy, scale);
     ctx.imageSmoothingEnabled = scale < S;
-    ctx.drawImage(this.target.canvas, t0x, t0y, t1x - t0x, t1y - t0y, x, y, w, h);
+    // 🔴 Источник считаем ОБРАТНЫМ преобразованием того же прямоугольника, а
+    // не своими границами в текселях: тогда кусок ложится на те же пиксели,
+    // что и полная отрисовка, и на стыке не остаётся шва в тексель. Выход за
+    // края текстуры не страшен — drawImage подрежет и источник, и место
+    // вместе, преобразование от этого не поедет.
+    ctx.drawImage(this.target.canvas,
+      (вx - ox) / k, (вy - oy) / k, вw / k, вh / k,
+      вx, вy, вw, вh);
     if (this.showWire && this.cache) this._wire(ox, oy, scale);
     ctx.restore();
   }
@@ -253,7 +270,19 @@ export class UVEditor {
     if (scale > S) { this._wireExact(ox, oy, scale); return; }
 
     const готовый = this._sheetReady(S);
-    if (готовый) { this.ctx.drawImage(готовый, ox, oy, scale, scale); return; }
+    if (готовый) {
+      const ctx = this.ctx;
+      ctx.save();
+      // 🔴 Сетка рисуется вычитанием, а не белым поверх. Белая линия по
+      // белому атласу даёт разницу ровно ноль — после того как промежутки
+      // между островами залились цветом островов, сетка на светлой модели
+      // пропала бы целиком. Вычитание видно на любом фоне: на светлом даёт
+      // тёмную линию, на тёмном — светлую.
+      ctx.globalCompositeOperation = 'difference';
+      ctx.drawImage(готовый, ox, oy, scale, scale);
+      ctx.restore();
+      return;
+    }
 
     // Слой ещё не построен. На плотной сетке это почти секунда — держать
     // ради неё открытие файла незачем: строим в ближайшем простое, панель
@@ -322,6 +351,8 @@ export class UVEditor {
     const { uv, idx, triCount } = this.cache;
     const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
 
+    ctx.save();
+    ctx.globalCompositeOperation = 'difference';   // см. _wire: видно на любом фоне
     ctx.strokeStyle = 'rgba(255,255,255,0.42)';
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -338,6 +369,7 @@ export class UVEditor {
       ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.lineTo(x2, y2); ctx.closePath();
     }
     ctx.stroke();
+    ctx.restore();
   }
 
 

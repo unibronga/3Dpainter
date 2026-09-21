@@ -8,7 +8,7 @@ import { Viewport } from './viewport.js';
 import { UVEditor } from './uveditor.js';
 import { ViewCube } from './viewcube.js';
 import { MenuBar } from './menubar.js';
-import { PaintTarget, History } from './layers.js';
+import { PaintTarget, History, bleedLayer } from './layers.js';
 import { Stroke, rectStencil, ellipseStencil, imageStencil } from './painter.js';
 import * as THREE from 'three';
 import { floodFaces } from './mesh-cache.js';
@@ -17,7 +17,7 @@ import { createBrushModal, createMaterialModal, createHelpModal,
          createSaveAsModal, createSettingsModal } from './modals.js';
 import { drawMaterialBall } from './matball.js';
 import { t, setLang, getLang, onLangChange, applyDOM, LANGS } from './i18n.js';
-import { acceptAttribute, isSupported, extensionOf, exportGLTF, exportOBJ } from './formats.js';
+import { acceptAttribute, isSupported, isSidecar, extensionOf, exportGLTF, exportOBJ } from './formats.js';
 import { createWelcome } from './welcome.js';
 import { addRecent } from './recent.js';
 import { withBusy, busyNote } from './busy.js';
@@ -129,6 +129,52 @@ function buildTargets(paintables) {
   history.clear();
   state.painted = false;
   return downgraded ? size : null;
+}
+
+/**
+ * Выпечь цвета материалов из файла в первый слой.
+ *
+ * Модель из интернета приходит раскрашенной материалами, а не текстурой:
+ * в .mtl лежат плоские Kd. Показать их нечем — мы кладём на меш свою
+ * текстуру, — поэтому цвета переносятся в покраску. Заодно они становятся
+ * правимыми: это ровно то, ради чего инструмент и нужен.
+ *
+ * В журнал не пишем: это не действие человека, а состояние, с которого он
+ * начинает. `buildTargets` историю уже очистил.
+ *
+ * @returns {number} сколько цветов перенесено
+ */
+function bakeSourceColors(paintables) {
+  let перенесено = 0;
+  for (const { mesh, cache } of paintables) {
+    const groups = mesh.userData.sourceGroups;
+    const target = targets.get(mesh);
+    if (!groups?.length || !target) continue;
+    target.activeIndex = 0;
+    for (const g of groups) {
+      const набор = new Set();
+      for (let t = g.from; t < g.to; t++) набор.add(t);
+      if (!набор.size) continue;
+      const s = new Stroke(target, cache, {
+        channel: 'rgba', mode: 'paint', color: g.rgb, color2: g.rgb,
+        opacity: 1, alpha: 1, roughness: 0.9, metalness: 0, pattern: { id: 'none' },
+      });
+      s.fillTriangles(набор);
+      s.flush();
+      s.end(toolLabel());
+      перенесено += 1;
+    }
+    // Промежутки между островами получают цвет ближайшего острова. Иначе
+    // видеокарта подмешивает в края швов некрашеную подложку, и вдоль них
+    // ползёт серая кайма; в редакторе развёртки та же пустота читается
+    // серым прямоугольником вокруг кисти.
+    if (groups.length) {
+      bleedLayer(target.layers[0], target.size);
+      target.compositeRect(null);
+      target.updateTransparency?.();
+    }
+  }
+  return перенесено;
 }
 
 function addLayer() {
@@ -247,7 +293,7 @@ function pump() {
     if (state.uvOpen) uvEditor.drawTexelRect(stroke.lastApplied);
     // Превью — целая текстура в маленький квадрат; каждый кадр ни к чему.
     if ((pumpFrame++ % 6) === 0) {
-      UI.drawUVPreview($('uv-preview'), activeTarget(), activeMesh?.userData.paintCache, state.showWire);
+      drawUVRow(activeMesh);
     }
     syncPerf();
   }
@@ -566,9 +612,19 @@ el.addEventListener('pointerdown', (e) => {
   setActiveMesh(hit.mesh);
 
   switch (state.tool) {
+    // Выбор объекта ничего не красит: меш уже стал активным выше, а вместе с
+    // ним — его развёртка. На составной модели это единственный способ
+    // переключиться между картами, не ставя мазка.
+    case 'select':
+      break;
+
     case 'eyedropper': {
-      const t = targets.get(hit.mesh);
-      if (t && hit.uv) setMaterial({ ...t.sampleMaterialUV(hit.uv.x, hit.uv.y), name: () => t('mat.fromModel') });
+      // 🔴 Цель нельзя звать `t`: это затенило бы функцию перевода, и замыкание
+      // с именем материала падало бы при каждой отрисовке подписи.
+      const цель = targets.get(hit.mesh);
+      if (цель && hit.uv) {
+        setMaterial({ ...цель.sampleMaterialUV(hit.uv.x, hit.uv.y), name: () => t('mat.fromModel') });
+      }
       break;
     }
     case 'fill-faces':
@@ -622,7 +678,13 @@ window.addEventListener('pointermove', (e) => {
     const pts = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
     for (const p of (pts.length ? pts : [e])) strokeMove(p.clientX, p.clientY);
   }
-  if (over) viewport.showCursor(viewport.pick(e.clientX, e.clientY), brushRadiusWorld());
+  // Кольцо кисти показывает, куда ляжет краска. У выбора объекта краски
+  // нет, и кольцо только врало бы про размер мазка.
+  if (over && state.tool !== 'select') {
+    viewport.showCursor(viewport.pick(e.clientX, e.clientY), brushRadiusWorld());
+  } else if (state.tool === 'select') {
+    viewport.showCursor(null, 0);
+  }
 });
 
 window.addEventListener('pointerup', () => {
@@ -880,8 +942,8 @@ $('btn-hist-redo').addEventListener('click', () => history.redo());
 
 function setUVOpen(open) {
   state.uvOpen = open;
+  syncUVList();
   app.classList.toggle('uv-open', open);
-  $('btn-uv').classList.toggle('on', open);
   savePrefs({ uvOpen: open });
   if (open) {
     requestAnimationFrame(() => { uvEditor.resize(); refreshUV(); });
@@ -889,13 +951,11 @@ function setUVOpen(open) {
   viewport.resize();
 }
 
-$('btn-uv').addEventListener('click', () => setUVOpen(!state.uvOpen));
 $('uv-close').addEventListener('click', () => setUVOpen(false));
 $('uv-fit').addEventListener('click', () => { uvEditor.fit(); uvEditor.draw(); });
 $('uv-wire').addEventListener('change', (e) => setShowWire(e.target.checked));
 $('uv-preview-wire').addEventListener('change', (e) => setShowWire(e.target.checked));
 $('btn-uv-open').addEventListener('click', (e) => { e.stopPropagation(); setUVOpen(true); });
-$('uv-preview-box').addEventListener('click', () => setUVOpen(true));
 
 let uvPending = false;
 function scheduleUV() {
@@ -904,18 +964,91 @@ function scheduleUV() {
   requestAnimationFrame(() => { uvPending = false; refreshUV(); });
 }
 function refreshUV() {
-  // Маленькая карта в панели нужна и при закрытом редакторе: по ней видно,
-  // куда легла краска и много ли пустого места на атласе.
-  UI.drawUVPreview($('uv-preview'), activeTarget(), activeMesh?.userData.paintCache, state.showWire);
+  drawUVRow(activeMesh);
   if (!state.uvOpen) return;
   uvEditor.setTarget(activeTarget(), activeMesh?.userData.paintCache);
   $('uv-mesh').textContent = activeMesh?.name ? `· ${activeMesh.name}` : '';
+}
+
+/* ── Список развёрток ──────────────────────────────────────────── */
+
+/** Короткий создатель элемента: в этом файле `el` занят вьюпортом. */
+function элемент(тег, класс, текст) {
+  const у = document.createElement(тег);
+  if (класс) у.className = класс;
+  if (текст != null) у.textContent = текст;
+  return у;
+}
+
+// Карта меша → строка списка: по ней перерисовывается только нужная,
+// а не весь список. За мазок это происходит десятки раз.
+const uvRows = new Map();
+
+/**
+ * Список развёрток модели — по карте на меш.
+ *
+ * У составной модели каждый объект несёт свою развёртку, и одной карточкой
+ * их не показать: непонятно, чья она. Список делает выбор явным, а заодно
+ * заменяет кнопку «Развёртка» — щелчок по строке открывает нужную карту.
+ */
+function renderUVList() {
+  const box = $('uv-list');
+  box.textContent = '';
+  uvRows.clear();
+
+  if (!viewport.paintables.length) {
+    box.appendChild(элемент('div', 'uv-empty', t('uv.none')));
+    return;
+  }
+
+  for (const { mesh, cache } of viewport.paintables) {
+    const row = элемент('button', 'uv-row');
+    const thumb = элемент('div', 'uv-thumb');
+    const canvas = document.createElement('canvas');
+    thumb.appendChild(canvas);
+    const info = элемент('div', 'uv-row-info');
+    // Имя меша не переводится: оно уходит в файл и в списки 3D-редакторов.
+    info.append(элемент('div', 'uv-row-name', mesh.name || t('model.unnamed')),
+                элемент('div', 'uv-row-meta', t('uv.rowTris', cache.triCount)));
+    row.append(thumb, info);
+    row.addEventListener('click', () => {
+      // Щелчок по уже открытой развёртке закрывает её — как переключатель.
+      if (activeMesh === mesh && state.uvOpen) { setUVOpen(false); return; }
+      setActiveMesh(mesh);
+      setUVOpen(true);
+    });
+    box.appendChild(row);
+    uvRows.set(mesh, { row, canvas });
+  }
+  syncUVList();
+}
+
+/** Подсветить строку активного меша и обновить её карту. */
+function syncUVList() {
+  for (const [mesh, { row }] of uvRows) {
+    row.classList.toggle('on', mesh === activeMesh);
+    row.classList.toggle('open', mesh === activeMesh && state.uvOpen);
+  }
+  drawUVRow(activeMesh);
+}
+
+/** Перерисовать карту одной строки. Без меша — ничего не делаем. */
+function drawUVRow(mesh) {
+  const row = mesh && uvRows.get(mesh);
+  if (!row) return;
+  UI.drawUVPreview(row.canvas, targets.get(mesh), mesh.userData.paintCache, state.showWire);
+}
+
+/** Перерисовать карты всех строк — после загрузки и при смене сетки. */
+function drawUVRows() {
+  for (const [mesh] of uvRows) drawUVRow(mesh);
 }
 
 function setShowWire(on) {
   state.showWire = on;
   $('uv-wire').checked = on;
   $('uv-preview-wire').checked = on;
+  drawUVRows();
   uvEditor.setShowWire(on);
   refreshUV();
 }
@@ -1133,14 +1266,18 @@ function setActiveMesh(mesh) {
   activeMesh = mesh;
   syncLayers();
   refreshUV();
+  syncUVList();
   syncStatusModel();
 }
 
 function afterModelLoaded(report) {
   const downgraded = buildTargets(viewport.paintables);
+  report.downgraded = downgraded;
+  report.baked = bakeSourceColors(viewport.paintables);
   modelName = report.name;
   lastReport = report;
 
+  renderUVList();
   syncLayers();
   syncBrushLabels();
   renderHistory();
@@ -1149,23 +1286,51 @@ function afterModelLoaded(report) {
   syncPerf();
   if (state.uvOpen) { uvEditor.setTarget(null, null); refreshUV(); uvEditor.fit(); uvEditor.draw(); }
 
-  $('stat-tris').textContent = t('status.tris',
-    (report.tris || 0).toLocaleString(getLang() === 'en' ? 'en-US' : 'ru'), report.meshes);
+  syncStatusCounts();
+  syncModelNotes();
+
+  if (downgraded) state.texSize = downgraded;
+}
+
+/**
+ * Заметки о модели в строке состояния.
+ *
+ * Пишутся кодом, поэтому `data-i18n` на них вешать нельзя — `applyDOM()`
+ * затёр бы содержимое. Собираются из отчёта о загрузке заново при каждой
+ * смене языка: иначе на экране остаётся вчерашний язык.
+ */
+function syncModelNotes() {
+  const uvEl = $('stat-uv');
+  const report = lastReport;
+  if (!report) { uvEl.textContent = ''; uvEl.style.color = ''; return; }
 
   const notes = [];
-  if (downgraded) notes.push(t('status.manyMeshes', downgraded));
+  if (report.downgraded) notes.push(t('status.manyMeshes', report.downgraded));
   if (report.noUV?.length) notes.push(t('status.noUVList', report.noUV.join(', ')));
+  if (report.baked) notes.push(t('status.baked', report.baked));
+  if (report.unwrapped?.length) {
+    // Развёртку подменили — об этом надо сказать вслух: человек открыл свой
+    // файл, а красит по другим координатам, чем в нём лежали.
+    const островов = report.unwrapped.reduce((n, u) => n + u.islands, 0);
+    notes.push(t('status.unwrapped', report.unwrapped.length, островов));
+  }
   if (report.overlapping?.length) {
     // Наложенная развёртка — не мелочь: мазок по одной грани проступит на
     // другой. Лучше сказать сразу, чем гадать, почему кисть «мажет мимо».
     const worst = Math.round(Math.max(...report.overlapping.map((o) => o.ratio)) * 100);
     notes.push(t('status.overlap', worst, report.overlapping.map((o) => o.name).join(', ')));
   }
-  const uvEl = $('stat-uv');
   uvEl.textContent = notes.join(' · ');
   uvEl.style.color = report.overlapping?.length ? 'var(--danger)' : '';
+}
 
-  if (downgraded) state.texSize = downgraded;
+/** Счётчик треугольников: разделитель разрядов зависит от языка. */
+function syncStatusCounts() {
+  $('stat-tris').textContent = lastReport
+    ? t('status.tris',
+        (lastReport.tris || 0).toLocaleString(getLang() === 'en' ? 'en-US' : 'ru'),
+        lastReport.meshes)
+    : '';
 }
 
 function syncStatusModel() {
@@ -1188,11 +1353,9 @@ function setStatusHint(text) {
   hintTimer = setTimeout(() => { hint.textContent = HINT(); }, 2500);
 }
 
-$('btn-demo').addEventListener('click', () => afterModelLoaded(viewport.loadDemo()));
-$('btn-open').addEventListener('click', () => $('file-input').click());
+$('file-input').multiple = true;
 $('file-input').addEventListener('change', async (e) => {
-  const f = e.target.files[0];
-  if (f) await openFile(f);
+  if (e.target.files.length) await openFile(e.target.files);
   e.target.value = '';
 });
 
@@ -1220,16 +1383,62 @@ async function openBuffer(buffer, name) {
   }, name);
 }
 
-async function openFile(file) {
-  if (!isSupported(file.name)) {
-    setStatusHint(t('load.unknown', extensionOf(file.name) || file.name));
+/**
+ * Открыть модель. На вход можно дать не один файл, а весь комплект из папки:
+ * сама модель выбирается по расширению, остальное идёт спутниками — .obj без
+ * соседнего .mtl теряет цвета автора, а найти его сам браузер не может.
+ *
+ * @param {File|File[]|FileList} что
+ */
+/**
+ * Файлы из перетаскивания, включая брошенную папку.
+ *
+ * Папка в `dataTransfer.files` не приходит вовсе — её видно только через
+ * записи (`webkitGetAsEntry`). А ронять папку с моделью человек будет чаще,
+ * чем выбирать файлы поштучно.
+ */
+async function filesFromDrop(dt) {
+  const записи = [...(dt.items || [])]
+    .map((it) => (it.webkitGetAsEntry ? it.webkitGetAsEntry() : null))
+    .filter(Boolean);
+  if (!записи.length) return [...dt.files];
+
+  const собрано = [];
+  const прочитать = (entry) => new Promise((ок) => {
+    if (entry.isFile) { entry.file((f) => { собрано.push(f); ок(); }, ок); return; }
+    if (!entry.isDirectory) { ок(); return; }
+    const reader = entry.createReader();
+    const шаг = () => reader.readEntries(async (пачка) => {
+      if (!пачка.length) { ок(); return; }
+      // Вложенные папки не обходим: комплект модели лежит одной папкой.
+      await Promise.all(пачка.filter((e) => e.isFile).map(прочитать));
+      шаг();
+    }, ок);
+    шаг();
+  });
+  await Promise.all(записи.map(прочитать));
+  return собрано.length ? собрано : [...dt.files];
+}
+
+async function openFile(что) {
+  const набор = что instanceof File ? [что] : [...что];
+  const file = набор.find((f) => isSupported(f.name) && !isSidecar(f.name));
+  if (!file) {
+    const первый = набор[0];
+    setStatusHint(t('load.unknown', (первый && extensionOf(первый.name)) || первый?.name || ''));
     return false;
   }
+  const спутники = new Map();
+  for (const f of набор) {
+    if (f === file || !isSidecar(f.name)) continue;
+    спутники.set(f.name.split(/[\\/]/).pop().toLowerCase(), await f.arrayBuffer());
+  }
+
   setStatusHint(t('load.loading', file.name));
   return withBusy('busy.open', async () => {
     try {
       const buf = await file.arrayBuffer();
-      const report = await viewport.loadFile(buf, file.name);
+      const report = await viewport.loadFile(buf, file.name, спутники);
       if (!report.meshes && !report.noUV?.length) {
         setStatusHint(t('load.noMesh'));
         return false;
@@ -1251,8 +1460,8 @@ el.addEventListener('dragleave', () => el.classList.remove('dragover'));
 el.addEventListener('drop', async (e) => {
   e.preventDefault();
   el.classList.remove('dragover');
-  const f = e.dataTransfer.files[0];
-  if (f) await openFile(f);
+  const набор = await filesFromDrop(e.dataTransfer);
+  if (набор.length) await openFile(набор);
 });
 
 function setTexSize(next) {
@@ -1381,7 +1590,7 @@ $('btn-save').addEventListener('click', () => { saveTextures(); });
 
 /* ── Клавиатура ────────────────────────────────────────────────── */
 
-const TOOL_KEYS = { b: 'brush', e: 'eraser', i: 'eyedropper', f: 'fill-faces', g: 'fill-island', m: 'mask', r: 'rect', c: 'ellipse', t: 'text' };
+const TOOL_KEYS = { v: 'select', b: 'brush', e: 'eraser', i: 'eyedropper', f: 'fill-faces', g: 'fill-island', m: 'mask', r: 'rect', c: 'ellipse', t: 'text' };
 const VIEW_KEYS = { 1: 'front', 2: 'back', 3: 'left', 4: 'right', 6: 'top', 7: 'bottom', 0: 'user' };
 
 window.addEventListener('keydown', (e) => {
@@ -1496,6 +1705,8 @@ const menuBar = new MenuBar($('menubar'), [
     { label: () => t('tool.eraser'), hint: 'E', radio: () => state.tool === 'eraser', action: () => setTool('eraser') },
     { label: () => t('tool.eyedropper'), hint: 'I', radio: () => state.tool === 'eyedropper', action: () => setTool('eyedropper') },
     '-',
+    { label: () => t('tool.select'), hint: 'V', radio: () => state.tool === 'select', action: () => setTool('select') },
+    '-',
     { label: () => t('tool.fillFaces'), hint: 'F', radio: () => state.tool === 'fill-faces', action: () => setTool('fill-faces') },
     { label: () => t('tool.fillIsland'), hint: 'G', radio: () => state.tool === 'fill-island', action: () => setTool('fill-island') },
     { label: () => t('tool.fillLayer'), radio: () => state.tool === 'fill-layer', action: () => setTool('fill-layer') },
@@ -1543,9 +1754,11 @@ onLangChange(() => {
   syncStatusModel();
   syncPerf();
   syncShapeUI();
-  $('stat-tris').textContent = lastReport
-    ? t('status.tris', (lastReport.tris || 0).toLocaleString(getLang() === 'en' ? 'en-US' : 'ru'), lastReport.meshes)
-    : '';
+  syncStatusCounts();
+  syncModelNotes();
+  // Список развёрток строится кодом: «N трис» на вчерашнем языке остался бы
+  // висеть, пока не откроют другую модель.
+  renderUVList();
   document.querySelector('#statusbar .hint').textContent = HINT();
 });
 
@@ -1591,4 +1804,4 @@ if (loadPrefs().showWelcome !== false) welcome.show();
 // куда попадает луч, не угадывая координаты по скриншоту.
 window.__paint = { viewport, uvEditor, viewCube, menuBar, brushModal, materialModal, helpModal,
   saveAsModal, settingsModal, welcome, targets, state, history,
-  setTool, setColor, setMaterial, setLang, getLang, saveAs, openBuffer, bootErrors };
+  setTool, setColor, setMaterial, setLang, getLang, saveAs, openBuffer, openFile, bootErrors };

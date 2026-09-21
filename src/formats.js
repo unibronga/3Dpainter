@@ -30,7 +30,67 @@ export const IMPORT_FORMATS = [
 
 /** Строка для `<input type="file" accept="…">`. */
 export function acceptAttribute() {
-  return IMPORT_FORMATS.flatMap((f) => f.ext).map((e) => '.' + e).join(',');
+  // Спутники тоже в списке: иначе в диалоге их не выбрать вместе с моделью.
+  return [...IMPORT_FORMATS.flatMap((f) => f.ext), ...SIDECAR_EXT]
+    .map((e) => '.' + e).join(',');
+}
+
+/** Расширения, которые сами по себе не модель, но приходят с ней в комплекте. */
+export const SIDECAR_EXT = ['mtl', 'png', 'jpg', 'jpeg', 'webp', 'bmp', 'tga'];
+
+export function isSidecar(имяФайла) {
+  return SIDECAR_EXT.includes(extensionOf(имяФайла));
+}
+
+/**
+ * Библиотека материалов к .obj из файлов, которые дали вместе с моделью.
+ *
+ * Имя библиотеки берём из строки `mtllib`, но не доверяем ему слепо: в
+ * выгрузках оно сплошь и рядом расходится с тем, что лежит в папке. Не нашли
+ * по имени — берём любой .mtl из комплекта, он там обычно один.
+ *
+ * Картинки из `map_Kd` подставляются через подмену адреса: настоящих путей у
+ * нас нет, файлы пришли из проводника, поэтому каждому имени сопоставляется
+ * свой blob.
+ *
+ * @param {string} текстOBJ
+ * @param {Map<string, ArrayBuffer>|null} спутники — имя файла в нижнем регистре → содержимое
+ * @returns {Promise<object|null>} MaterialCreator или null
+ */
+async function читатьMTL(текстOBJ, спутники) {
+  if (!спутники || !спутники.size) return null;
+
+  const названо = /^mtllib\s+(.+)$/m.exec(текстOBJ)?.[1]?.trim().toLowerCase();
+  const имя = (названо && спутники.has(названо))
+    ? названо
+    : [...спутники.keys()].find((k) => extensionOf(k) === 'mtl');
+  if (!имя) return null;
+
+  const { MTLLoader } = await import('three/addons/loaders/MTLLoader.js');
+  const THREE = await import('three');
+
+  const ссылки = [];
+  const manager = new THREE.LoadingManager();
+  manager.setURLModifier((url) => {
+    const ключ = url.split(/[\\/]/).pop().toLowerCase();
+    const данные = спутники.get(ключ);
+    if (!данные) return url;
+    const ссылка = URL.createObjectURL(new Blob([данные]));
+    ссылки.push(ссылка);
+    return ссылка;
+  });
+
+  try {
+    const creator = new MTLLoader(manager).parse(декодер.decode(спутники.get(имя)), '');
+    creator.preload();
+    // Адреса blob живут, пока картинки не прочитаны; отпускаем их следующим
+    // кадром, когда загрузчик уже забрал содержимое.
+    setTimeout(() => ссылки.forEach((u) => URL.revokeObjectURL(u)), 30000);
+    return creator;
+  } catch (err) {
+    console.warn('[3DPainter] .mtl не прочёлся:', err);
+    return null;
+  }
 }
 
 export function extensionOf(имяФайла) {
@@ -64,7 +124,7 @@ const декодер = new TextDecoder();
  * @param {ArrayBuffer} буфер содержимое файла
  * @param {string} имя имя файла — по нему выбирается загрузчик
  */
-export async function parseModel(буфер, имя) {
+export async function parseModel(буфер, имя, спутники = null) {
   const ext = extensionOf(имя);
   const основа = имя.replace(/\.[^.]+$/, '') || 'model';
 
@@ -78,7 +138,17 @@ export async function parseModel(буфер, имя) {
 
     case 'obj': {
       const { OBJLoader } = await import('three/addons/loaders/OBJLoader.js');
-      return new OBJLoader().parse(декодер.decode(буфер));
+      const текст = декодер.decode(буфер);
+      const loader = new OBJLoader();
+      // Сам .obj материалов не несёт — они в соседнем .mtl. Если его дали
+      // вместе с моделью, читаем: иначе цвета автора пропадут молча.
+      const библиотека = await читатьMTL(текст, спутники);
+      if (библиотека) loader.setMaterials(библиотека);
+      const корень = loader.parse(текст);
+      // Без библиотеки OBJLoader раздаёт всем белый материал по умолчанию.
+      // Переносить его в покраску нельзя: это не цвет автора, а заглушка.
+      корень.userData.materialsFromFile = !!библиотека;
+      return корень;
     }
 
     case 'fbx': {

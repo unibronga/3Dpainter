@@ -61,9 +61,19 @@ onto the viewport.
 | glTF / GLB, OBJ, FBX, Collada (DAE), 3MF, VRML | GLB, glTF, OBJ + MTL, PNG maps |
 | STL, PLY, AMF — geometry only, see below | |
 
-**Painting needs UVs.** glTF, OBJ, FBX, DAE and 3MF carry them. STL, PLY and
-AMF do not store UVs at all: such a file opens and displays, but there is
-nothing to paint on — unwrap it first (Smart UV Project in Blender).
+**Painting needs UVs, and they get built when a file has none.** glTF, OBJ,
+FBX, DAE and 3MF carry UVs, but not equally: models downloaded from the web
+routinely dump a flat projection of the geometry into the UV channel, which is
+useless for painting. The program judges the UVs on open and, if there are
+none, if they fall outside the 0…1 square, or if they cover only a handful of
+texels, it builds its own — islands split on creases, packed into the atlas at
+one texel density. The status line says so. UVs that are fine are left alone.
+
+**A model can be opened together with the files next to it.** The dialog takes
+several files, and a folder can simply be dropped into the window. For an
+`.obj` this picks up the neighbouring `.mtl`: material colours are baked into
+the first layer, so the model opens the way its author made it and is ready to
+edit with the brush.
 
 **Saving** offers the choice that matters: the maps alone, or the model
 together with the paint — a file that opens in another editor already
@@ -88,7 +98,7 @@ Other commands:
 | Pan | **Space + left button**, or middle button |
 | Zoom | **Wheel** |
 | Brush size | **[** and **]** |
-| Tools | **B** brush · **E** eraser · **I** eyedropper · **F** fill faces · **G** fill UV island · **M** mask |
+| Tools | **V** select object · **B** brush · **E** eraser · **I** eyedropper · **F** fill faces · **G** fill UV island · **M** mask |
 | Views | **1**–**7** axis views · **0** three-quarter · **5** perspective ↔ orthographic |
 | Orbit pivot | three icons over the viewport: world, object, or **whatever is in the centre of the frame** |
 | Fit to frame | **Home** |
@@ -171,9 +181,8 @@ Working and usable, version 0.2.0. Not yet done:
 
 - Saving a painting session (layers, masks) — right now only the final PNG
   is baked, so you cannot pick the work up the next day.
-- Reading the texture that comes with a model: an opened file starts with
-  clean layers, so existing paint is not picked up for editing.
-- Reading the `.mtl` that sits next to an `.obj`.
+- Reading the texture that comes with a model: colours from an `.mtl` are
+  picked up, a finished image inside a GLB is not yet.
 - Occlusion for shapes and text: back-facing polygons are skipped, but a
   chimney does not cast a "shadow" onto the roof behind it.
 - Layer reordering and duplication; symmetry, straight-line strokes, stroke

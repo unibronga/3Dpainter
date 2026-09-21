@@ -11,6 +11,37 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { buildMeshCache, measureUVOverlap } from './mesh-cache.js';
+import { uvVerdict, buildUV } from './unwrap.js';
+
+/**
+ * Цвета материалов меша — диапазонами треугольников.
+ *
+ * Группы геометрии заданы в вершинах, поэтому границы делятся на три. Групп
+ * может не быть вовсе: тогда весь меш — один материал.
+ *
+ * @returns {Array<{from:number, to:number, rgb:number[]}>}
+ */
+function sourceGroups(mesh, triCount) {
+  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  const цвет = (m) => {
+    if (!m || !m.color) return null;
+    const hex = m.color.getHex(THREE.SRGBColorSpace);
+    return [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255];
+  };
+  const groups = mesh.geometry.groups?.length
+    ? mesh.geometry.groups
+    : [{ start: 0, count: triCount * 3, materialIndex: 0 }];
+
+  const out = [];
+  for (const g of groups) {
+    const rgb = цвет(mats[g.materialIndex ?? 0] || mats[0]);
+    if (!rgb) continue;
+    const from = Math.max(0, Math.floor(g.start / 3));
+    const to = Math.min(triCount, Math.floor((g.start + g.count) / 3));
+    if (to > from) out.push({ from, to, rgb });
+  }
+  return out;
+}
 import { buildDemoMesh } from './demo.js';
 
 export class Viewport {
@@ -257,9 +288,9 @@ export class Viewport {
    * Открыть файл модели любого поддерживаемого формата. Загрузчик выбирается
    * по расширению; сама сцена дальше живёт одинаково, откуда бы ни пришла.
    */
-  async loadFile(arrayBuffer, name) {
+  async loadFile(arrayBuffer, name, спутники = null) {
     const { parseModel } = await import('./formats.js');
-    const object = await parseModel(arrayBuffer, name);
+    const object = await parseModel(arrayBuffer, name, спутники);
     return this.setModel(object, name);
   }
 
@@ -273,10 +304,25 @@ export class Viewport {
     this.model = object3D;
     this.scene.add(object3D);
 
-    const report = { name, meshes: 0, tris: 0, noUV: [], overlapping: [] };
+    const report = { name, meshes: 0, tris: 0, noUV: [], overlapping: [], unwrapped: [] };
 
     object3D.traverse((o) => {
       if (!o.isMesh) return;
+
+      // Развёртка — условие работы, а не украшение: красим-то по текселям.
+      // Модели из интернета его сплошь и рядом не выполняют, и тогда строим
+      // свою. Старую геометрию не освобождаем: её может делить другой меш.
+      const verdict = uvVerdict(o.geometry);
+      if (!verdict.ok) {
+        const built = buildUV(o.geometry);
+        o.geometry = built.geometry;
+        report.unwrapped.push({
+          name: o.name || t('model.unnamed'),
+          reason: verdict.reason,
+          islands: built.islands,
+        });
+      }
+
       const cache = buildMeshCache(o.geometry);
       if (!cache) {
         report.noUV.push(o.name || t('model.unnamed'));
@@ -284,6 +330,11 @@ export class Viewport {
         return;
       }
       o.userData.paintCache = cache;
+      // Цвета материалов из файла — пока материал не подменён нашим. Кладём
+      // их диапазонами треугольников: дальше из них выпекается первый слой.
+      if (object3D.userData.materialsFromFile) {
+        o.userData.sourceGroups = sourceGroups(o, cache.triCount);
+      }
       this.paintables.push({ mesh: o, cache });
       report.meshes += 1;
       report.tris += cache.triCount;
