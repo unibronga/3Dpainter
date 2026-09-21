@@ -33,7 +33,19 @@ dmg:
   artifactName: 3DPainter-${version}-${arch}.dmg
 
 win:
-  target: nsis
+  target:
+    - nsis      # обычный установщик
+    - zip       # распаковал и запустил, без установки
+  artifactName: 3DPainter-${version}-${arch}.${ext}
+
+nsis:
+  # Установщик с окном, а не молчаливый: пусть человек сам выберет папку.
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: 3DPainter
+
 linux:
   target: AppImage
   category: Graphics
+  artifactName: 3DPainter-${version}-${arch}.${ext}

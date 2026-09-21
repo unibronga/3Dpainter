@@ -11,7 +11,9 @@
     "desktop": "npm run build && electron .",
     "desktop:dev": "PAINT_TOOL_DEV_URL=http://localhost:5273 electron .",
     "icon": "electron scripts/prepare-icon.cjs",
-    "dist": "npm run icon && npm run build && electron-builder --mac"
+    "dist": "npm run icon && npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac"
   },
   "devDependencies": {
     "electron": "^44.4.3",

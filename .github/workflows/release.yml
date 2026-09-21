@@ -1,0 +1,91 @@
+# Сборка и выкладка готовых файлов.
+#
+# Установщик под Windows на macOS не собрать: NSIS там требует Wine. Поэтому
+# каждая система собирает себя сама на своей машине, а потом собранное
+# прикладывается к релизу.
+#
+# Запуск: пометить коммит тегом (git tag v0.2.0 && git push origin v0.2.0)
+# либо вручную кнопкой Run workflow.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write        # нужно, чтобы создать релиз и залить файлы
+
+jobs:
+  build:
+    name: Сборка (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false   # упала одна система — вторая всё равно соберётся
+      matrix:
+        include:
+          - os: macos-14
+            script: dist:mac
+            label: macos
+          - os: windows-latest
+            script: dist:win
+            label: windows
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Зависимости
+        run: npm ci
+
+      - name: Собрать
+        run: npm run ${{ matrix.script }}
+        env:
+          # Подписи нет: сертификата у проекта нет, и электрон-билдер не
+          # должен искать ключи в связке.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Отложить собранное
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.label }}
+          path: |
+            release/*.dmg
+            release/*.exe
+            release/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Выложить релиз
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Забрать собранное
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Список файлов
+        run: ls -lh artifacts
+
+      - name: Создать релиз и приложить файлы
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" artifacts/* \
+            --title "3DPainter ${GITHUB_REF_NAME}" \
+            --notes "Сборки для macOS (.dmg, Apple Silicon) и Windows (.exe).
+
+          Приложение не подписано: при первом запуске система спросит подтверждение.
+          macOS — правой кнопкой по значку → «Открыть» → «Открыть».
+          Windows — «Подробнее» → «Выполнить в любом случае»."

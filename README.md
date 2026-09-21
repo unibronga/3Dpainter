@@ -29,6 +29,15 @@ This tool is built for exactly that narrow job, and it makes three promises:
 - **A fill stops where the shape stops.** "Fill the roof" does not leak onto
   the wall — it crosses an edge only when the bend is gentle enough.
 
+## Download
+
+Ready builds for macOS (Apple Silicon) and Windows are attached to each
+[release](https://github.com/unibronga/3Dpainter/releases). Neither is
+signed, so the system asks for confirmation on first launch — see
+[Installing the desktop build](#installing-the-desktop-build).
+
+To build from source instead, read on.
+
 ## Quick start
 
 You need [Node.js](https://nodejs.org/) 18 or newer.
@@ -183,8 +192,13 @@ clear the quarantine flag once:
 xattr -dr com.apple.quarantine /Applications/3DPainter.app
 ```
 
-Windows and Linux targets are described in `electron-builder.yml`, but each
-has to be built on its own system.
+Windows and Linux targets are described in `electron-builder.yml`. A Windows
+installer cannot be built on macOS — NSIS needs Wine there — so each system
+builds itself: `.github/workflows/release.yml` runs the macOS and Windows
+builds on their own machines and attaches the results to the release.
+
+On Windows the first launch shows a SmartScreen warning: **More info** →
+**Run anyway**.
 
 ## Contributing
 
