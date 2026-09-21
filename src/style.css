@@ -1087,11 +1087,16 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 /* ── Полоска параметров инструмента ────────────────────────────── */
 
 /* Живёт поверх вьюпорта слева вверху — там же, где работает рука, и на
-   одной линии со значками управления видом справа. */
+   одной линии со значками управления видом справа.
+
+   🔴 Отступ сверху и высота полоски держатся теми же числами, что и у
+   значков вида (`#view-overlay`, `.overlay-strip`): 10 px от края и 36 px
+   в высоту. Иначе полоска встаёт на пару пикселей выше значков, а у разных
+   инструментов получается разная высота — было 27.9, 34 и 34 против 36. */
 #tool-options {
   position: absolute;
-  top: 8px;
-  left: 8px;
+  top: 10px;
+  left: 10px;
   right: 320px;
   z-index: 5;
   pointer-events: none;
@@ -1102,10 +1107,13 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
    каскадом, вместо того чтобы лезть под них. Меряем сам вьюпорт, а не окно:
    его ширина зависит от развёртки и правой панели. */
 @container viewport (max-width: 900px) {
-  #tool-options { top: 46px; right: 8px; }
+  /* Под значками вида с тем же зазором 6 px, что между их собственными
+     строками: 10 (отступ) + 36 (высота) + 6. */
+  #tool-options { top: 52px; right: 10px; }
 }
 @container viewport (max-width: 620px) {
-  .opt-group { flex-wrap: wrap; max-width: calc(100vw - 32px); }
+  /* В две строки высота уже не одна: держим только нижнюю границу. */
+  .opt-group { flex-wrap: wrap; max-width: calc(100vw - 32px); height: auto; min-height: 36px; padding: 5px 10px; }
   .opt-group input[type="range"] { width: 90px; }
 }
 
@@ -1115,7 +1123,8 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
   gap: 7px;
   width: max-content;
   max-width: 100%;
-  padding: 5px 9px;
+  height: 36px;
+  padding: 0 10px;
   background: rgba(36, 39, 44, .92);
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -1128,14 +1137,19 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 .opt-sep { width: 1px; height: 16px; background: var(--line); flex: none; }
 
 .opt-group .seg { display: flex; gap: 3px; }
-.opt-group .seg .btn { height: 22px; padding: 0 9px; }
+.opt-group .seg .btn { height: 24px; padding: 0 9px; }
 
+/* 🔴 Высоту ползунку не задавать: фон дорожки рисуется по всей высоте
+   элемента, и вместо тонкой полоски выходит толстый брусок. Дорожка в
+   3 px приходит из общего правила input[type=range] — она одна и в
+   боковой панели, и здесь. Высоту группы держит она сама (36 px), а не
+   то, что в ней стоит. */
 .opt-group input[type="range"] { width: 120px; }
 .opt-group .val { min-width: 42px; color: var(--text); font-size: 11px; text-align: right; }
 
 .opt-text {
   width: 150px;
-  height: 22px;
+  height: 24px;
   padding: 0 7px;
   background: var(--panel-2);
   color: var(--text);
@@ -1146,7 +1160,7 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 .opt-text:focus { outline: none; border-color: var(--accent); }
 
 .opt-select {
-  height: 22px;
+  height: 24px;
   padding: 0 6px;
   background: var(--panel-2);
   color: var(--text);

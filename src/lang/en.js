@@ -146,7 +146,6 @@ export default {
   'sec.history': 'History',
   'sec.uv': 'UV',
   'sec.shape': 'Shapes and text',
-  'sec.fill': 'Face fill',
 
   'brush.size': 'Size',
   'brush.hardness': 'Hardness',

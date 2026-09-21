@@ -145,7 +145,6 @@ export default {
   'sec.history': 'История',
   'sec.uv': 'Развёртка',
   'sec.shape': 'Фигуры и текст',
-  'sec.fill': 'Заливка граней',
 
   'brush.size': 'Размер',
   'brush.hardness': 'Жёсткость',

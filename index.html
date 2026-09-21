@@ -103,6 +103,12 @@
           <input type="range" id="shape-font" min="12" max="400" step="2" value="96">
           <span class="val" id="shape-font-val">96 px</span>
         </div>
+
+        <div class="opt-group" data-for="fill-faces">
+          <span class="opt-label" data-i18n="fill.angle">Порог угла</span>
+          <input type="range" id="fill-angle" min="1" max="180" step="1" value="40">
+          <span class="val" id="fill-angle-val">40°</span>
+        </div>
       </div>
       <div id="shape-preview"></div>
 
@@ -261,17 +267,6 @@
           <canvas id="uv-preview"></canvas>
         </div>
         <label class="check-row"><input type="checkbox" id="uv-preview-wire" checked> <span data-i18n="uv.previewWire">сетка UV</span></label>
-      </div>
-    </section>
-
-    <section class="section" data-open="0" data-key="fill">
-      <h3><i class="chev"></i><span data-i18n="sec.fill">Заливка граней</span></h3>
-      <div class="body">
-        <div class="row">
-          <label data-i18n="fill.angle">Порог угла</label>
-          <input type="range" id="fill-angle" min="1" max="180" step="1" value="40">
-          <span class="val" id="fill-angle-val">40°</span>
-        </div>
       </div>
     </section>
 
