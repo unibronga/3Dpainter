@@ -37,15 +37,43 @@ function вТранзакции(режим, дело) {
   }));
 }
 
-/** Список недавних, новые сверху. Без содержимого файлов — только карточки. */
+/** Ключ записи. Считается в одном месте: по нему же дописывается превью. */
+export function recentId(name, size) {
+  return `${name}:${size}`;
+}
+
+/**
+ * Список недавних, новые сверху. Без содержимого файлов — карточки и превью:
+ * картинка маленькая, а ради неё иначе пришлось бы тянуть модель целиком.
+ */
 export async function listRecent() {
   try {
     const всё = await вТранзакции('readonly', (хр) => хр.getAll());
     return (всё || [])
-      .map(({ id, name, size, opened }) => ({ id, name, size, opened }))
-      .sort((a, b) => b.opened - a.opened);
+      .map(({ id, name, size, opened, thumb }) => ({ id, name, size, opened, thumb: thumb || null }))
+      .sort((a, b) => b.opened - a.opened)
+      .slice(0, СКОЛЬКО_ХРАНИМ);
   } catch {
     return [];   // приватный режим или запрет хранилища — просто нет списка
+  }
+}
+
+/**
+ * Дописать превью к уже сохранённой записи.
+ *
+ * Отдельным шагом, а не полем в `addRecent`: снимок можно сделать лишь после
+ * того, как модель разобрана и скадрирована, то есть заметно позже.
+ */
+export async function setThumb(id, thumb) {
+  if (!thumb) return false;
+  try {
+    const запись = await вТранзакции('readonly', (хр) => хр.get(id));
+    if (!запись) return false;
+    запись.thumb = thumb;
+    await вТранзакции('readwrite', (хр) => хр.put(запись));
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -63,11 +91,16 @@ export async function getRecent(id) {
 export async function addRecent(name, buffer) {
   if (!buffer || buffer.byteLength > ПРЕДЕЛ_БАЙТ) return false;
   try {
+    // Превью у прежней записи бережём: модель та же, а рисовать его заново
+    // дорого.
+    const id = recentId(name, buffer.byteLength);
+    const прежняя = await вТранзакции('readonly', (хр) => хр.get(id));
     const запись = {
-      id: `${name}:${buffer.byteLength}`,
+      id,
       name,
       size: buffer.byteLength,
       opened: Date.now(),
+      thumb: прежняя?.thumb || null,
       buffer,
     };
     await вТранзакции('readwrite', (хр) => хр.put(запись));

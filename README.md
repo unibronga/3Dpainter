@@ -50,8 +50,9 @@ npm run dev
 ```
 
 Open `http://localhost:5273`. A start screen offers two ways in: open your
-own model, or begin with the demo cabin and paint right away. Models you
-have opened before are listed there too. You can also drop a file straight
+own model, or begin with the demo cabin and paint right away. Below that are
+the ten models you opened last: a row gets selected, its preview shows on the
+right, and the Open button sits under it. You can also drop a file straight
 onto the viewport.
 
 ### Supported formats

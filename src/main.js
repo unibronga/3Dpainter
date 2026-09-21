@@ -19,7 +19,7 @@ import { drawMaterialBall } from './matball.js';
 import { t, setLang, getLang, onLangChange, applyDOM, LANGS } from './i18n.js';
 import { acceptAttribute, isSupported, isSidecar, extensionOf, exportGLTF, exportOBJ } from './formats.js';
 import { createWelcome } from './welcome.js';
-import { addRecent } from './recent.js';
+import { addRecent, recentId, setThumb } from './recent.js';
 import { withBusy, busyNote } from './busy.js';
 
 // Сбор ошибок с самого начала загрузки: в консоли браузера вперемешку лежат
@@ -1361,7 +1361,24 @@ $('file-input').addEventListener('change', async (e) => {
 
 /** Положить файл в недавние. Не удалось (квота, приватный режим) — не беда. */
 function rememberRecent(name, buffer) {
-  addRecent(name, buffer).catch(() => { /* список недавних — удобство, не обязанность */ });
+  return addRecent(name, buffer).catch(() => false);
+}
+
+/**
+ * Снять превью открытой модели для начального экрана.
+ *
+ * Момент выбран не случайно: модель уже разобрана и скадрирована, значит в
+ * кадре ровно то, что человек увидит в списке. Кадр перерисовывается только
+ * по движению указателя, поэтому рисуем его здесь руками — иначе в снимок
+ * попадёт предыдущая модель.
+ */
+async function rememberThumb(name, size) {
+  try {
+    const { снятьСВьюпорта } = await import('./thumb.js');
+    viewport.renderer.render(viewport.scene, viewport.camera);
+    const картинка = снятьСВьюпорта(viewport.renderer.domElement);
+    if (картинка) await setThumb(recentId(name, size), картинка);
+  } catch { /* превью — удобство, не обязанность */ }
 }
 
 /** Открыть модель из уже прочитанного буфера — так возвращаются недавние. */
@@ -1374,6 +1391,7 @@ async function openBuffer(buffer, name) {
       // Разбор позади, дальше считаются цели покраски — про это и пишем.
       busyNote('busy.prepare');
       afterModelLoaded(report);
+      rememberThumb(name, buffer.byteLength);
       return true;
     } catch (err) {
       setStatusHint(t('load.failed', name, err.message));
@@ -1445,7 +1463,9 @@ async function openFile(что) {
       }
       busyNote('busy.prepare');
       afterModelLoaded(report);
-      rememberRecent(file.name, buf);
+      // Превью дописывается к уже сохранённой записи, поэтому сначала запись.
+      await rememberRecent(file.name, buf);
+      rememberThumb(file.name, buf.byteLength);
       return true;
     } catch (err) {
       setStatusHint(t('load.failed', file.name, err.message));

@@ -10,7 +10,7 @@
 
 import { t, onLangChange } from './i18n.js';
 import значокПрограммы from './app-icon.png';
-import { listRecent, getRecent, removeRecent } from './recent.js';
+import { listRecent, getRecent, removeRecent, setThumb } from './recent.js';
 
 const эл = (тег, класс, текст) => {
   const у = document.createElement(тег);
@@ -83,11 +83,29 @@ export function createWelcome(api) {
   const картОткрыть = карточка(ЗНАЧОК_ОТКРЫТЬ, 'welcome.open', 'welcome.openHint', () => api.pickFile());
   const картДемо = карточка(ЗНАЧОК_ДЕМО, 'welcome.demo', 'welcome.demoHint', () => { api.openDemo(); скрыть(); });
 
-  /* Недавние */
+  /* Недавние: список слева во фрейме, превью выбранной модели справа */
   const блокНедавних = эл('div', 'welcome-recent');
   const подписьНедавних = эл('div', 'welcome-recent-title', t('welcome.recent'));
+  const телоНедавних = эл('div', 'welcome-recent-body');
   const списокНедавних = эл('div', 'welcome-recent-list');
-  блокНедавних.append(подписьНедавних, списокНедавних);
+
+  const сторона = эл('div', 'welcome-recent-side');
+  const рамкаПревью = эл('div', 'welcome-preview');
+  const картинкаПревью = эл('img', 'welcome-preview-img');
+  картинкаПревью.alt = '';
+  const подсказкаПревью = эл('div', 'welcome-preview-hint', t('welcome.pickRecent'));
+  рамкаПревью.append(картинкаПревью, подсказкаПревью);
+  const имяПревью = эл('div', 'welcome-preview-name', '');
+  const кнопкаОткрыть = эл('button', 'btn primary welcome-preview-open', t('welcome.openSelected'));
+  кнопкаОткрыть.disabled = true;
+  кнопкаОткрыть.addEventListener('click', () => открытьВыбранное());
+  сторона.append(рамкаПревью, имяПревью, кнопкаОткрыть);
+
+  телоНедавних.append(списокНедавних, сторона);
+  блокНедавних.append(подписьНедавних, телоНедавних);
+
+  let выбранное = null;     // карточка выбранной записи
+  let поколение = 0;        // чтобы опоздавшее превью не легло поверх нового выбора
 
   /* Подвал */
   const подвал = эл('div', 'welcome-foot');
@@ -112,13 +130,78 @@ export function createWelcome(api) {
   слой.addEventListener('drop', async (e) => {
     e.preventDefault();
     слой.classList.remove('drag');
-    const файл = e.dataTransfer.files[0];
-    if (файл && await api.openFile(файл)) скрыть();
+    const набор = [...e.dataTransfer.files];
+    if (набор.length && await api.openFile(набор)) скрыть();
   });
+
+  /** Открыть то, что выбрано в списке. */
+  async function открытьВыбранное() {
+    if (!выбранное) return;
+    const запись = await getRecent(выбранное.id);
+    if (!запись) {   // файл выпал из хранилища — убираем строку, а не молчим
+      await removeRecent(выбранное.id);
+      выбранное = null;
+      нарисоватьНедавние(document.documentElement.lang);
+      return;
+    }
+    if (await api.openBuffer(запись.buffer, запись.name)) скрыть();
+  }
+
+  /**
+   * Показать выбранную запись справа.
+   *
+   * Превью у записи может не быть: снимки появились позже самих недавних, и
+   * у старых записей их нет. Тогда рисуем его по содержимому файла и тут же
+   * дописываем в базу — второй раз ждать уже не придётся.
+   */
+  async function выбрать(з, строка) {
+    выбранное = з;
+    поколение += 1;
+    const моё = поколение;
+
+    [...списокНедавних.children].forEach((э) => э.classList.toggle('on', э === строка));
+    имяПревью.textContent = з.name;
+    кнопкаОткрыть.disabled = false;
+
+    if (з.thumb) {
+      картинкаПревью.src = з.thumb;
+      рамкаПревью.classList.add('has-img');
+      подсказкаПревью.textContent = '';
+      return;
+    }
+
+    картинкаПревью.removeAttribute('src');
+    рамкаПревью.classList.remove('has-img');
+    подсказкаПревью.textContent = t('welcome.previewBuilding');
+
+    const запись = await getRecent(з.id);
+    if (моё !== поколение) return;            // за это время выбрали другое
+    if (!запись) { подсказкаПревью.textContent = t('welcome.previewNone'); return; }
+
+    const { нарисоватьПревью } = await import('./thumb.js');
+    const картинка = await нарисоватьПревью(запись.buffer, запись.name);
+    if (моё !== поколение) return;
+    if (!картинка) { подсказкаПревью.textContent = t('welcome.previewNone'); return; }
+
+    з.thumb = картинка;
+    картинкаПревью.src = картинка;
+    рамкаПревью.classList.add('has-img');
+    подсказкаПревью.textContent = '';
+    setThumb(з.id, картинка);
+  }
 
   async function нарисоватьНедавние(язык) {
     списокНедавних.textContent = '';
+    выбранное = null;
+    поколение += 1;
+    картинкаПревью.removeAttribute('src');
+    рамкаПревью.classList.remove('has-img');
+    подсказкаПревью.textContent = t('welcome.pickRecent');
+    имяПревью.textContent = '';
+    кнопкаОткрыть.disabled = true;
+
     const список = await listRecent();
+    блокНедавних.classList.toggle('empty', !список.length);
 
     if (!список.length) {
       списокНедавних.appendChild(эл('div', 'welcome-recent-empty', t('welcome.recentEmpty')));
@@ -131,11 +214,10 @@ export function createWelcome(api) {
         эл('span', 'welcome-recent-name', з.name),
         эл('span', 'welcome-recent-meta', `${размерЧеловеку(з.size)} · ${датаЧеловеку(з.opened, язык)}`),
       );
-      строка.addEventListener('click', async () => {
-        const запись = await getRecent(з.id);
-        if (!запись) { await removeRecent(з.id); нарисоватьНедавние(язык); return; }
-        if (await api.openBuffer(запись.buffer, запись.name)) скрыть();
-      });
+      // Щелчок выбирает, а не открывает: сначала посмотреть, потом решить.
+      // Двойной щелчок — для тех, кто и так знает, что открывает.
+      строка.addEventListener('click', () => выбрать(з, строка));
+      строка.addEventListener('dblclick', () => открытьВыбранное());
       списокНедавних.appendChild(строка);
     }
   }
@@ -148,6 +230,7 @@ export function createWelcome(api) {
       к.подсказка.textContent = t(к.ключПодсказки);
     }
     подписьНедавних.textContent = t('welcome.recent');
+    кнопкаОткрыть.textContent = t('welcome.openSelected');
     текстГалки.textContent = t('welcome.dontShow');
     закрыть.textContent = t('welcome.close');
     нарисоватьНедавние(document.documentElement.lang);
