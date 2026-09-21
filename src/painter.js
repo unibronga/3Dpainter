@@ -82,8 +82,17 @@ function rasterTri(cache, S, t, cb) {
       let l2 = 1 - l0 - l1;
 
       if (l0 < 0 || l1 < 0 || l2 < 0) {
-        // Тексель за краем треугольника. Прижимаем к нему и оставляем, только
-        // если он в полосе PAD — это и есть растекание через шов.
+        // Тексель за краем треугольника. Оставляем его, только если он в
+        // полосе PAD, — это и есть растекание через шов.
+        //
+        // 🔴 Прижатая к треугольнику точка годится, чтобы измерить расстояние
+        // до края, но не годится как точка поверхности: она ближе к центру
+        // кисти, чем настоящая, и альфа выходит завышенной. На шве это
+        // незаметно, а на внутреннем ребре соседний треугольник красит те же
+        // тексели честно — и вдоль каждого ребра остаётся гребень лишней
+        // краски в три текселя (замер: 67 → 122 из 255). Поэтому положение
+        // берём по НЕприжатым координатам: это та же плоскость треугольника,
+        // продолженная за край, и поперёк ребра она сходится с соседом.
         let b0 = l0 < 0 ? 0 : l0, b1 = l1 < 0 ? 0 : l1, b2 = l2 < 0 ? 0 : l2;
         const s = b0 + b1 + b2;
         if (s <= 0) continue;
@@ -91,7 +100,6 @@ function rasterTri(cache, S, t, cb) {
         const cu = b0 * u0 + b1 * u1 + b2 * u2;
         const cv = b0 * v0 + b1 * v1 + b2 * v2;
         if ((px - cu) ** 2 + (py - cv) ** 2 > PAD * PAD) continue;
-        l0 = b0; l1 = b1; l2 = b2;
       }
 
       cb(rowOff + x,
@@ -141,7 +149,9 @@ export class Stroke {
    *   channel: 'rgba' | 'mask'
    *   mode:    'paint' | 'erase' | 'mask-add' | 'mask-sub'
    *   color:   [r,g,b] 0..255
-   *   opacity: 0..1 — предел непрозрачности за один мазок
+   *   opacity: 0..1 — укрывистость мазка, предел непрозрачности за один мазок
+   *   alpha:   0..1 — прозрачность материала (стекло), уходит в карту;
+   *                   к укрывистости отношения не имеет
    */
   constructor(target, cache, opts) {
     this.target = target;
@@ -157,7 +167,7 @@ export class Stroke {
     // Поверхность материала ложится вместе с краской, по тем же текселям.
     this.matRough = Math.round((opts.roughness ?? 0.9) * 255);
     this.matMetal = Math.round((opts.metalness ?? 0) * 255);
-    this.matOpac = Math.round((opts.opacity ?? 1) * 255);
+    this.matOpac = Math.round((opts.alpha ?? 1) * 255);
     // Своя картинка и процедурный узор — два источника цвета, но не разом:
     // картинка уже несёт свой рисунок, накладывать на неё узор бессмысленно.
     this.texture = (opts.pattern?.id === 'image' && opts.texture) ? opts.texture : null;
@@ -167,9 +177,18 @@ export class Stroke {
     this.color2 = opts.color2 || opts.color || [0, 0, 0];
 
     const S = target.size;
-    // Накопитель мазка: внутри одного мазка альфа берётся по максимуму, иначе
-    // при медленном движении кисть темнеет там, где мазки наложились.
+    // Накопитель мазка: внутри ОДНОГО ПРОХОДА альфа берётся по максимуму,
+    // иначе при медленном движении кисть темнеет там, где отпечатки легли
+    // друг на друга. См. _pathAt(): возврат мазка на собственный след —
+    // это уже второй проход, и он ложится поверх первого.
     this.acc = new Uint8Array(S * S);
+    this.laid = new Uint8Array(S * S);   // что положено проходами до текущего
+    this.seen = new Uint16Array(S * S);  // путь кисти на миг последнего касания
+    this.path = 0;      // пройденный путь, в квантах
+    this.quant = 0;     // длина кванта: восьмая радиуса кисти
+    this.away = 16;     // с какого пути касание считается новым проходом
+    this.hasPrev = false;
+    this.prevX = 0; this.prevY = 0; this.prevZ = 0;
     this.base = (this.channel === 'rgba' ? this.layer.rgba : this.layer.mask).slice();
     if (this.channel === 'rgba' && this.mode === 'paint') {
       this.baseRough = this.layer.rough.slice();
@@ -178,6 +197,37 @@ export class Stroke {
     }
     this.dirty = emptyRect();    // всё, что мазок тронул — для журнала отмены
     this.pending = emptyRect();  // ещё не выложенное в слой
+  }
+
+  /**
+   * Путь кисти к этому отпечатку — им отличается продолжение прохода от
+   * возврата на собственный след.
+   *
+   * По числу отпечатков их не различить: отпечаток ставится не реже одного
+   * на событие указателя, и при медленном ведении их десятки на одном месте.
+   * Поэтому считается ПУТЬ: если с последнего касания кисть прошла больше
+   * своего поперечника, значит она успела уйти и вернуться — это второй
+   * проход, и краска ложится поверх, как у отдельного мазка. Без этого на
+   * перекрестье остаётся бледная звёздочка (замер: в клине 168 против 209
+   * из 255 у двух мазков).
+   *
+   * Квант — восьмая радиуса; Uint16 на тексель хватает на восемь тысяч
+   * радиусов пути, длиннее одного мазка не бывает.
+   *
+   * @param {number} radius — радиус отпечатка в тех же единицах, что и центр
+   * @returns {number} отметка пути, 0 означало бы «не касались»
+   */
+  _pathAt(radius, x, y, z) {
+    if (!this.quant) {
+      this.quant = radius / 8;
+      this.away = Math.max(2, Math.round(2 * radius / this.quant));
+    }
+    if (this.hasPrev) {
+      const dx = x - this.prevX, dy = y - this.prevY, dz = z - this.prevZ;
+      this.path += Math.sqrt(dx * dx + dy * dy + dz * dz) / this.quant;
+    }
+    this.prevX = x; this.prevY = y; this.prevZ = z; this.hasPrev = true;
+    return 1 + Math.min(65000, this.path | 0);
   }
 
   /**
@@ -195,7 +245,8 @@ export class Stroke {
   dab(c, radius, viewDir, brush = DEFAULT_BRUSH, frontOnly = true, basis = null) {
     const { centroid, triRadius, faceNormal, grid } = this.cache;
     const S = this.target.size;
-    const acc = this.acc;
+    const acc = this.acc, laid = this.laid, seen = this.seen;
+    const now = this._pathAt(radius, c.x, c.y, c.z), away = this.away;
     const rInv = 1 / radius;
     const rect = emptyRect();
 
@@ -246,8 +297,13 @@ export class Stroke {
         let a = falloff(k, hardness) * flow;
         if (grain > 0) a *= 1 - grain * grainAt(p);
         a *= 255;
-        if (a <= acc[p]) return;
-        acc[p] = a;
+        const was = seen[p];
+        if (was && now - was > away) laid[p] = acc[p]; // кисть уходила — новый проход
+        seen[p] = now;
+        const l = laid[p];
+        const v = l + a * (1 - l / 255);
+        if (v <= acc[p]) return;
+        acc[p] = v;
         expand(rect, px, py);
       });
     });
@@ -264,7 +320,8 @@ export class Stroke {
    */
   dab2D(px, py, radius, brush = DEFAULT_BRUSH) {
     const S = this.target.size;
-    const acc = this.acc;
+    const acc = this.acc, laid = this.laid, seen = this.seen;
+    const now = this._pathAt(radius, px, py, 0), away = this.away;
     const rInv = 1 / radius;
     const hardness = brush.hardness ?? 0.7;
     const flow = brush.flow ?? 1;
@@ -290,8 +347,13 @@ export class Stroke {
         let a = falloff(k, hardness) * flow;
         if (grain > 0) a *= 1 - grain * grainAt(p);
         a *= 255;
-        if (a <= acc[p]) continue;
-        acc[p] = a;
+        const was = seen[p];
+        if (was && now - was > away) laid[p] = acc[p]; // кисть уходила — новый проход
+        seen[p] = now;
+        const l = laid[p];
+        const v = l + a * (1 - l / 255);
+        if (v <= acc[p]) continue;
+        acc[p] = v;
         expand(rect, x, y);
       }
     }
