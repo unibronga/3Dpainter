@@ -99,7 +99,7 @@ Other commands:
 | Pan | **Space + left button**, or middle button |
 | Zoom | **Wheel** |
 | Brush size | **[** and **]** |
-| Tools | **V** select object · **B** brush · **E** eraser · **I** eyedropper · **F** fill faces · **G** fill UV island · **M** mask |
+| Tools | **V** select object · **H** pan · **O** orbit · **Z** zoom · **B** brush · **E** eraser · **I** eyedropper · **F** fill faces · **G** fill UV island · **M** mask |
 | Views | **1**–**7** axis views · **0** three-quarter · **5** perspective ↔ orthographic |
 | Orbit pivot | three icons over the viewport: world, object, or **whatever is in the centre of the frame** |
 | Fit to frame | **Home** |

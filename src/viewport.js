@@ -786,6 +786,23 @@ export class Viewport {
     }
   }
 
+  /**
+   * Начать жест вращения или приближения левой кнопкой — инструментом вида.
+   *
+   * Точка берётся один раз на весь жест, как и при вращении правой кнопкой:
+   * пересчитывай её на каждое движение — под центром кадра оказывалась бы то
+   * одна поверхность, то другая, и вид дёргался бы сам по себе.
+   */
+  beginNav() {
+    this._pivotLock = this.pivotPoint();
+    this.showPivotMarker(this._pivotLock);
+  }
+
+  endNav() {
+    this._pivotLock = null;
+    this.hidePivotMarker();
+  }
+
   /** Пока зажат пробел, левая кнопка временно работает как сдвиг. */
   setLeftButtonPan(on) {
     this.controls.mouseButtons.LEFT = on ? THREE.MOUSE.PAN : null;

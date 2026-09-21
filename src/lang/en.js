@@ -55,6 +55,9 @@ export default {
   'tool.brush': 'Brush',
   'tool.eraser': 'Eraser',
   'tool.eyedropper': 'Eyedropper',
+  'tool.pan': 'Pan view',
+  'tool.orbit': 'Orbit view',
+  'tool.zoom': 'Zoom',
   'tool.select': 'Select object',
   'tool.fillFaces': 'Fill connected faces',
   'tool.fillIsland': 'Fill UV island',
@@ -84,6 +87,9 @@ export default {
   'tip.side': 'Side panel (Tab hides everything)',
 
   /* ── Tool column ─────────────────────────────────────────────── */
+  'tip.pan': 'Pan the view: same as space with the left button (H)',
+  'tip.orbit': 'Orbit the view: same as the right button (O)',
+  'tip.zoom': 'Zoom: drag up and down, same as the wheel (Z)',
   'tip.select': 'Select object: a click makes the mesh and its UV map active (V)',
   'tip.brush': 'Brush (B)',
   'tip.eraser': 'Eraser (E)',

@@ -590,6 +590,7 @@ function hidePreview() { preview.className = ''; }
 
 const el = $('viewport');
 let spaceDown = false;
+let navDrag = null;   // жест вращения или приближения левой кнопкой
 let shapeDrag = null;
 
 // Перехват в фазе погружения: иначе орбита успевает схватить нажатие раньше
@@ -597,6 +598,17 @@ let shapeDrag = null;
 el.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;      // вращение и сдвиг — не наше дело
   if (spaceDown) return;           // пробел + ЛКМ — перемещение
+  // Сдвигом занимается OrbitControls, ему мешать нечем. Вращение и
+  // приближение начинаем здесь — и до проверки попадания в модель: вид
+  // крутят и за её пределами, по пустому кадру.
+  if (state.tool === 'pan') return;
+  if (VIEW_TOOLS.has(state.tool)) {
+    e.preventDefault();
+    try { el.setPointerCapture(e.pointerId); } catch { /* не беда */ }
+    navDrag = { kind: state.tool, x: e.clientX, y: e.clientY };
+    if (state.tool === 'orbit') viewport.beginNav();
+    return;
+  }
   // Оверлей вида лежит внутри вьюпорта, а перехват у нас в фазе погружения:
   // без этой проверки щелчок по кнопке вида заодно ставил бы мазок.
   if (inside($('view-overlay'), e.target)) return;
@@ -674,20 +686,35 @@ window.addEventListener('pointermove', (e) => {
     return;
   }
 
+  if (navDrag) {
+    const dx = e.clientX - navDrag.x, dy = e.clientY - navDrag.y;
+    navDrag.x = e.clientX; navDrag.y = e.clientY;
+    if (navDrag.kind === 'orbit') {
+      viewport.orbitBy(dx, dy);
+    } else {
+      // Вверх — ближе, вниз — дальше, как в любом «зуме протяжкой».
+      viewport.zoomBy(Math.pow(1.01, -dy));
+      viewport.showPivotMarker(viewport.pivotPoint());
+    }
+    return;
+  }
+
   if (stroke && strokeMesh) {
     const pts = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
     for (const p of (pts.length ? pts : [e])) strokeMove(p.clientX, p.clientY);
   }
   // Кольцо кисти показывает, куда ляжет краска. У выбора объекта краски
   // нет, и кольцо только врало бы про размер мазка.
-  if (over && state.tool !== 'select') {
+  const безКисти = state.tool === 'select' || VIEW_TOOLS.has(state.tool);
+  if (over && !безКисти) {
     viewport.showCursor(viewport.pick(e.clientX, e.clientY), brushRadiusWorld());
-  } else if (state.tool === 'select') {
+  } else if (безКисти) {
     viewport.showCursor(null, 0);
   }
 });
 
 window.addEventListener('pointerup', () => {
+  if (navDrag) { navDrag = null; viewport.endNav(); }
   if (shapeDrag) {
     hidePreview();
     applyShape3D(shapeDrag.mesh, shapeDrag.a, shapeDrag.b);
@@ -713,9 +740,20 @@ document.querySelectorAll('.section > h3').forEach((h) => {
 
 /* ── Инструменты ───────────────────────────────────────────────── */
 
+/**
+ * Инструменты вида: то же, что делают колесо и правая кнопка, но взятое в
+ * руку. Кнопками мыши это быстрее, а значками — понятнее и доступно там, где
+ * второй кнопки нет (перо, трекпад).
+ */
+const VIEW_TOOLS = new Set(['pan', 'orbit', 'zoom']);
+
 function setTool(tool) {
   state.tool = tool;
   document.querySelectorAll('.tool').forEach((b) => b.classList.toggle('active', b.dataset.tool === tool));
+  // Сдвиг уже умеет OrbitControls — тем же переключателем, что и пробел.
+  // Вращение и приближение ведём сами: у них своя точка вращения.
+  if (!spaceDown) viewport.setLeftButtonPan(tool === 'pan');
+  el.style.cursor = tool === 'orbit' ? 'grab' : tool === 'zoom' ? 'zoom-in' : '';
   syncToolOptions();
   syncLayers();
 }
@@ -1610,7 +1648,7 @@ $('btn-save').addEventListener('click', () => { saveTextures(); });
 
 /* ── Клавиатура ────────────────────────────────────────────────── */
 
-const TOOL_KEYS = { v: 'select', b: 'brush', e: 'eraser', i: 'eyedropper', f: 'fill-faces', g: 'fill-island', m: 'mask', r: 'rect', c: 'ellipse', t: 'text' };
+const TOOL_KEYS = { v: 'select', h: 'pan', o: 'orbit', z: 'zoom', b: 'brush', e: 'eraser', i: 'eyedropper', f: 'fill-faces', g: 'fill-island', m: 'mask', r: 'rect', c: 'ellipse', t: 'text' };
 const VIEW_KEYS = { 1: 'front', 2: 'back', 3: 'left', 4: 'right', 6: 'top', 7: 'bottom', 0: 'user' };
 
 window.addEventListener('keydown', (e) => {
@@ -1653,7 +1691,9 @@ const releaseSpace = () => {
   if (!spaceDown) return;
   spaceDown = false;
   uvEditor.spaceDown = false;
-  viewport.setLeftButtonPan(false);
+  // 🔴 Не просто выключаем: у инструмента сдвига левая кнопка так и должна
+  // остаться сдвигом. Пробел его лишь временно повторяет.
+  viewport.setLeftButtonPan(state.tool === 'pan');
 };
 window.addEventListener('keyup', (e) => { if (e.code === 'Space') releaseSpace(); });
 window.addEventListener('blur', releaseSpace);
@@ -1726,6 +1766,10 @@ const menuBar = new MenuBar($('menubar'), [
     { label: () => t('tool.eyedropper'), hint: 'I', radio: () => state.tool === 'eyedropper', action: () => setTool('eyedropper') },
     '-',
     { label: () => t('tool.select'), hint: 'V', radio: () => state.tool === 'select', action: () => setTool('select') },
+    '-',
+    { label: () => t('tool.pan'), hint: 'H', radio: () => state.tool === 'pan', action: () => setTool('pan') },
+    { label: () => t('tool.orbit'), hint: 'O', radio: () => state.tool === 'orbit', action: () => setTool('orbit') },
+    { label: () => t('tool.zoom'), hint: 'Z', radio: () => state.tool === 'zoom', action: () => setTool('zoom') },
     '-',
     { label: () => t('tool.fillFaces'), hint: 'F', radio: () => state.tool === 'fill-faces', action: () => setTool('fill-faces') },
     { label: () => t('tool.fillIsland'), hint: 'G', radio: () => state.tool === 'fill-island', action: () => setTool('fill-island') },
