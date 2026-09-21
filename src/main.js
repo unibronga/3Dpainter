@@ -20,6 +20,7 @@ import { t, setLang, getLang, onLangChange, applyDOM, LANGS } from './i18n.js';
 import { acceptAttribute, isSupported, extensionOf, exportGLTF, exportOBJ } from './formats.js';
 import { createWelcome } from './welcome.js';
 import { addRecent } from './recent.js';
+import { withBusy, busyNote } from './busy.js';
 
 // Сбор ошибок с самого начала загрузки: в консоли браузера вперемешку лежат
 // сообщения от прошлых версий модулей, и по ней не понять, живая ошибка или
@@ -236,7 +237,7 @@ function pump() {
   const changed = stroke.flush();
   if (changed) {
     perfMs = perfMs * 0.8 + (performance.now() - t0) * 0.2;
-    if (state.uvOpen) uvEditor.draw();
+    if (state.uvOpen) uvEditor.drawTexelRect(stroke.lastApplied);
     // Превью — целая текстура в маленький квадрат; каждый кадр ни к чему.
     if ((pumpFrame++ % 6) === 0) {
       UI.drawUVPreview($('uv-preview'), activeTarget(), activeMesh?.userData.paintCache, state.showWire);
@@ -1196,16 +1197,20 @@ function rememberRecent(name, buffer) {
 /** Открыть модель из уже прочитанного буфера — так возвращаются недавние. */
 async function openBuffer(buffer, name) {
   setStatusHint(t('load.loading', name));
-  try {
-    const report = await viewport.loadFile(buffer.slice(0), name);
-    if (!report.meshes && !report.noUV?.length) { setStatusHint(t('load.noMesh')); return false; }
-    afterModelLoaded(report);
-    return true;
-  } catch (err) {
-    setStatusHint(t('load.failed', name, err.message));
-    console.error(err);
-    return false;
-  }
+  return withBusy('busy.open', async () => {
+    try {
+      const report = await viewport.loadFile(buffer.slice(0), name);
+      if (!report.meshes && !report.noUV?.length) { setStatusHint(t('load.noMesh')); return false; }
+      // Разбор позади, дальше считаются цели покраски — про это и пишем.
+      busyNote('busy.prepare');
+      afterModelLoaded(report);
+      return true;
+    } catch (err) {
+      setStatusHint(t('load.failed', name, err.message));
+      console.error(err);
+      return false;
+    }
+  }, name);
 }
 
 async function openFile(file) {
@@ -1214,21 +1219,24 @@ async function openFile(file) {
     return false;
   }
   setStatusHint(t('load.loading', file.name));
-  try {
-    const buf = await file.arrayBuffer();
-    const report = await viewport.loadFile(buf, file.name);
-    if (!report.meshes && !report.noUV?.length) {
-      setStatusHint(t('load.noMesh'));
+  return withBusy('busy.open', async () => {
+    try {
+      const buf = await file.arrayBuffer();
+      const report = await viewport.loadFile(buf, file.name);
+      if (!report.meshes && !report.noUV?.length) {
+        setStatusHint(t('load.noMesh'));
+        return false;
+      }
+      busyNote('busy.prepare');
+      afterModelLoaded(report);
+      rememberRecent(file.name, buf);
+      return true;
+    } catch (err) {
+      setStatusHint(t('load.failed', file.name, err.message));
+      console.error(err);
       return false;
     }
-    afterModelLoaded(report);
-    rememberRecent(file.name, buf);
-    return true;
-  } catch (err) {
-    setStatusHint(t('load.failed', file.name, err.message));
-    console.error(err);
-    return false;
-  }
+  }, file.name);
 }
 
 el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('dragover'); });
@@ -1245,8 +1253,10 @@ function setTexSize(next) {
   if (state.painted && !confirm(t('confirm.texSize'))) return;
   state.texSize = next;
   const tris = $('stat-tris').textContent;
-  afterModelLoaded({ name: modelName, meshes: viewport.paintables.length, tris: 0, noUV: [] });
-  $('stat-tris').textContent = tris;
+  withBusy('busy.texSize', () => {
+    afterModelLoaded({ name: modelName, meshes: viewport.paintables.length, tris: 0, noUV: [] });
+    $('stat-tris').textContent = tris;
+  }, next);
 }
 
 /* ── Сохранение ────────────────────────────────────────────────── */
@@ -1290,11 +1300,12 @@ async function saveAs(формат) {
 
   const основа = имяМодели().replace(/\.[^.]+$/, '') || 'model';
 
-  if (формат === 'png') { saveTextures(); return targets.size; }
+  if (формат === 'png') { await saveTextures(); return targets.size; }
 
   const карты = картыДляЭкспорта();
   let файлов = 0;
 
+  return withBusy('busy.save', async () => {
   try {
     if (формат === 'glb' || формат === 'gltf') {
       const blob = await exportGLTF(viewport.model, карты, формат === 'glb');
@@ -1315,6 +1326,7 @@ async function saveAs(формат) {
     console.error(err);
   }
   return файлов;
+  }, `${основа}.${формат}`);
 }
 
 function download(canvas, name) {
@@ -1335,8 +1347,9 @@ function hasMaterialPaint(t) {
   return false;
 }
 
-function saveTextures() {
+async function saveTextures() {
   if (!targets.size) return;
+  return withBusy('busy.maps', () => {
   const base = имяМодели().replace(/\.[^.]+$/, '') || 'model';
   let files = 0;
   let i = 0;
@@ -1355,8 +1368,9 @@ function saveTextures() {
     i += 1;
   }
   setStatusHint(t(files > targets.size ? 'status.savedBoth' : 'status.savedColor', files));
+  });
 }
-$('btn-save').addEventListener('click', saveTextures);
+$('btn-save').addEventListener('click', () => { saveTextures(); });
 
 /* ── Клавиатура ────────────────────────────────────────────────── */
 

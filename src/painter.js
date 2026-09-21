@@ -408,6 +408,9 @@ export class Stroke {
     if (isEmptyRect(this.pending)) return false;
     this.apply(this.pending);
     this.dirty = merge(this.dirty, this.pending);
+    // Что именно поменялось в этот раз — по нему панели перерисовывают
+    // только изменившийся кусок, а не всё полотно.
+    this.lastApplied = { ...this.pending };
     this.pending = emptyRect();
     return true;
   }

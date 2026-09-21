@@ -420,6 +420,11 @@ export default {
   'settings.close': 'Done',
 
   /* ── Loading ─────────────────────────────────────────────────── */
+  'busy.open': 'Reading {0}…',
+  'busy.prepare': 'Preparing the model for painting…',
+  'busy.save': 'Saving {0}…',
+  'busy.maps': 'Baking the maps…',
+  'busy.texSize': 'Rebuilding textures at {0}×{0}…',
   'load.loading': 'reading {0}…',
   'load.failed': 'could not open {0}: {1}',
   'load.unknown': 'unsupported format: {0}',

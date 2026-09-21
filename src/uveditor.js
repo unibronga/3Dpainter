@@ -51,8 +51,16 @@ export class UVEditor {
     this.resize();
   }
 
+  /** Смена модели или слоя: прежняя сетка больше не годится. */
+  /** Слой сетки больше не годится — построить заново при следующей отрисовке. */
+  _dropWire() { this._sheetKey = null; this._sheetPending = false; }
+
   setTarget(target, cache) {
     const first = !this.target || this.cache !== cache;
+    // 🔴 Сетку сбрасываем только при смене меша. setTarget зовётся и по
+    // другим поводам — на каждый её пересчёт уходит около секунды на
+    // модели в 19 тысяч треугольников, и мазок снова шёл бы рывками.
+    if (first) this._dropWire();
     this.target = target;
     this.cache = cache;
     if (first || !(this.view.scale > 1)) this.fit();
@@ -167,6 +175,47 @@ export class UVEditor {
     }
   }
 
+  /**
+   * Перерисовать только тот кусок полотна, что поменялся.
+   *
+   * 🔴 Полная отрисовка тянет `drawImage` всей текстуры со сглаживанием — на
+   * 1024² это десятки миллисекунд, и на каждый кадр мазка панель съедала
+   * больше времени, чем сама покраска. Здесь перерисовываются те же слои
+   * (шахматка, текстура, сетка), но в границах правки.
+   *
+   * @param {{x0,y0,x1,y1}} rect границы в текселях
+   */
+  drawTexelRect(rect) {
+    if (!this.target || !rect) { this.draw(); return; }
+    // Пока тянется рамка или курсор, поверх куска рисовать нечего — там
+    // нужна полная отрисовка, иначе останется след от прошлого кадра.
+    if (this.shaping) { this.draw(); return; }
+
+    const { ox, oy, scale } = this.view;
+    const S = this.target.size;
+    const k = scale / S;
+    const ctx = this.ctx;
+
+    // Поля в тексель: край мазка сглажен, и ровно по границе остаётся шов.
+    const t0x = Math.max(0, rect.x0 - 1), t0y = Math.max(0, rect.y0 - 1);
+    const t1x = Math.min(S, rect.x1 + 2), t1y = Math.min(S, rect.y1 + 2);
+    if (t1x <= t0x || t1y <= t0y) return;
+
+    const x = ox + t0x * k, y = oy + t0y * k;
+    const w = (t1x - t0x) * k, h = (t1y - t0y) * k;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
+
+    this._checker(ox, oy, scale);
+    ctx.imageSmoothingEnabled = scale < S;
+    ctx.drawImage(this.target.canvas, t0x, t0y, t1x - t0x, t1y - t0y, x, y, w, h);
+    if (this.showWire && this.cache) this._wire(ox, oy, scale);
+    ctx.restore();
+  }
+
   _checker(ox, oy, scale) {
     const ctx = this.ctx;
     const step = Math.max(6, scale / 16);
@@ -185,9 +234,94 @@ export class UVEditor {
     ctx.restore();
   }
 
+  /**
+   * Сетка развёртки.
+   *
+   * 🔴 Обход всех треугольников — самая дорогая работа в панели: на сфере в
+   * 19 тысяч треугольников он занимает сотни миллисекунд. Раньше он шёл на
+   * каждый кадр покраски и на каждый сдвиг полотна, отчего и мазок, и
+   * перетаскивание шли рывками.
+   *
+   * Сетка живёт в координатах самой развёртки (квадрат 0..1), поэтому
+   * рисуется один раз на модель, а вид накладывается растяжением картинки —
+   * это стоит доли миллисекунды. Когда увеличение перерастает разрешение
+   * слоя, картинка замылилась бы, и тогда рисуем честными линиями, но только
+   * те треугольники, что попали в кадр: при таком зуме их единицы.
+   */
   _wire(ox, oy, scale) {
+    const S = this._wireSize();
+    if (scale > S) { this._wireExact(ox, oy, scale); return; }
+
+    const готовый = this._sheetReady(S);
+    if (готовый) { this.ctx.drawImage(готовый, ox, oy, scale, scale); return; }
+
+    // Слой ещё не построен. На плотной сетке это почти секунда — держать
+    // ради неё открытие файла незачем: строим в ближайшем простое, панель
+    // пока показывается без сетки и дорисует её сама.
+    this._scheduleSheet(S);
+  }
+
+  /** Готовый слой сетки, либо null, если его ещё предстоит построить. */
+  _sheetReady(S) {
+    return this._sheet && this._sheetKey === `${S}|${this.cache.triCount}` ? this._sheet : null;
+  }
+
+  /** Построить слой сетки в простое и перерисовать панель. */
+  _scheduleSheet(S) {
+    if (this._sheetPending) return;
+    this._sheetPending = true;
+
+    const построить = () => {
+      this._sheetPending = false;
+      if (!this.cache || !this.target) return;
+      this._wireSheet(S);
+      this.draw();
+    };
+    // requestIdleCallback есть не везде; таймер — запасной путь.
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(построить, { timeout: 600 });
+    else setTimeout(построить, 0);
+  }
+
+  /** Разрешение слоя сетки: по текстуре, но в разумных пределах. */
+  _wireSize() {
+    const s = this.target?.size || 1024;
+    return Math.max(1024, Math.min(2048, s));
+  }
+
+  /** Слой сетки в координатах развёртки — строится один раз на модель. */
+  _wireSheet(S) {
+    if (this._sheet && this._sheetKey === `${S}|${this.cache.triCount}`) return this._sheet;
+
+    const слой = this._sheet || document.createElement('canvas');
+    слой.width = слой.height = S;
+    const g = слой.getContext('2d');
+    g.clearRect(0, 0, S, S);
+
+    const { uv, idx, triCount } = this.cache;
+    g.strokeStyle = 'rgba(255,255,255,0.42)';
+    // Линия тоньше пикселя слоя: при растяжении в кадр она станет обычной.
+    g.lineWidth = Math.max(1, S / 1024);
+    g.beginPath();
+    for (let t = 0; t < triCount; t++) {
+      const i0 = idx[t * 3], i1 = idx[t * 3 + 1], i2 = idx[t * 3 + 2];
+      g.moveTo(uv[i0 * 2] * S, (1 - uv[i0 * 2 + 1]) * S);
+      g.lineTo(uv[i1 * 2] * S, (1 - uv[i1 * 2 + 1]) * S);
+      g.lineTo(uv[i2 * 2] * S, (1 - uv[i2 * 2 + 1]) * S);
+      g.closePath();
+    }
+    g.stroke();
+
+    this._sheet = слой;
+    this._sheetKey = `${S}|${this.cache.triCount}`;
+    return слой;
+  }
+
+  /** Точные линии — только для треугольников, попавших в кадр. */
+  _wireExact(ox, oy, scale) {
     const ctx = this.ctx;
     const { uv, idx, triCount } = this.cache;
+    const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
+
     ctx.strokeStyle = 'rgba(255,255,255,0.42)';
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -196,10 +330,16 @@ export class UVEditor {
       const x0 = ox + uv[i0 * 2] * scale, y0 = oy + (1 - uv[i0 * 2 + 1]) * scale;
       const x1 = ox + uv[i1 * 2] * scale, y1 = oy + (1 - uv[i1 * 2 + 1]) * scale;
       const x2 = ox + uv[i2 * 2] * scale, y2 = oy + (1 - uv[i2 * 2 + 1]) * scale;
+
+      // Мимо кадра — и считать нечего.
+      if (Math.max(x0, x1, x2) < 0 || Math.min(x0, x1, x2) > w) continue;
+      if (Math.max(y0, y1, y2) < 0 || Math.min(y0, y1, y2) > h) continue;
+
       ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.lineTo(x2, y2); ctx.closePath();
     }
     ctx.stroke();
   }
+
 
   /* ── Ввод ────────────────────────────────────────────────────── */
 

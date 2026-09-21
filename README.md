@@ -117,6 +117,9 @@ paint baked in, via **File ▸ Save as…**.
 **Settings** (File ▸ Settings…) hold the interface language, the default
 texture size and whether the start screen appears on launch.
 
+**Long operations** — opening a model, saving, rebuilding textures — run
+under a busy indicator, so it is clear the program is working.
+
 **Languages.** The whole interface speaks English and Russian, and switches
 live — your paint is kept. Dictionaries are one file per language in
 `src/lang/`, flat `'section.name'` keys; adding a language means adding a

@@ -1162,3 +1162,49 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
   .opt-text { width: 100px; }
   .opt-select { max-width: 110px; }
 }
+
+/* ── Индикатор занятости ───────────────────────────────────────── */
+
+.busy-back {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgba(14, 15, 17, .55);
+  backdrop-filter: blur(2px);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .14s ease, visibility .14s;
+  /* Работа идёт — щелчки по программе всё равно не обработаются, но и
+     проваливаться сквозь индикатор они не должны. */
+  pointer-events: none;
+}
+.busy-back.on { opacity: 1; visibility: visible; pointer-events: auto; }
+
+.busy {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 14px 18px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .5);
+}
+
+.busy-ring { width: 26px; height: 26px; flex: none; }
+.busy-track { stroke: var(--line); }
+.busy-arc {
+  stroke: var(--accent);
+  transform-origin: 50% 50%;
+  animation: busy-spin .9s linear infinite;
+}
+@keyframes busy-spin { to { transform: rotate(360deg); } }
+
+.busy-text { color: var(--text); font-size: 12.5px; }
+
+/* Кому анимация мешает — кольцо просто стоит: индикатор всё равно виден. */
+@media (prefers-reduced-motion: reduce) {
+  .busy-arc { animation: none; stroke-dasharray: 100 0; opacity: .5; }
+}

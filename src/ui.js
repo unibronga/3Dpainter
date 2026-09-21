@@ -109,19 +109,48 @@ export function drawUVPreview(canvas, target, cache, showWire) {
   ctx.imageSmoothingEnabled = true;
   ctx.drawImage(target.canvas, 0, 0, S, S);
 
-  if (!showWire || !cache) return;
+  // На плотной сетке линии в квадрате двести пикселей сливаются в серую
+  // заливку — показывать нечего, а построение слоя стоит секунды.
+  if (!showWire || !cache || cache.triCount > ПОРОГ_СЕТКИ) return;
+  ctx.drawImage(сеткаПревью(cache, S, dpr), 0, 0);
+}
+
+/** Выше этого числа треугольников сетка в превью не рисуется. */
+const ПОРОГ_СЕТКИ = 8000;
+
+/**
+ * Сетка развёртки для превью — рисуется один раз на модель и хранится.
+ *
+ * 🔴 Раньше она перечерчивалась при каждом обновлении превью, а превью
+ * обновляется по ходу мазка. На сфере в 19 тысяч треугольников один путь с
+ * `stroke()` занимал 0.7 секунды — именно отсюда брались рывки при покраске
+ * крупной модели. Сама сетка при этом не меняется: меняется текстура под ней.
+ */
+const кэшСетки = new WeakMap();
+
+function сеткаПревью(cache, S, dpr) {
+  const прежняя = кэшСетки.get(cache);
+  if (прежняя && прежняя.width === S) return прежняя;
+
+  const слой = document.createElement('canvas');
+  слой.width = слой.height = S;
+  const g = слой.getContext('2d');
+
   const { uv, idx, triCount } = cache;
-  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-  ctx.lineWidth = Math.max(1, dpr * 0.75);
-  ctx.beginPath();
+  g.strokeStyle = 'rgba(255,255,255,0.5)';
+  g.lineWidth = Math.max(1, dpr * 0.75);
+  g.beginPath();
   for (let t = 0; t < triCount; t++) {
     const i0 = idx[t * 3], i1 = idx[t * 3 + 1], i2 = idx[t * 3 + 2];
-    ctx.moveTo(uv[i0 * 2] * S, (1 - uv[i0 * 2 + 1]) * S);
-    ctx.lineTo(uv[i1 * 2] * S, (1 - uv[i1 * 2 + 1]) * S);
-    ctx.lineTo(uv[i2 * 2] * S, (1 - uv[i2 * 2 + 1]) * S);
-    ctx.closePath();
+    g.moveTo(uv[i0 * 2] * S, (1 - uv[i0 * 2 + 1]) * S);
+    g.lineTo(uv[i1 * 2] * S, (1 - uv[i1 * 2 + 1]) * S);
+    g.lineTo(uv[i2 * 2] * S, (1 - uv[i2 * 2 + 1]) * S);
+    g.closePath();
   }
-  ctx.stroke();
+  g.stroke();
+
+  кэшСетки.set(cache, слой);
+  return слой;
 }
 
 /** Подпись размера кисти в метрах или сантиметрах — масштаб проекта метровый. */
