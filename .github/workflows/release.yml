@@ -43,8 +43,20 @@ jobs:
       - name: Зависимости
         run: npm ci
 
+      # Логи сборочной машины видны только тому, кто вошёл в GitHub. Чтобы
+      # причина падения была видна и снаружи, хвост лога выводится
+      # аннотацией: её отдаёт открытый API.
       - name: Собрать
-        run: npm run ${{ matrix.script }}
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! npm run ${{ matrix.script }} 2>&1 | tee build.log; then
+            echo "::error::Сборка упала на ${{ matrix.os }}. Последние строки лога:"
+            tail -n 40 build.log | while IFS= read -r строка; do
+              echo "::error::${строка}"
+            done
+            exit 1
+          fi
         env:
           # Подписи нет: сертификата у проекта нет, и электрон-билдер не
           # должен искать ключи в связке.
