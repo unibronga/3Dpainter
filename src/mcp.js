@@ -62,6 +62,11 @@
  * план детали или рамки в снимке, в точках fill_at и в примерке заливки, и
  * обход крупных планов в инструкции.
  *
+ * Проверка «хватает ли инструментов»: я исправлял промахи ИИ только через
+ * MCP. Белки, шлёвки, подошва — получилось. Нижний край куртки — нет: его
+ * закрывают джинсы и ремень, ни снять, ни указать точкой. Отсюда `isolate`:
+ * снимок, точки и примерка только по выбранным деталям.
+ *
  * Описания инструментов — по-английски: их читает модель, а не человек.
  */
 
@@ -139,6 +144,16 @@ export const TOOLS = [
         wire: { type: 'boolean', description: 'Draw the mesh wireframe (every triangle edge and vertex) so small polygons are visible.' },
         flat: { type: 'boolean', description: 'Unlit colors, exactly as painted — compare colors with a reference this way.' },
         patches: { type: 'boolean', description: 'Mark the patches from the last find_patches with numbered magenta rings (visible ones only).' },
+        isolate: {
+          type: 'object',
+          description: 'Show only these pieces — everything else is hidden — to see and point at surfaces other parts cover (the inner side or the bottom edge of a jacket behind the trousers, a collar under the hair).',
+          properties: {
+            pieces: { type: 'array', items: { type: 'integer' }, minItems: 1 },
+            mesh: { type: ['integer', 'string'] },
+          },
+          required: ['pieces'],
+          additionalProperties: false,
+        },
         focus: {
           type: 'object',
           description: 'Close-up: frame the camera on one piece or a box (keeping the view direction) so small details — eyes, belt loops, soles — are large in the image.',
@@ -199,6 +214,16 @@ export const TOOLS = [
         layer: { type: 'integer', minimum: 0, description: 'Layer index; default is the active layer.' },
         dry_run: { type: 'boolean', description: 'Paint nothing; report how many triangles the target selects.' },
         preview: { type: 'string', enum: VIEWS, description: 'With dry_run: also return a render from this view with the selection tinted magenta — see what would be hit before painting.' },
+        isolate: {
+          type: 'object',
+          description: 'Show only these pieces — everything else is hidden — to see and point at surfaces other parts cover (the inner side or the bottom edge of a jacket behind the trousers, a collar under the hair).',
+          properties: {
+            pieces: { type: 'array', items: { type: 'integer' }, minItems: 1 },
+            mesh: { type: ['integer', 'string'] },
+          },
+          required: ['pieces'],
+          additionalProperties: false,
+        },
         focus: {
           type: 'object',
           description: 'Close-up: frame the camera on one piece or a box (keeping the view direction) so small details — eyes, belt loops, soles — are large in the image.',
@@ -255,6 +280,16 @@ export const TOOLS = [
         layer: { type: 'integer', minimum: 0 },
         dry_run: { type: 'boolean', description: 'Only report what the points hit.' },
         preview: { type: 'string', enum: VIEWS, description: 'With dry_run: also return a render from this view with the would-be fill tinted magenta.' },
+        isolate: {
+          type: 'object',
+          description: 'Show only these pieces — everything else is hidden — to see and point at surfaces other parts cover (the inner side or the bottom edge of a jacket behind the trousers, a collar under the hair).',
+          properties: {
+            pieces: { type: 'array', items: { type: 'integer' }, minItems: 1 },
+            mesh: { type: ['integer', 'string'] },
+          },
+          required: ['pieces'],
+          additionalProperties: false,
+        },
         focus: {
           type: 'object',
           description: 'Close-up: frame the camera on one piece or a box (keeping the view direction) so small details — eyes, belt loops, soles — are large in the image.',
@@ -759,7 +794,7 @@ export function createMcpTools(api) {
    * Снимок с подсвеченным выбором: временный слой поверх всех, пурпурная
    * заливка, снимок, слой убран. В историю не идёт, покраску не трогает.
    */
-  async function previewOf(hits, view, focus) {
+  async function previewOf(hits, view, focus, isolate) {
     const добавлено = [];
     try {
       for (const { mesh, set } of hits) {
@@ -776,7 +811,7 @@ export function createMcpTools(api) {
         tg.compositeRect(null);
         добавлено.push({ tg, index: tg.activeIndex, былАктивный });
       }
-      return await render_view({ view, width: focus ? 1024 : 768, height: 1024, flat: true, focus });
+      return await render_view({ view, width: focus ? 1024 : 768, height: 1024, flat: true, focus, isolate });
     } finally {
       for (const { tg, index, былАктивный } of добавлено.reverse()) {
         tg.removeLayer(index);
@@ -786,13 +821,13 @@ export function createMcpTools(api) {
     }
   }
 
-  async function fill({ target, dry_run = false, preview, focus, ...how }) {
+  async function fill({ target, dry_run = false, preview, focus, isolate, ...how }) {
     requireModel();
     const hits = select(target);
     if (!hits.length) throw new Error('The target matched no triangles. Check the ids with describe_model.');
     if (dry_run) {
       const res = { dry_run: true, selected: hits.map(({ mesh, set }) => ({ mesh: mesh.name, triangles: set.size })) };
-      if (preview) return { ...(await previewOf(hits, preview, focus)), ...res };
+      if (preview) return { ...(await previewOf(hits, preview, focus, isolate)), ...res };
       return res;
     }
     // Прицельно — когда названа сама часть; широко — когда отбор по признакам.
@@ -835,27 +870,80 @@ export function createMcpTools(api) {
 
   /**
    * Навести камеру на рамку, не меняя направления взгляда: центр — в рамку,
-   * расстояние — чтобы описанная сфера рамки влезла в кадр с полями.
+   * расстояние — чтобы рамка в проекции на экран влезла в кадр с полями.
+   * 🔴 Вписываем по ширине и высоте на экране, а не по описанной сфере:
+   * открытая глубина рамки (вся модель по Z) раздувала сферу, и «крупный
+   * план глаз» выходил портретом всей головы.
    */
-  function aimAt(box, margin = 1.15) {
+  function aimAt(box, margin = 1.15, aspect = 1) {
     const c = box.getCenter(new THREE.Vector3());
-    const r = Math.max(1e-3, box.getSize(new THREE.Vector3()).length() / 2) * margin;
     const cam = viewport.camera;
     const dir = cam.position.clone().sub(viewport.controls.target).normalize();
+    // Оси экрана при этом направлении взгляда.
+    const up0 = Math.abs(dir.y) > 0.999 ? new THREE.Vector3(0, 0, dir.y > 0 ? -1 : 1) : new THREE.Vector3(0, 1, 0);
+    const right = new THREE.Vector3().crossVectors(up0, dir).normalize();
+    const up = new THREE.Vector3().crossVectors(dir, right).normalize();
+    let hx = 0, hy = 0, hz = 0;
+    const p = new THREE.Vector3();
+    for (let i = 0; i < 8; i++) {
+      p.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z).sub(c);
+      hx = Math.max(hx, Math.abs(p.dot(right)));
+      hy = Math.max(hy, Math.abs(p.dot(up)));
+      hz = Math.max(hz, Math.abs(p.dot(dir)));
+    }
+    const halfH = Math.max(1e-3, hy, hx / aspect) * margin;
     viewport.controls.target.copy(c);
     if (cam.isPerspectiveCamera) {
-      const dist = r / Math.sin((cam.fov * Math.PI) / 360);
+      // Камера — перед ближней к ней гранью рамки, а не перед центром.
+      const dist = halfH / Math.tan((cam.fov * Math.PI) / 360) + hz;
       cam.position.copy(c).addScaledVector(dir, dist);
-      cam.near = Math.max(1e-4, dist / 200);
-      cam.far = dist + r * 4;
+      cam.near = Math.max(1e-4, (dist - hz) / 50);
+      cam.far = dist + hz * 2 + 10;
     } else {
-      cam.position.copy(c).addScaledVector(dir, r * 4);
-      viewport._updateOrthoFrustum(r * 2);
+      cam.position.copy(c).addScaledVector(dir, hz + halfH * 4);
+      viewport._updateOrthoFrustum(halfH * 2);
     }
+    cam.up.copy(up0);
     cam.zoom = 1;
     cam.lookAt(c);
     cam.updateProjectionMatrix();
     cam.updateMatrixWorld(true);
+  }
+
+  /**
+   * Показать только выбранные детали: копия меша с одними их треугольниками
+   * (атрибуты и материал общие — покраска та же), исходник на время спрятан.
+   * `faceIndex` копии — порядковый номер в `tris`, по нему — в исходник.
+   */
+  function isolateOn(isolate) {
+    if (!isolate) return null;
+    const [{ mesh, cache }] = meshesFor(isolate.mesh ?? 0);
+    const parts = partsOf(mesh, cache);
+    const tris = [];
+    for (const id of isolate.pieces) {
+      if (!parts.pieces.list[id]) throw new Error(`No piece ${id}.`);
+      tris.push(...parts.pieces.list[id]);
+    }
+    const g = new THREE.BufferGeometry();
+    for (const [k, a] of Object.entries(mesh.geometry.attributes)) g.setAttribute(k, a);
+    const index = new Uint32Array(tris.length * 3);
+    tris.forEach((t, i) => { index[i * 3] = cache.idx[t * 3]; index[i * 3 + 1] = cache.idx[t * 3 + 1]; index[i * 3 + 2] = cache.idx[t * 3 + 2]; });
+    g.setIndex(new THREE.BufferAttribute(index, 1));
+    const copy = new THREE.Mesh(g, mesh.material);
+    copy.matrixAutoUpdate = false;
+    copy.matrix.copy(mesh.matrix);
+    mesh.parent.add(copy);
+    copy.updateMatrixWorld(true);
+    const спрятаны = viewport.paintables.map((p) => [p.mesh, p.mesh.visible]);
+    for (const [m] of спрятаны) m.visible = false;
+    return {
+      mesh, copy, tris,
+      restore() {
+        mesh.parent.remove(copy);
+        g.dispose();
+        for (const [m, v] of спрятаны) m.visible = v;
+      },
+    };
   }
 
   function withView(view, W, H, fn, focus) {
@@ -868,7 +956,7 @@ export function createMcpTools(api) {
         viewport.setView(view === 'three-quarter' ? 'user' : view);
         viewport.centerCamera?.();
       }
-      if (focus) aimAt(focusBox(focus), focus.margin);
+      if (focus) aimAt(focusBox(focus), focus.margin, W / H);
       return fn(viewport.snapshotCamera(W, H));
     } finally {
       if (focus && cam.isPerspectiveCamera) { cam.near = ближняя; cam.far = дальняя; cam.updateProjectionMatrix(); }
@@ -878,21 +966,25 @@ export function createMcpTools(api) {
 
   const size = (v, def) => Math.min(2048, Math.max(64, (v | 0) || def));
 
-  async function render_view({ view = 'three-quarter', width, height, grid = false, wire = false, flat = false, patches = false, focus } = {}) {
+  async function render_view({ view = 'three-quarter', width, height, grid = false, wire = false, flat = false, patches = false, focus, isolate } = {}) {
     requireModel();
     const W = size(width, 768), H = size(height, 576);
     let метки = [];
     const img = withView(view, W, H, (cam) => {
       // Каркас и «плоско» — только на время снимка: у человека на экране ничего не меняется.
       const былКаркас = viewport.verticesVisible, былРежим = viewport.displayMode;
+      let изол = null;
       try {
         if (wire) viewport.setVerticesVisible(true);
         if (flat) viewport.setDisplayMode('flat');
+        // Копия — после смены режима: она берёт материал меша на момент создания.
+        изол = isolateOn(isolate);
         if (patches) метки = visiblePatches(cam, W, H);
         return viewport.renderView(W, H, 2, { overlay: wire });
       } finally {
         if (wire && !былКаркас) viewport.setVerticesVisible(false);
         if (flat && былРежим !== 'flat') viewport.setDisplayMode(былРежим);
+        изол?.restore();
       }
     }, focus);
     // Снимок прозрачный; ИИ смотрит на него на неизвестном фоне. Кладём на
@@ -1083,16 +1175,26 @@ export function createMcpTools(api) {
 
   const ray = new THREE.Raycaster();
 
-  async function fill_at({ view = 'three-quarter', width, height, points, angle = 30, box, dry_run = false, preview, focus, ...how }) {
+  async function fill_at({ view = 'three-quarter', width, height, points, angle = 30, box, dry_run = false, preview, focus, isolate, ...how }) {
     requireModel();
     const W = size(width, 768), H = size(height, 576);
     const a = Math.min(180, Math.max(0, +angle || 0));
     const meshes = viewport.paintables.map((p) => p.mesh);
-    const hitsAt = withView(view, W, H, (cam) => points.map(({ x, y }) => {
-      ray.setFromCamera(new THREE.Vector2((x / W) * 2 - 1, -(y / H) * 2 + 1), cam);
-      const h = ray.intersectObjects(meshes, false)[0];
-      return h ? { mesh: h.object, tri: h.faceIndex } : null;
-    }), focus);
+    const hitsAt = withView(view, W, H, (cam) => {
+      const изол = isolateOn(isolate);
+      try {
+        const цели = изол ? [изол.copy] : meshes;
+        return points.map(({ x, y }) => {
+          ray.setFromCamera(new THREE.Vector2((x / W) * 2 - 1, -(y / H) * 2 + 1), cam);
+          const h = ray.intersectObjects(цели, false)[0];
+          if (!h) return null;
+          // У копии номер грани — порядковый в её наборе; переводим в исходник.
+          return изол ? { mesh: изол.mesh, tri: изол.tris[h.faceIndex] } : { mesh: h.object, tri: h.faceIndex };
+        });
+      } finally {
+        изол?.restore();
+      }
+    }, focus);
 
     const sets = new Map();        // меш → набор треугольников
     const report = [];
@@ -1122,7 +1224,7 @@ export function createMcpTools(api) {
 
     const hits = [...sets].map(([mesh, set]) => ({ mesh, set })).filter((x) => x.set.size);
     if (dry_run && preview && hits.length) {
-      return { ...(await previewOf(hits, preview, focus)), dry_run: true, points: report };
+      return { ...(await previewOf(hits, preview, focus, isolate)), dry_run: true, points: report };
     }
     if (!dry_run) {
       if (!hits.length) throw new Error('No point hit the model. Check the pixels against the same render_view (view, width, height).');

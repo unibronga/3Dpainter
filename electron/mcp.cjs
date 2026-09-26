@@ -47,7 +47,9 @@ const INSTRUCTIONS =
   'wristbands; soles; hems. Decide the color of every small piece from the reference.\n' +
   '5. Review with close-ups: render_view {focus, flat:true} of the face, hands, belt area and ' +
   'feet from front, back and sides; compare each with the same place on the reference and fix ' +
-  'with undo, not by painting over.\n' +
+  'with undo, not by painting over. Surfaces covered by other parts (the bottom edge and inner ' +
+  'side of a jacket behind the trousers) are seen and pointed at with isolate:{pieces:[...]} — ' +
+  'only those pieces are drawn — e.g. render_view {view:"bottom", isolate, focus}.\n' +
   '6. Finally call find_patches: fix only leftovers (paintedBy "broad" or "none"); keep ' +
   'patches with paintedBy "detail".';
 
