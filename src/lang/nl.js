@@ -224,6 +224,7 @@ export default {
   "status.selOn": "selectie: alleen binnenin schilderen · ⌘D heft op",
   "status.selOff": "selectie opgeheven",
   "status.manyMeshes": "veel meshes – textuur {0}",
+  "status.denseMesh": "dicht model — textuur {0}",
   "status.noUVList": "geen UV’s, niet te beschilderen: {0}",
   "status.overlap": "⚠ overlappende UV’s ({0}%): {1} – streken worden verdubbeld",
   "status.unwrapped": "UV’s opnieuw opgebouwd: {0} mesh(es), {1} eilanden",

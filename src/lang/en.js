@@ -252,6 +252,7 @@ export default {
   'status.selOn': 'selection: painting only inside · ⌘D to deselect',
   'status.selOff': 'selection cleared',
   'status.manyMeshes': 'many meshes — texture {0}',
+  'status.denseMesh': 'dense model — texture {0}',
   'status.noUVList': 'no UVs, not paintable: {0}',
   'status.overlap': '⚠ overlapping UVs ({0}%): {1} — strokes will be duplicated',
   'status.unwrapped': 'UVs rebuilt: {0} mesh(es), {1} islands',

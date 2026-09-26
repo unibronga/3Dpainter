@@ -224,6 +224,7 @@ export default {
   "status.selOn": "Auswahl: gemalt wird nur innen · ⌘D hebt auf",
   "status.selOff": "Auswahl aufgehoben",
   "status.manyMeshes": "viele Meshes – Textur {0}",
+  "status.denseMesh": "dichtes Modell — Textur {0}",
   "status.noUVList": "keine UVs, nicht bemalbar: {0}",
   "status.overlap": "⚠ überlappende UVs ({0} %): {1} – Striche werden doppelt",
   "status.unwrapped": "UVs neu erzeugt: {0} Mesh(es), {1} Inseln",

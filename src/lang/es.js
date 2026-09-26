@@ -224,6 +224,7 @@ export default {
   "status.selOn": "selección: solo se pinta dentro · ⌘D la quita",
   "status.selOff": "selección quitada",
   "status.manyMeshes": "muchas mallas: textura {0}",
+  "status.denseMesh": "modelo denso — textura {0}",
   "status.noUVList": "sin UV, no se puede pintar: {0}",
   "status.overlap": "⚠ UV superpuestas ({0} %): {1}; los trazos se duplicarán",
   "status.unwrapped": "UV reconstruidas: {0} malla(s), {1} islas",

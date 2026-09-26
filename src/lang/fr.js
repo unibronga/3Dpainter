@@ -224,6 +224,7 @@ export default {
   "status.selOn": "sélection : on ne peint qu’à l’intérieur · ⌘D pour désélectionner",
   "status.selOff": "sélection supprimée",
   "status.manyMeshes": "beaucoup de maillages : texture {0}",
+  "status.denseMesh": "modèle dense — texture {0}",
   "status.noUVList": "pas d’UV, impossible à peindre : {0}",
   "status.overlap": "⚠ UV superposées ({0} %) : {1} — les traits seront dupliqués",
   "status.unwrapped": "UV recréées : {0} maillage(s), {1} îles",

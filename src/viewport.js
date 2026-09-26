@@ -1151,6 +1151,11 @@ export class Viewport {
     const toon = new THREE.MeshBasicMaterial({ map: texture });
     patchSelection(toon, u);
     mesh.userData.toonMaterial = makeToon(toon, this.anime.uniforms);
+    // Двусторонняя отрисовка: у моделей с настоящими дырами в одежде
+    // (разрыв рубашки, звезда на куртке) сквозь отверстие иначе виден фон —
+    // прореха в пустоту. С изнанкой дыра читается как дыра в ткани. Изнанка
+    // того же цвета, что и лицо: тексели у треугольника одни на обе стороны.
+    for (const m of [mesh.userData.matMaterial, mesh.userData.flatMaterial, toon]) m.side = THREE.DoubleSide;
     mesh.material = this.displayMode === 'flat'
       ? mesh.userData.flatMaterial
       : mesh.userData.matMaterial;
@@ -1224,9 +1229,7 @@ export class Viewport {
       for (const m of [mat, mesh.userData.flatMaterial, mesh.userData.toonMaterial]) {
         if (!m) continue;
         m.transparent = on;
-        // Сквозь стекло должна быть видна изнанка модели, иначе поворот не
-        // показывает ничего нового и прозрачности будто нет.
-        m.side = on ? THREE.DoubleSide : THREE.FrontSide;
+        // Изнанка видна всегда (см. applyPaintMaterial) — и сквозь стекло тоже.
         m.needsUpdate = true;
       }
     }

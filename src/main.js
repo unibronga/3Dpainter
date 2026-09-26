@@ -77,6 +77,9 @@ const state = {
   selMode: 'new',    // как лассо складывается с выделенным: new | add | sub | and
   activeLayer: 0,
   texSize: 1024,
+  // Размер, выбранный человеком. texSize — у текущей модели: его может
+  // поднять или урезать программа, а следующая модель считается отсюда.
+  texSizeBase: 1024,
   showWire: true,
   display: 'material',
   grid: true,
@@ -156,15 +159,46 @@ function eachTarget(fn) { targets.forEach(fn); }
 function activeTarget() { return activeMesh ? targets.get(activeMesh) : null; }
 function refLayers() { const t = activeTarget(); return t ? t.layers : null; }
 
-function buildTargets(paintables) {
+/**
+ * Сколько текселей достаётся медианному треугольнику меша при стороне S.
+ * Медиана, а не среднее: у персонажа крупные грани тянут среднее вверх, а
+ * лесенка видна как раз на мелких (замер: среднее 91, медиана 20 при 1024).
+ */
+function медианаТекселей(cache, S) {
+  const { uv, idx, triCount } = cache;
+  if (!triCount) return Infinity;
+  const площади = new Float32Array(triCount);
+  for (let t = 0; t < triCount; t++) {
+    const a = idx[t * 3], b = idx[t * 3 + 1], c = idx[t * 3 + 2];
+    площади[t] = Math.abs((uv[b * 2] - uv[a * 2]) * (uv[c * 2 + 1] - uv[a * 2 + 1])
+      - (uv[c * 2] - uv[a * 2]) * (uv[b * 2 + 1] - uv[a * 2 + 1])) / 2;
+  }
+  площади.sort();
+  return площади[triCount >> 1] * S * S;
+}
+
+/** Меньше стольких текселей на медианный треугольник — край заливки идёт лесенкой. */
+const МАЛО_ТЕКСЕЛЕЙ = 64;
+
+function buildTargets(paintables, имя = null) {
   targets.forEach((t) => t.dispose());
   targets.clear();
 
   // Много мешей на крупной текстуре съедят память: 2048² × RGBA = 16 МБ на
   // слой на меш. Для уровня с десятком объектов сбрасываем размер сами.
-  let size = state.texSize;
+  let size = state.texSizeManualFor === имя ? state.texSize : state.texSizeBase;
   let downgraded = false;
+  let upgraded = false;
   if (paintables.length > 8 && size > 512) { size = 512; downgraded = true; }
+  // Плотная модель на мелкой текстуре: треугольнику достаётся пятно в
+  // несколько пикселей, и край любой заливки вблизи идёт лесенкой (у
+  // персонажа в 6953 трис — 20 текселей на медианный треугольник при 1024).
+  // Берём 2048 сами — если человек не выбрал размер для этой модели руками.
+  else if (size < 2048 && paintables.length && state.texSizeManualFor !== имя
+    && paintables.some(({ cache }) => медианаТекселей(cache, size) < МАЛО_ТЕКСЕЛЕЙ)) {
+    size = 2048;
+    upgraded = true;
+  }
 
   for (const { mesh } of paintables) {
     const t = new PaintTarget(size);
@@ -178,7 +212,7 @@ function buildTargets(paintables) {
   uvEditor.setSelectionOutline(null);
   history.clear();
   state.painted = false;
-  return downgraded ? size : null;
+  return { size, downgraded, upgraded };
 }
 
 /**
@@ -1951,8 +1985,9 @@ function afterModelLoaded(report, key) {
   const поза = loadPoses()[modelKey];
   if (поза) { viewport.setPose(поза); viewport.frameModel(false); }
   syncPoseUI();
-  const downgraded = buildTargets(viewport.paintables);
-  report.downgraded = downgraded;
+  const собрано = buildTargets(viewport.paintables, report.name);
+  report.downgraded = собрано.downgraded ? собрано.size : null;
+  report.upgraded = собрано.upgraded ? собрано.size : null;
   report.baked = bakeSourceColors(viewport.paintables);
   report.bakedMaps = bakeSourceMaps(viewport.paintables);
   modelName = report.name;
@@ -1970,7 +2005,7 @@ function afterModelLoaded(report, key) {
   syncStatusCounts();
   syncModelNotes();
 
-  if (downgraded) state.texSize = downgraded;
+  state.texSize = собрано.size;
 }
 
 /**
@@ -1987,6 +2022,7 @@ function syncModelNotes() {
 
   const notes = [];
   if (report.downgraded) notes.push(t('status.manyMeshes', report.downgraded));
+  if (report.upgraded) notes.push(t('status.denseMesh', report.upgraded));
   if (report.noUV?.length) notes.push(t('status.noUVList', report.noUV.join(', ')));
   if (report.baked && !report.bakedMaps) notes.push(t('status.baked', report.baked));
   if (report.bakedMaps) notes.push(t('status.bakedMaps', report.bakedMaps));
@@ -2179,6 +2215,9 @@ function setTexSize(next) {
   if (next === state.texSize) return;
   if (state.painted && !confirm(t('confirm.texSize'))) return;
   state.texSize = next;
+  state.texSizeBase = next;
+  // Выбор человека для этой модели — сильнее правила о плотных моделях.
+  state.texSizeManualFor = modelName;
   const tris = $('stat-tris').textContent;
   withBusy('busy.texSize', () => {
     afterModelLoaded({ name: modelName, meshes: viewport.paintables.length, tris: 0, noUV: [] });
