@@ -12,6 +12,7 @@ import { t, onLangChange } from './i18n.js';
 import значокПрограммы from './app-icon.png';
 import { listRecent, getRecent, removeRecent, setThumb } from './recent.js';
 import { formatBytes } from './ui.js';
+import { version as ВЕРСИЯ } from '../package.json';
 
 const эл = (тег, класс, текст) => {
   const у = document.createElement(тег);
@@ -53,7 +54,12 @@ export function createWelcome(api) {
   значок.height = 72;
 
   const надписи = эл('div', 'welcome-titles');
-  const заголовок = эл('h1', 'welcome-title', t('welcome.title'));
+  // Название и версия — разными элементами: при смене языка переписывается
+  // только название, иначе версия пропадала бы с каждым переключением.
+  const заголовок = эл('h1', 'welcome-title');
+  const имя = эл('span', 'welcome-name', t('welcome.title'));
+  const версия = эл('span', 'welcome-version', ВЕРСИЯ);
+  заголовок.append(имя, версия);
   const подзаголовок = эл('p', 'welcome-sub', t('welcome.subtitle'));
   надписи.append(заголовок, подзаголовок);
 
@@ -220,7 +226,7 @@ export function createWelcome(api) {
   }
 
   function перевести() {
-    заголовок.textContent = t('welcome.title');
+    имя.textContent = t('welcome.title');
     подзаголовок.textContent = t('welcome.subtitle');
     for (const к of [картОткрыть, картДемо]) {
       к.имя.textContent = t(к.ключИмени);

@@ -33,9 +33,11 @@ const INSTRUCTIONS =
   'render_view, then paint on your own layer (new_layer). The model is usually built from ' +
   'separate pieces (a boot, a sleeve, a wristband, a belt loop, the rim and center of a gem): ' +
   'name them from describe_model.pieces and paint whole parts with fill {target:{pieces:[...]}} ' +
-  'first — it follows each part\'s own border. Use height/box fills only to split a piece that ' +
-  'holds several colors, and fill_at on render_view pixels (same view/width/height; grid:true) ' +
-  'for small details. Check with render_view from several sides (flat:true to compare colors) ' +
+  'first — it follows each part\'s own border. A piece that holds several colors (a torso with ' +
+  'a jacket and a shirt hem showing below it, front and back) is split by its regions: ' +
+  'describe_model {piece: id} lists them. Before painting a split, check it with fill ' +
+  '{dry_run:true, preview:"back"} (and other views): the selection comes back tinted magenta. ' +
+  'fill_at on render_view pixels (same view/width/height; grid:true) is for small details. Check with render_view from several sides (flat:true to compare colors) ' +
   'and fix mistakes with undo, not by painting over them. Finally call find_patches: fix only ' +
   'leftovers (paintedBy "broad" or "none"); patches with paintedBy "detail" are details you ' +
   'painted on purpose (holes, eyes, gem parts) — keep them.';

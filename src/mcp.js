@@ -49,11 +49,19 @@
  *     точка, номер), широко (высота, рамка) или не крашен. Пятно от
  *     прицельной заливки — задуманная деталь, зачистка его не трогает.
  *
+ * Пятая волна — четвёртый прогон потерял рваный подол рубашки сзади, а
+ * ответ describe_model на персонаже не влез ИИ в контекст. Отсюда:
+ *   - описание по умолчанию короткое: детали и сводка; области и острова —
+ *     по запросу (`include`) и по одной детали (`piece`);
+ *   - пробная заливка с картинкой: `dry_run` + `preview` — выбранное
+ *     подсвечено на снимке, ИИ видит, что заденет, до того как красить.
+ *
  * Описания инструментов — по-английски: их читает модель, а не человек.
  */
 
 import * as THREE from 'three';
 import { floodFaces } from './mesh-cache.js';
+import { Stroke } from './painter.js';
 
 /** Излом, на котором кончается «область»: круче — это уже другая часть. */
 const REGION_ANGLE = 30;
@@ -78,6 +86,7 @@ export const TOOLS = [
       'island. Each part has an id, triangle count, share of the mesh surface, world-space ' +
       'center and average normal, the direction it faces (up/down/front/back/left/right), ' +
       'the source material name when the file had one, and its current average color. ' +
+      'By default it is short: meshes, counts and all "pieces". ' +
       'Most important are "pieces": separate connected parts of the geometry (a boot, a ' +
       'wristband, a belt loop, the rim and the center of a gem). Paint by pieces first — ' +
       'fill {target:{pieces:[...]}} follows the part\'s own border exactly, while height ' +
@@ -103,6 +112,8 @@ export const TOOLS = [
         min_triangles: { type: 'integer', minimum: 1, description: 'Skip parts smaller than this.' },
         limit: { type: 'integer', minimum: 1, maximum: 500, description: 'How many parts to list per mesh, largest first. Default 120.' },
         offset: { type: 'integer', minimum: 0, description: 'Skip this many of the largest matching parts (paging).' },
+        piece: { type: 'integer', minimum: 0, description: 'Describe one piece: all of its regions (flat patches) — use it to split a piece that carries several colors, e.g. a torso with a jacket and a shirt.' },
+        include: { type: 'array', items: { type: 'string', enum: ['regions', 'islands'] }, description: 'Also list regions / UV islands of the whole mesh (long on big models; combine with box).' },
       },
       additionalProperties: false,
     },
@@ -166,8 +177,10 @@ export const TOOLS = [
         metalness: { type: 'number', minimum: 0, maximum: 1, description: '0 dielectric .. 1 metal. Default 0.' },
         opacity: { type: 'number', minimum: 0, maximum: 1, description: 'Material opacity: below 1 is glass. Default 1.' },
         layer: { type: 'integer', minimum: 0, description: 'Layer index; default is the active layer.' },
+        dry_run: { type: 'boolean', description: 'Paint nothing; report how many triangles the target selects.' },
+        preview: { type: 'string', enum: VIEWS, description: 'With dry_run: also return a render from this view with the selection tinted magenta — see what would be hit before painting.' },
       },
-      required: ['target', 'color'],
+      required: ['target'],
       additionalProperties: false,
     },
   },
@@ -207,6 +220,7 @@ export const TOOLS = [
         opacity: { type: 'number', minimum: 0, maximum: 1 },
         layer: { type: 'integer', minimum: 0 },
         dry_run: { type: 'boolean', description: 'Only report what the points hit.' },
+        preview: { type: 'string', enum: VIEWS, description: 'With dry_run: also return a render from this view with the would-be fill tinted magenta.' },
       },
       required: ['points'],
       additionalProperties: false,
@@ -516,10 +530,8 @@ export function createMcpTools(api) {
       triangles: tris.length,
       share: Math.round((area / (total || 1)) * 1000) / 10,
       center: [r3(cx / k), r3(cy / k), r3(cz / k)],
-      normal: [r3(nx / nl), r3(ny / nl), r3(nz / nl)],
       facing: facingOf(nx / nl, ny / nl, nz / nl),
-      // Разброс центров треугольников: у одной грани он ноль, это нормально.
-      size: [r3(hi[0] - lo[0]), r3(hi[1] - lo[1]), r3(hi[2] - lo[2])],
+      // Рамка по центрам треугольников: у одной грани она точка, это нормально.
       min: lo.map(r3), max: hi.map(r3),
       color: averageColor(target, cache, tris),
     };
@@ -543,6 +555,7 @@ export function createMcpTools(api) {
     for (let i = 0; i < list.length; i++) {
       const tris = list[i];
       if (f.min_triangles && tris.length < f.min_triangles) continue;
+      if (f.within && !f.within(tris[0])) continue;
       if (f.box || dir) {
         let a = 0, cx = 0, cy = 0, cz = 0, nx = 0, ny = 0, nz = 0;
         for (const t of tris) {
@@ -569,40 +582,53 @@ export function createMcpTools(api) {
     return out;
   }
 
-  function describe_model({ mesh, box, facing, min_triangles, limit, offset } = {}) {
+  function describe_model({ mesh, box, facing, min_triangles, limit, offset, include = [], piece } = {}) {
     const filter = { box, facing, min_triangles, limit, offset };
     requireModel();
+    const want = new Set(include);
     const meshes = meshesFor(mesh).map(({ mesh: m, cache, index }) => {
       const target = api.targets.get(m);
       const parts = partsOf(m, cache);
       const geo = triGeometry(m, cache);
       const total = geo.area.reduce((s, a) => s + a, 0);
       const names = materialNames(m, cache.triCount);
-      const box = new THREE.Box3().setFromObject(m);
+      const box3 = new THREE.Box3().setFromObject(m);
       const matCount = {};
       for (const n of names) if (n) matCount[n] = (matCount[n] || 0) + 1;
-      return {
+      const out = {
         index,
         name: m.name,
         triangles: cache.triCount,
-        bounds: { min: box.min.toArray().map(r3), max: box.max.toArray().map(r3) },
-        materials: Object.entries(matCount).map(([name, triangles]) => ({ name, triangles })),
-        // Деталей мало и они главные — перечисляем все, крупные первыми.
-        pieces: listParts(parts.pieces.list, geo, total, names, target, cache, { ...filter, limit: Math.max(filter.limit || 0, 300) }),
-        regions: listParts(parts.regions.list, geo, total, names, target, cache, filter),
-        // Остров на каждый треугольник — развёртка без общих рёбер (у демо
-        // так): список был бы шумом, по смыслу части дают области.
-        islands: parts.islands.list.length >= cache.triCount * 0.8
-          ? { count: parts.islands.list.length, note: 'Every triangle is its own UV island here; use regions instead.' }
-          : listParts(parts.islands.list, geo, total, names, target, cache, filter),
+        bounds: { min: box3.min.toArray().map(r3), max: box3.max.toArray().map(r3) },
+        counts: { pieces: parts.pieces.list.length, regions: parts.regions.list.length, islands: parts.islands.list.length },
       };
+      if (Object.keys(matCount).length) out.materials = Object.entries(matCount).map(([name, triangles]) => ({ name, triangles }));
+      if (typeof piece === 'number') {
+        // Одна деталь: её области целиком — чтобы разделить деталь на цвета.
+        if (!parts.pieces.list[piece]) throw new Error(`No piece ${piece}. Pieces: 0..${parts.pieces.list.length - 1}.`);
+        out.piece = describePart(parts.pieces.list, piece, geo, total, names, target, cache);
+        out.regions = listParts(parts.regions.list, geo, total, names, target, cache,
+          { ...filter, limit: filter.limit || 400, within: (t) => parts.pieces.id[t] === piece });
+        return out;
+      }
+      // Деталей мало и они главные — перечисляем все, крупные первыми.
+      out.pieces = listParts(parts.pieces.list, geo, total, names, target, cache, { ...filter, limit: Math.max(filter.limit || 0, 300) });
+      if (want.has('regions')) out.regions = listParts(parts.regions.list, geo, total, names, target, cache, filter);
+      if (want.has('islands')) {
+        // Остров на каждый треугольник — развёртка без общих рёбер: шум.
+        out.islands = parts.islands.list.length >= cache.triCount * 0.8
+          ? { count: parts.islands.list.length, note: 'Every triangle is its own UV island here; use regions instead.' }
+          : listParts(parts.islands.list, geo, total, names, target, cache, filter);
+      }
+      return out;
     });
     return {
       model: api.modelName(),
-      axes: 'Y up, +Z front, +X right, meters',
+      axes: 'Y up, +Z front, +X right, meters. min/max are the box of triangle centers.',
       layers: api.layers(),
       activeLayer: api.activeLayer(),
       meshes,
+      ...(want.has('regions') || typeof piece === 'number' ? {} : { hint: 'Regions are listed per piece: describe_model {piece: id}. Or include:["regions"] with a box filter.' }),
     };
   }
 
@@ -681,10 +707,46 @@ export function createMcpTools(api) {
     return total;
   }
 
-  function fill({ target, ...how }) {
+  /**
+   * Снимок с подсвеченным выбором: временный слой поверх всех, пурпурная
+   * заливка, снимок, слой убран. В историю не идёт, покраску не трогает.
+   */
+  async function previewOf(hits, view) {
+    const добавлено = [];
+    try {
+      for (const { mesh, set } of hits) {
+        const tg = api.targets.get(mesh);
+        const былАктивный = tg.activeIndex;
+        tg.activeIndex = tg.layers.length - 1;
+        tg.addLayer('__preview');
+        const s = new Stroke(tg, mesh.userData.paintCache, {
+          channel: 'rgba', mode: 'paint', color: [255, 43, 214], color2: [255, 43, 214],
+          opacity: 1, alpha: 1, roughness: 1, metalness: 0, pattern: { id: 'none' },
+        });
+        s.fillTriangles(set);
+        s.end('act.aiFill');                    // запись в историю не кладём
+        tg.compositeRect(null);
+        добавлено.push({ tg, index: tg.activeIndex, былАктивный });
+      }
+      return await render_view({ view, width: 768, height: 1024, flat: true });
+    } finally {
+      for (const { tg, index, былАктивный } of добавлено.reverse()) {
+        tg.removeLayer(index);
+        tg.activeIndex = былАктивный;
+        tg.compositeRect(null);
+      }
+    }
+  }
+
+  async function fill({ target, dry_run = false, preview, ...how }) {
     requireModel();
     const hits = select(target);
     if (!hits.length) throw new Error('The target matched no triangles. Check the ids with describe_model.');
+    if (dry_run) {
+      const res = { dry_run: true, selected: hits.map(({ mesh, set }) => ({ mesh: mesh.name, triangles: set.size })) };
+      if (preview) return { ...(await previewOf(hits, preview)), ...res };
+      return res;
+    }
     // Прицельно — когда названа сама часть; широко — когда отбор по признакам.
     const прицельно = !!(target?.pieces || target?.regions || target?.islands || target?.patches);
     paint(hits, how, прицельно ? 2 : 1);
@@ -922,7 +984,7 @@ export function createMcpTools(api) {
 
   const ray = new THREE.Raycaster();
 
-  function fill_at({ view = 'three-quarter', width, height, points, angle = 30, box, dry_run = false, ...how }) {
+  async function fill_at({ view = 'three-quarter', width, height, points, angle = 30, box, dry_run = false, preview, ...how }) {
     requireModel();
     const W = size(width, 768), H = size(height, 576);
     const a = Math.min(180, Math.max(0, +angle || 0));
@@ -960,6 +1022,9 @@ export function createMcpTools(api) {
     });
 
     const hits = [...sets].map(([mesh, set]) => ({ mesh, set })).filter((x) => x.set.size);
+    if (dry_run && preview && hits.length) {
+      return { ...(await previewOf(hits, preview)), dry_run: true, points: report };
+    }
     if (!dry_run) {
       if (!hits.length) throw new Error('No point hit the model. Check the pixels against the same render_view (view, width, height).');
       if (!how.color) throw new Error('color is required unless dry_run is true.');
@@ -1017,7 +1082,8 @@ export function createMcpTools(api) {
             { type: 'text', text: JSON.stringify(Object.fromEntries(Object.entries(res).filter(([k]) => k !== 'image' && k !== 'mimeType'))) },
           ] };
         }
-        return { content: [{ type: 'text', text: JSON.stringify(res, null, 1) }] };
+        // Без отступов: на больших моделях ответ и так длинный, а контекст ИИ не резиновый.
+        return { content: [{ type: 'text', text: JSON.stringify(res) }] };
       } catch (err) {
         return { content: [{ type: 'text', text: String(err?.message || err) }], isError: true };
       }

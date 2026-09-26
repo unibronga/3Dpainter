@@ -72,7 +72,8 @@ function createWindow() {
               const i = document.querySelector('.welcome-icon');
               return i ? (i.complete && i.naturalWidth > 0) : 'нет узла';
             })(),
-            имя: document.querySelector('.welcome-title')?.textContent || '—',
+            имя: document.querySelector('.welcome-name')?.textContent || '—',
+            версия: document.querySelector('.welcome-version')?.textContent || '—',
             ошибки: P ? P.bootErrors : ['нет доступа к состоянию'],
           }));
         }, 2500));
