@@ -13,6 +13,7 @@ export default {
   'menu.select': 'Выделение',
   'menu.view': 'Вид',
   'menu.tool': 'Инструмент',
+  'menu.effects': 'Эффекты',
   'menu.panels': 'Панели',
   'menu.help': 'Справка',
 
@@ -500,6 +501,24 @@ export default {
   'settings.view': 'Вид',
   'settings.gridOn': 'Сетка пола включена',
   'settings.close': 'Готово',
+
+  'fx.pixel': 'Пиксель-арт',
+  'fx.pixelSettings': 'Настроить пиксель-арт…',
+  'fx.pixelTitle': 'Пиксель-арт',
+  'fx.on': 'Включён',
+  'fx.size': 'Размер пикселя',
+  'fx.colors': 'Цветов',
+  'fx.colorsAll': 'все',
+  'fx.outline': 'Контур',
+  'fx.anime': 'Аниме',
+  'fx.animeSettings': 'Настроить аниме…',
+  'fx.animeTitle': 'Аниме',
+  'fx.steps': 'Ступеней света',
+  'fx.line': 'Толщина линии',
+  'fx.lineOff': 'нет',
+  'fx.creases': 'Линии на сгибах',
+  'fx.rim': 'Кромка света',
+  'fx.hint': 'Эффект меняет только вид: покраска и карты остаются прежними. «Вид в PNG» снимает картинку с эффектом.',
 
   /* ── Загрузка моделей ────────────────────────────────────────── */
   'busy.open': 'Читаю {0}…',

@@ -54,6 +54,10 @@ function sourceGroups(mesh, triCount) {
   return out;
 }
 import { buildDemoMesh } from './demo.js';
+import { PixelArt, Anime, makeToon, HELPER_LAYER } from './effects.js';
+
+/** Служебное — на свой слой: эффекты вида его не трогают. */
+const служебное = (o) => { o.traverse((x) => x.layers.set(HELPER_LAYER)); return o; };
 
 /**
  * Вшить показ выделения в материал.
@@ -163,6 +167,11 @@ export class Viewport {
     this.orthoCamera.position.copy(this.perspCamera.position);
     this.camera = this.perspCamera;
     this.projection = 'persp';
+    // Камеры видят и модель, и служебное; эффекты вида разводят их по проходам.
+    this.perspCamera.layers.enable(HELPER_LAYER);
+    this.orthoCamera.layers.enable(HELPER_LAYER);
+    this.pixelArt = new PixelArt();
+    this.anime = new Anime();
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
@@ -270,6 +279,7 @@ export class Viewport {
     const mat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthTest: false });
     this.cursor = new THREE.Line(geo, mat);
     this.cursor.renderOrder = 999;
+    служебное(this.cursor);
     this.cursor.visible = false;
     this.scene.add(this.cursor);
   }
@@ -336,6 +346,7 @@ export class Viewport {
     const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false, transparent: true });
     this.pivotMarker = new THREE.Sprite(mat);
     this.pivotMarker.renderOrder = 1000;
+    служебное(this.pivotMarker);
     this.pivotMarker.visible = false;
     this.scene.add(this.pivotMarker);
     this._pivotHideTimer = null;
@@ -544,7 +555,7 @@ export class Viewport {
     g.material.transparent = true;
     g.material.opacity = 0.85;
     g.material.depthWrite = false;
-    return g;
+    return служебное(g);
   }
 
   /* ── Показ вершин ────────────────────────────────────────────── */
@@ -584,6 +595,7 @@ export class Viewport {
 
         ov.add(wire, pts);
         ov.renderOrder = 5;
+        служебное(ov);
         mesh.add(ov);
         mesh.userData.meshOverlay = ov;
       }
@@ -938,18 +950,43 @@ export class Viewport {
     const цветОчистки = r.getClearColor(new THREE.Color());
     const альфаОчистки = r.getClearAlpha();
 
-    const rt = new THREE.WebGLRenderTarget(w, h, {
-      samples: Math.min(4, r.capabilities.maxSamples || 4),
-    });
-    rt.texture.colorSpace = THREE.SRGBColorSpace;
-    const buf = new Uint8Array(w * h * 4);
+    // С пиксель-артом снимок — та же картинка, что на экране: столько же
+    // пикселей картинки по высоте кадра, без суперсэмплинга (он размыл бы
+    // края квадратов). У аниме суперсэмплинг остаётся — он сглаживает линию.
+    // Шейдеры эффектов сами отдают цвет в sRGB, поэтому их цель без
+    // цветового пространства — байты уходят как есть.
+    const аниме = this.anime.enabled;
+    const пиксели = this.pixelArt.enabled && !аниме;
+    const rt = пиксели
+      ? new THREE.WebGLRenderTarget(W, H)
+      : аниме
+        ? new THREE.WebGLRenderTarget(w, h)
+        : new THREE.WebGLRenderTarget(w, h, { samples: Math.min(4, r.capabilities.maxSamples || 4) });
+    if (!пиксели && !аниме) rt.texture.colorSpace = THREE.SRGBColorSpace;
+    const bw = пиксели ? W : w, bh = пиксели ? H : h;
+    const buf = new Uint8Array(bw * bh * 4);
     try {
       this.scene.background = null;
-      r.setRenderTarget(rt);
-      r.setClearColor(0x000000, 0);
-      r.clear();
-      r.render(this.scene, cam);
-      r.readRenderTargetPixels(rt, 0, 0, w, h, buf);
+      if (аниме) {
+        const экран = this.container.clientHeight || H;
+        this.anime.render(r, this.scene, cam, {
+          width: w, height: h, scale: h / экран,
+          meshes: this.paintables.map((p) => p.mesh),
+          target: rt, transparent: true, helpers: false,
+        });
+      } else if (пиксели) {
+        const экран = this.container.clientHeight || H;
+        this.pixelArt.render(r, this.scene, cam, {
+          width: W, height: H, px: this.pixelArt.size * (H / экран),
+          target: rt, transparent: true, helpers: false,
+        });
+      } else {
+        r.setRenderTarget(rt);
+        r.setClearColor(0x000000, 0);
+        r.clear();
+        r.render(this.scene, cam);
+      }
+      r.readRenderTargetPixels(rt, 0, 0, bw, bh, buf);
     } finally {
       r.setRenderTarget(null);
       r.setClearColor(цветОчистки, альфаОчистки);
@@ -958,7 +995,7 @@ export class Viewport {
       безВыделения.forEach((u) => { u.selOn.value = 1; });
       rt.dispose();
     }
-    return shrinkPremultiplied(buf, w, h, ss);
+    return shrinkPremultiplied(buf, bw, bh, пиксели ? 1 : ss);
   }
 
   /** Ракурс камеры — для проекта: открыл и смотришь туда же, куда смотрел. */
@@ -1092,6 +1129,11 @@ export class Viewport {
     };
     patchSelection(mesh.userData.matMaterial, u);
     patchSelection(mesh.userData.flatMaterial, u);
+    // Материал аниме живёт рядом и ставится на меш только на время кадра
+    // с эффектом: пунктир выделения на нём тот же.
+    const toon = new THREE.MeshBasicMaterial({ map: texture });
+    patchSelection(toon, u);
+    mesh.userData.toonMaterial = makeToon(toon, this.anime.uniforms);
     mesh.material = this.displayMode === 'flat'
       ? mesh.userData.flatMaterial
       : mesh.userData.matMaterial;
@@ -1162,7 +1204,7 @@ export class Viewport {
       const on = target.updateTransparency();
       if (mat.transparent === on) continue;
 
-      for (const m of [mat, mesh.userData.flatMaterial]) {
+      for (const m of [mat, mesh.userData.flatMaterial, mesh.userData.toonMaterial]) {
         if (!m) continue;
         m.transparent = on;
         // Сквозь стекло должна быть видна изнанка модели, иначе поворот не
@@ -1255,7 +1297,22 @@ export class Viewport {
     this._selTime.value = (performance.now() / 400) % 1000;
     this.controls.update();
     this._syncPivotMarker();
-    this.renderer.render(this.scene, this.camera);
+    if (this.anime.enabled) {
+      const c = this.renderer.domElement;
+      this.anime.render(this.renderer, this.scene, this.camera, {
+        width: c.width, height: c.height, scale: this.renderer.getPixelRatio(),
+        meshes: this.paintables.map((p) => p.mesh), target: null,
+      });
+    } else if (this.pixelArt.enabled) {
+      const c = this.renderer.domElement;
+      this.pixelArt.render(this.renderer, this.scene, this.camera, {
+        width: c.width, height: c.height,
+        px: this.pixelArt.size * this.renderer.getPixelRatio(),
+        target: null,
+      });
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
     if (this.afterRender) this.afterRender();
   }
 }

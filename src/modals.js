@@ -1143,3 +1143,75 @@ export function createSettingsModal(api) {
 
   return { open: () => { синхронизировать(); m.open(); }, modal: m };
 }
+
+/* ── Окно эффекта ──────────────────────────────────────────────── */
+
+/**
+ * Настройки эффекта вида. Окно не заслоняет вид: подложка прозрачна и мышь
+ * пропускает — крутить модель и красить можно, не закрывая его, а ползунки
+ * меняют картинку на лету. Ряды описаны данными: у каждого эффекта свои.
+ *
+ * Ряд: { kind: 'range', key, label, min, max, step?, fmt(v) }
+ *    | { kind: 'check', key, label }
+ * Первым всегда идёт «Включён». Тронул настройку — эффект включается: раз
+ * её меняют, результат хотят видеть.
+ *
+ * @param {string} titleKey
+ * @param {Array} rows
+ * @param {{get: () => object, set: (patch: object) => void}} api
+ */
+export function createEffectModal(titleKey, rows, api) {
+  const m = new Modal(titleKey, 'fx-modal');
+  m.back.classList.add('fx-float');
+
+  function ряд(ключПодписи, control) {
+    const блок = el('div', 'set-block');
+    const шапка = el('div', 'set-row');
+    шапка.append(elT('label', 'set-label', ключПодписи), control);
+    блок.appendChild(шапка);
+    m.body.appendChild(блок);
+  }
+
+  const синхры = [];
+
+  const вкл = el('input', 'set-check');
+  вкл.type = 'checkbox';
+  вкл.addEventListener('change', () => api.set({ enabled: вкл.checked }));
+  ряд('fx.on', вкл);
+  синхры.push((s) => { вкл.checked = s.enabled; });
+
+  for (const row of rows) {
+    if (row.kind === 'check') {
+      const галка = el('input', 'set-check');
+      галка.type = 'checkbox';
+      галка.addEventListener('change', () => api.set({ [row.key]: галка.checked, enabled: true }));
+      ряд(row.label, галка);
+      синхры.push((s) => { галка.checked = !!s[row.key]; });
+    } else {
+      const обёртка = el('div', 'set-scale');
+      const inp = el('input', 'set-range');
+      inp.type = 'range';
+      inp.min = row.min; inp.max = row.max; inp.step = row.step || 1;
+      const val = el('span', 'val');
+      обёртка.append(inp, val);
+      inp.addEventListener('input', () => api.set({ [row.key]: +inp.value, enabled: true }));
+      ряд(row.label, обёртка);
+      синхры.push((s) => { inp.value = s[row.key]; val.textContent = row.fmt(s[row.key]); });
+    }
+  }
+
+  m.body.appendChild(elT('div', 'set-hint', 'fx.hint'));
+
+  const готово = elT('button', 'btn accent', 'settings.close');
+  готово.addEventListener('click', () => m.close());
+  m.foot.append(готово);
+
+  function синхронизировать() {
+    const s = api.get();
+    for (const f of синхры) f(s);
+  }
+
+  onLangChange(синхронизировать);
+
+  return { open: () => { синхронизировать(); m.open(); }, sync: синхронизировать, modal: m };
+}

@@ -148,6 +148,14 @@ the whole model with the paint baked in, via **File ▸ Save as…**. And
 **View to PNG** renders the model exactly as framed in the viewport, on a
 transparent background, at the size and edge smoothing you pick.
 
+**Effects.** The **Effects** menu changes how the model is shown, not the
+paint itself. **Pixel art** draws the model in large square pixels, with an
+optional reduced palette and a dark outline around the silhouette. **Anime**
+is cel shading in the spirit of Genshin Impact: stepped light with a crisp,
+cool-tinted shadow, ink lines along the silhouette and creases, and a bright
+rim along the edges. The brush ring and floor grid stay sharp, so you can keep painting
+with the effect on, and **View to PNG** captures the image with the effect.
+
 **Project files.** **File ▸ Save project** (Cmd+S) writes the whole session
 to a native `.3dpaint` file — like a PSD: every layer with its colour,
 roughness, metalness and transparency maps, layer settings, model orientation,

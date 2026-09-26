@@ -14,7 +14,9 @@ import * as THREE from 'three';
 import { floodFaces } from './mesh-cache.js';
 import * as UI from './ui.js';
 import { createBrushModal, createMaterialModal, createHelpModal,
-         createSaveAsModal, createSettingsModal, createViewPngModal, createAboutModal } from './modals.js';
+         createSaveAsModal, createSettingsModal, createViewPngModal, createAboutModal,
+         createEffectModal } from './modals.js';
+import { LEVELS_OFF } from './effects.js';
 import значокПрограммы from './app-icon.png';
 import { drawMaterialBall } from './matball.js';
 import { t, setLang, getLang, onLangChange, applyDOM, LANGS } from './i18n.js';
@@ -1784,6 +1786,83 @@ const settingsModal = createSettingsModal({
   setStartup: (v) => savePrefs({ showWelcome: v }),
 });
 
+/* ── Эффекты вида ──────────────────────────────────────────────── */
+
+/**
+ * Эффекты меняют только показ: покраска, карты и файлы прежние. Каждый
+ * описан данными — где живёт, какие у него настройки и их пределы; окно,
+ * меню и запоминание строятся по описанию.
+ *
+ * Включён всегда один: пиксель-арт поверх аниме — отдельная задача, а два
+ * эффекта, молча перебивающие друг друга, путают.
+ *
+ * Настройки помнятся между запусками — это вкус человека, а не свойство
+ * модели. А сам эффект при запуске выключен: модель, открывшаяся квадратами
+ * или контуром без видимой причины, выглядит поломкой.
+ */
+const EFFECTS = {
+  pixelArt: {
+    obj: () => viewport.pixelArt,
+    title: 'fx.pixelTitle', menu: 'fx.pixel', menuSettings: 'fx.pixelSettings',
+    rows: [
+      { kind: 'range', key: 'size', label: 'fx.size', min: 2, max: 24, fmt: (v) => v + ' px' },
+      // Уровней на канал, а показываем число цветов — так понятнее: 4
+      // уровня — это 64 цвета. Крайнее правое положение — «все».
+      { kind: 'range', key: 'levels', label: 'fx.colors', min: 2, max: LEVELS_OFF,
+        fmt: (v) => (v >= LEVELS_OFF ? t('fx.colorsAll') : String(v ** 3)) },
+      { kind: 'check', key: 'outline', label: 'fx.outline' },
+    ],
+  },
+  anime: {
+    obj: () => viewport.anime,
+    title: 'fx.animeTitle', menu: 'fx.anime', menuSettings: 'fx.animeSettings',
+    rows: [
+      { kind: 'range', key: 'steps', label: 'fx.steps', min: 2, max: 4, fmt: (v) => String(v) },
+      { kind: 'range', key: 'line', label: 'fx.line', min: 0, max: 6,
+        fmt: (v) => (v ? v + ' px' : t('fx.lineOff')) },
+      { kind: 'check', key: 'creases', label: 'fx.creases' },
+      { kind: 'range', key: 'rim', label: 'fx.rim', min: 0, max: 1, step: 0.05,
+        fmt: (v) => Math.round(v * 100) + '%' },
+    ],
+  },
+};
+
+function effectSettings(имя) {
+  const o = EFFECTS[имя].obj();
+  const s = { enabled: o.enabled };
+  for (const row of EFFECTS[имя].rows) s[row.key] = o[row.key];
+  return s;
+}
+
+function setEffect(имя, patch) {
+  const fx = EFFECTS[имя];
+  const o = fx.obj();
+  for (const row of fx.rows) {
+    if (!(row.key in patch)) continue;
+    const v = patch[row.key];
+    o[row.key] = row.kind === 'check' ? !!v : Math.min(row.max, Math.max(row.min, +v));
+  }
+  if ('enabled' in patch) {
+    o.enabled = !!patch.enabled;
+    if (o.enabled) {
+      for (const другое of Object.keys(EFFECTS)) {
+        if (другое !== имя) { EFFECTS[другое].obj().enabled = false; EFFECTS[другое].modal?.sync(); }
+      }
+    }
+  }
+  savePrefs({ [имя]: effectSettings(имя) });
+  fx.modal?.sync();
+}
+
+for (const [имя, fx] of Object.entries(EFFECTS)) {
+  fx.modal = createEffectModal(fx.title, fx.rows, {
+    get: () => effectSettings(имя),
+    set: (patch) => setEffect(имя, patch),
+  });
+  const p = loadPrefs()[имя];
+  if (p) setEffect(имя, { ...p, enabled: false });
+}
+
 /**
  * Начальный экран. Показывается на старте, пока человек не снимет галку, и
  * открывается из меню — чтобы вернуться к нему было чем, а не только
@@ -2547,6 +2626,16 @@ const menuBar = new MenuBar($('menubar'), [
     '-',
     { label: () => t('tool.brushes'), action: () => brushModal.open() },
     { label: () => t('tool.materials'), action: () => materialModal.open() },
+  ] },
+
+  { title: () => t('menu.effects'), items: [
+    { label: () => t('fx.pixel'), checked: () => viewport.pixelArt.enabled,
+      action: () => setEffect('pixelArt', { enabled: !viewport.pixelArt.enabled }) },
+    { label: () => t('fx.pixelSettings'), action: () => EFFECTS.pixelArt.modal.open() },
+    '-',
+    { label: () => t('fx.anime'), checked: () => viewport.anime.enabled,
+      action: () => setEffect('anime', { enabled: !viewport.anime.enabled }) },
+    { label: () => t('fx.animeSettings'), action: () => EFFECTS.anime.modal.open() },
   ] },
 
   { title: () => t('menu.panels'), items: [

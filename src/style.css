@@ -1426,3 +1426,18 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 .about-link:hover { text-decoration: underline; text-underline-offset: 2px; }
 .about-dim { color: var(--text-dim); }
 .about-note { color: var(--text-dim); font-size: 11px; line-height: 1.5; margin: -2px 0 6px 130px; }
+
+/* ── Окно эффекта ──────────────────────────────────────────────── */
+
+/* Висит сбоку и не заслоняет вид: подложка прозрачна и пропускает мышь,
+   чтобы видеть, как ползунок меняет картинку, и тут же крутить модель. */
+.modal-back.fx-float {
+  background: transparent;
+  pointer-events: none;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 72px 290px 0 0;
+}
+.modal-back.fx-float .modal { pointer-events: auto; width: 320px; box-shadow: 0 10px 40px #000a; }
+.fx-modal .set-scale .val { width: 44px; }
+.fx-modal .set-scale .set-range { width: 130px; }

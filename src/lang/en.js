@@ -14,6 +14,7 @@ export default {
   'menu.select': 'Select',
   'menu.view': 'View',
   'menu.tool': 'Tool',
+  'menu.effects': 'Effects',
   'menu.panels': 'Panels',
   'menu.help': 'Help',
 
@@ -501,6 +502,24 @@ export default {
   'settings.view': 'View',
   'settings.gridOn': 'Floor grid on',
   'settings.close': 'Done',
+
+  'fx.pixel': 'Pixel art',
+  'fx.pixelSettings': 'Pixel art settings…',
+  'fx.pixelTitle': 'Pixel art',
+  'fx.on': 'On',
+  'fx.size': 'Pixel size',
+  'fx.colors': 'Colors',
+  'fx.colorsAll': 'all',
+  'fx.outline': 'Outline',
+  'fx.anime': 'Anime',
+  'fx.animeSettings': 'Anime settings…',
+  'fx.animeTitle': 'Anime',
+  'fx.steps': 'Light steps',
+  'fx.line': 'Line width',
+  'fx.lineOff': 'none',
+  'fx.creases': 'Lines on creases',
+  'fx.rim': 'Rim light',
+  'fx.hint': 'The effect changes only the view: paint and maps stay as they are. View to PNG captures the image with the effect.',
 
   /* ── Loading ─────────────────────────────────────────────────── */
   'busy.open': 'Reading {0}…',
