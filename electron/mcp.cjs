@@ -30,13 +30,15 @@ const MAX_BODY = 1 << 20;
 
 const INSTRUCTIONS =
   '3DPainter is a tool for hand-painting low-poly 3D models. Start with describe_model and a ' +
-  'render_view, then paint on your own layer (new_layer). Paint large areas with fill ' +
-  '(height, facing, box), details with fill_at: point at pixels of a render_view image ' +
-  '(same view/width/height; grid:true helps), dry_run first if unsure. Check with ' +
-  'render_view from several sides (flat:true to compare colors) and fix mistakes with undo ' +
-  'rather than painting over them. Before finishing, call find_patches to catch small ' +
-  'leftover polygons (collars, boot tops, eyebrow tips), look at them with render_view ' +
-  '{patches:true, wire:true} or render_uv, and fill the leftovers by patch id.';
+  'render_view, then paint on your own layer (new_layer). The model is usually built from ' +
+  'separate pieces (a boot, a sleeve, a wristband, a belt loop, the rim and center of a gem): ' +
+  'name them from describe_model.pieces and paint whole parts with fill {target:{pieces:[...]}} ' +
+  'first — it follows each part\'s own border. Use height/box fills only to split a piece that ' +
+  'holds several colors, and fill_at on render_view pixels (same view/width/height; grid:true) ' +
+  'for small details. Check with render_view from several sides (flat:true to compare colors) ' +
+  'and fix mistakes with undo, not by painting over them. Finally call find_patches: fix only ' +
+  'leftovers (paintedBy "broad" or "none"); patches with paintedBy "detail" are details you ' +
+  'painted on purpose (holes, eyes, gem parts) — keep them.';
 
 class McpServer {
   /**

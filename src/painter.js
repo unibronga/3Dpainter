@@ -39,6 +39,16 @@ export function isEmptyRect(r) { return r.x1 < r.x0 || r.y1 < r.y0; }
 
 /* ── Растеризация треугольника в тексели ───────────────────────── */
 
+/** Квадрат расстояния от точки до отрезка. */
+function distSeg2(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  let k = len2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+  if (k < 0) k = 0; else if (k > 1) k = 1;
+  const ex = ax + k * dx - px, ey = ay + k * dy - py;
+  return ex * ex + ey * ey;
+}
+
 /**
  * Пройти тексели, накрытые треугольником t (плюс полоса PAD за краем).
  * В обратный вызов приходит номер текселя и точка на поверхности,
@@ -56,8 +66,17 @@ export function rasterTri(cache, S, t, cb) {
   const u2 = uv[i2 * 2] * S, v2 = (1 - uv[i2 * 2 + 1]) * S;
 
   const den = (v1 - v2) * (u0 - u2) + (u2 - u1) * (v0 - v2);
-  if (Math.abs(den) < 1e-9) return; // треугольник схлопнут в развёртке
-  const inv = 1 / den;
+  // Треугольник схлопнут в развёртке в линию или точку: барицентрики не
+  // считаются. На модели он всё равно виден — цветом текселей под своей
+  // линией, — поэтому отдаём ему полосу вокруг линии, точкой — центр.
+  const схлопнут = Math.abs(den) < 1e-9;
+  const inv = схлопнут ? 0 : 1 / den;
+  // Высоты к сторонам: |l_i| · h_i — расстояние до прямой стороны напротив
+  // вершины i. Для быстрого отсева далёких текселей без точного расчёта.
+  const площадь2 = Math.abs(den);
+  const h0 = площадь2 / (Math.hypot(u1 - u2, v1 - v2) || 1);
+  const h1 = площадь2 / (Math.hypot(u2 - u0, v2 - v0) || 1);
+  const h2 = площадь2 / (Math.hypot(u0 - u1, v0 - v1) || 1);
 
   let minX = Math.floor(Math.min(u0, u1, u2)) - PAD;
   let maxX = Math.ceil(Math.max(u0, u1, u2)) + PAD;
@@ -77,6 +96,13 @@ export function rasterTri(cache, S, t, cb) {
     for (let x = minX; x <= maxX; x++) {
       const px = x + 0.5;
 
+      if (схлопнут) {
+        const d2 = Math.min(distSeg2(px, py, u0, v0, u1, v1), distSeg2(px, py, u1, v1, u2, v2), distSeg2(px, py, u2, v2, u0, v0));
+        if (d2 > PAD * PAD) continue;
+        cb(rowOff + x, (a0x + a1x + a2x) / 3, (a0y + a1y + a2y) / 3, (a0z + a1z + a2z) / 3, x, y);
+        continue;
+      }
+
       let l0 = ((v1 - v2) * (px - u2) + (u2 - u1) * (py - v2)) * inv;
       let l1 = ((v2 - v0) * (px - u2) + (u0 - u2) * (py - v2)) * inv;
       let l2 = 1 - l0 - l1;
@@ -95,11 +121,26 @@ export function rasterTri(cache, S, t, cb) {
         // продолженная за край, и поперёк ребра она сходится с соседом.
         let b0 = l0 < 0 ? 0 : l0, b1 = l1 < 0 ? 0 : l1, b2 = l2 < 0 ? 0 : l2;
         const s = b0 + b1 + b2;
-        if (s <= 0) continue;
-        b0 /= s; b1 /= s; b2 /= s;
-        const cu = b0 * u0 + b1 * u1 + b2 * u2;
-        const cv = b0 * v0 + b1 * v1 + b2 * v2;
-        if ((px - cu) ** 2 + (py - cv) ** 2 > PAD * PAD) continue;
+        let далеко = true;
+        if (s > 0) {
+          b0 /= s; b1 /= s; b2 /= s;
+          const cu = b0 * u0 + b1 * u1 + b2 * u2;
+          const cv = b0 * v0 + b1 * v1 + b2 * v2;
+          далеко = (px - cu) ** 2 + (py - cv) ** 2 > PAD * PAD;
+        }
+        // 🔴 Тексель в пикселе от треугольника берём всегда — по точному
+        // расстоянию до стороны. Видеокарта при выборке подмешивает соседние
+        // тексели, и такой тексель виден на самом треугольнике. Прижатые
+        // барицентрики у узкой щепки уводят «ближайшую точку» вдоль неё, и
+        // тексель в 0,7 пикселя от щепки считался дальше PAD: щепка на модели
+        // светилась старым цветом (замер: 9 серых щепок в залитых синим
+        // джинсах). Точное расстояние на весь PAD не берём: полоса у всех
+        // треугольников выросла бы на 25 текселей — это другое растекание.
+        if (далеко) {
+          // Снаружи стороны и дальше пикселя от её прямой — заведомо далеко.
+          if ((l0 < 0 && -l0 * h0 > 1) || (l1 < 0 && -l1 * h1 > 1) || (l2 < 0 && -l2 * h2 > 1)) continue;
+          if (Math.min(distSeg2(px, py, u0, v0, u1, v1), distSeg2(px, py, u1, v1, u2, v2), distSeg2(px, py, u2, v2, u0, v0)) > 1) continue;
+        }
       }
 
       cb(rowOff + x,

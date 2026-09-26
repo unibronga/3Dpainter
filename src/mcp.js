@@ -38,6 +38,17 @@
  *   - `render_uv` — вся развёртка картинкой: покраска, рёбра, пятна;
  *   - заливка по номерам пятен — исправлять точно.
  *
+ * Четвёртая волна — владелец показал крупные промахи: низ джинсов в цвет
+ * ботинок, клин кожи на рукавах, испорченный камень, а зачистка стёрла дыры
+ * на джинсах и край рубашки. Причина: модель собрана из отдельных деталей
+ * (31 у персонажа — джинсы, ботинки, напульсники, шлёвки, оправа и центр
+ * камня), а ИИ о них не знал и резал её по высоте. Отсюда:
+ *   - детали (связные куски геометрии) в описании и заливка по ним —
+ *     ровно по границе детали;
+ *   - память о том, чем закрашен каждый треугольник: прицельно (деталь,
+ *     точка, номер), широко (высота, рамка) или не крашен. Пятно от
+ *     прицельной заливки — задуманная деталь, зачистка его не трогает.
+ *
  * Описания инструментов — по-английски: их читает модель, а не человек.
  */
 
@@ -67,6 +78,10 @@ export const TOOLS = [
       'island. Each part has an id, triangle count, share of the mesh surface, world-space ' +
       'center and average normal, the direction it faces (up/down/front/back/left/right), ' +
       'the source material name when the file had one, and its current average color. ' +
+      'Most important are "pieces": separate connected parts of the geometry (a boot, a ' +
+      'wristband, a belt loop, the rim and the center of a gem). Paint by pieces first — ' +
+      'fill {target:{pieces:[...]}} follows the part\'s own border exactly, while height ' +
+      'bands cut through parts (e.g. jeans that reach inside a boot). ' +
       'World axes: Y is up, +Z is the front of the model as it stands, +X is its right; ' +
       'units are meters. Each part also has a size [dx, dy, dz]. Ids are stable until ' +
       'another model is opened. Big models have hundreds of parts: filter with box, ' +
@@ -132,6 +147,7 @@ export const TOOLS = [
             facing: { type: 'string', enum: FACING.map(([n]) => n), description: 'Triangles whose normal is within 45 degrees of this direction.' },
             above: { type: 'number', description: 'Triangle center Y (meters) must be at least this.' },
             below: { type: 'number', description: 'Triangle center Y (meters) must be at most this.' },
+            pieces: { type: 'array', items: { type: 'integer' }, description: 'Piece ids from describe_model — whole separate parts. The best way to paint a part.' },
             patches: { type: 'array', items: { type: 'integer' }, description: 'Patch ids from the last find_patches.' },
             box: {
               type: 'object',
@@ -292,7 +308,9 @@ function partsOf(mesh, cache) {
     }
     return { id, list };
   };
-  const parts = { regions: split('geom', REGION_ANGLE), islands: split('uv', 180) };
+  // Детали — связные куски геометрии целиком (излом любой): у моделей из
+  // Blender это обычно смысловые части — ботинок, напульсник, пуговица.
+  const parts = { regions: split('geom', REGION_ANGLE), islands: split('uv', 180), pieces: split('geom', 180) };
   // Кэш геометрии отдаётся в файл — прячем части так же, как paintCache:
   // `formats.js` снимает userData на время выгрузки целиком.
   mesh.userData.mcpParts = parts;
@@ -446,6 +464,18 @@ export function createMcpTools(api) {
   const { viewport } = api;
   /** Пятна последнего find_patches: номер → { mesh, tris, center }. */
   let lastPatches = new Map();
+  /**
+   * Чем ИИ закрасил каждый треугольник в этом сеансе: 1 — широко (высота,
+   * рамка, сторона, весь меш), 2 — прицельно (деталь, область, пятно,
+   * точка на снимке). 0 — не трогал. Стек шагов — чтобы undo вернул и память.
+   */
+  const kinds = new WeakMap();          // меш → Uint8Array
+  const kindSteps = [];                 // [{ mesh, tris, prev: Uint8Array }]
+  const kindOf = (mesh) => {
+    if (!kinds.has(mesh)) kinds.set(mesh, new Uint8Array(mesh.userData.paintCache.triCount));
+    return kinds.get(mesh);
+  };
+  const KIND = ['none', 'broad', 'detail'];
 
   function requireModel() {
     if (!viewport.model || !viewport.paintables.length) {
@@ -490,6 +520,7 @@ export function createMcpTools(api) {
       facing: facingOf(nx / nl, ny / nl, nz / nl),
       // Разброс центров треугольников: у одной грани он ноль, это нормально.
       size: [r3(hi[0] - lo[0]), r3(hi[1] - lo[1]), r3(hi[2] - lo[2])],
+      min: lo.map(r3), max: hi.map(r3),
       color: averageColor(target, cache, tris),
     };
     if (mats.size === 1) out.material = [...mats][0];
@@ -556,6 +587,8 @@ export function createMcpTools(api) {
         triangles: cache.triCount,
         bounds: { min: box.min.toArray().map(r3), max: box.max.toArray().map(r3) },
         materials: Object.entries(matCount).map(([name, triangles]) => ({ name, triangles })),
+        // Деталей мало и они главные — перечисляем все, крупные первыми.
+        pieces: listParts(parts.pieces.list, geo, total, names, target, cache, { ...filter, limit: Math.max(filter.limit || 0, 300) }),
         regions: listParts(parts.regions.list, geo, total, names, target, cache, filter),
         // Остров на каждый треугольник — развёртка без общих рёбер (у демо
         // так): список был бы шумом, по смыслу части дают области.
@@ -597,11 +630,13 @@ export function createMcpTools(api) {
       const names = wantMat ? materialNames(mesh, cache.triCount) : null;
       const regions = target.regions ? new Set(target.regions) : null;
       const islands = target.islands ? new Set(target.islands) : null;
+      const pieces = target.pieces ? new Set(target.pieces) : null;
       const set = new Set();
       for (let t = 0; t < cache.triCount; t++) {
         if (inPatch && !inPatch.has(t)) continue;
         if (regions && !regions.has(parts.regions.id[t])) continue;
         if (islands && !islands.has(parts.islands.id[t])) continue;
+        if (pieces && !pieces.has(parts.pieces.id[t])) continue;
         if (wantMat && (names[t] || '').toLowerCase() !== wantMat) continue;
         if (dir) {
           const d = geo.normal[t * 3] * dir[0] + geo.normal[t * 3 + 1] * dir[1] + geo.normal[t * 3 + 2] * dir[2];
@@ -619,7 +654,7 @@ export function createMcpTools(api) {
   }
 
   /** Проверить цвет и слой и залить наборы треугольников. */
-  function paint(hits, { color, roughness = 0.9, metalness = 0, opacity = 1, layer }) {
+  function paint(hits, { color, roughness = 0.9, metalness = 0, opacity = 1, layer }, kind = 1) {
     const m = /^#?([0-9a-f]{6})$/i.exec(String(color || ''));
     if (!m) throw new Error('color must be #RRGGBB.');
     const n = parseInt(m[1], 16);
@@ -630,6 +665,10 @@ export function createMcpTools(api) {
     }
     let total = 0;
     for (const { mesh, set } of hits) {
+      const k = kindOf(mesh);
+      const tris = [...set];
+      kindSteps.push({ mesh, tris, prev: Uint8Array.from(tris, (t) => k[t]) });
+      for (const t of tris) k[t] = kind;
       api.fillTriangles(mesh, set, {
         color: rgb,
         roughness: Math.min(1, Math.max(0, roughness)),
@@ -646,7 +685,9 @@ export function createMcpTools(api) {
     requireModel();
     const hits = select(target);
     if (!hits.length) throw new Error('The target matched no triangles. Check the ids with describe_model.');
-    paint(hits, how);
+    // Прицельно — когда названа сама часть; широко — когда отбор по признакам.
+    const прицельно = !!(target?.pieces || target?.regions || target?.islands || target?.patches);
+    paint(hits, how, прицельно ? 2 : 1);
     const { layer } = how;
     return {
       filled: hits.map(({ mesh, set }) => ({ mesh: mesh.name, triangles: set.size })),
@@ -791,6 +832,13 @@ export function createMcpTools(api) {
         let главный = -1, сколько = 0;
         for (const [k, c] of вокруг) if (c > сколько) { главный = k; сколько = c; }
         const t0 = tris[0];
+        // Чем закрашено пятно: берём самое «прицельное» из его треугольников.
+        const k = kindOf(m);
+        let вид = 0;
+        for (const t of tris) if (k[t] > вид) вид = k[t];
+        const parts = partsOf(m, cache);
+        const деталь = parts.pieces.id[t0];
+        const всяДеталь = parts.pieces.list[деталь].length === tris.length;
         const pid = lastPatches.size;
         lastPatches.set(pid, { mesh: m, tris, set: new Set(tris), center });
         found++;
@@ -808,6 +856,11 @@ export function createMcpTools(api) {
             // внутри одного цвета, почти наверняка недокрас.
             aroundShare: рёбер ? Math.round((сколько / рёбер) * 100) / 100 : 0,
             enclosed: рёбер > 0 && сколько === рёбер,
+            piece: деталь,
+            // detail — ты сам красил его прицельно: это задуманная деталь,
+            // не трогай, если она не ошибочна. broad/none — кандидат в недокрас.
+            paintedBy: KIND[вид],
+            ...(всяДеталь ? { wholePiece: true } : {}),
           });
         }
       }
@@ -817,7 +870,8 @@ export function createMcpTools(api) {
       found,
       ...(found > report.length ? { note: `Listed ${report.length} of ${found}; narrow with box or max_triangles.` } : {}),
       patches: report,
-      hint: 'See them with render_view {patches:true, wire:true} from a few sides; fix with fill {target:{patches:[ids]}, color: <around>}.',
+      hint: 'paintedBy "detail" means you painted it on purpose (a hole, an eye, a gem part) — keep it. ' +
+        'Leftovers are "broad"/"none" patches. See them with render_view {patches:true, wire:true}; fix with fill {target:{patches:[ids]}, color: <around>}.',
     };
   }
 
@@ -897,6 +951,7 @@ export function createMcpTools(api) {
       const tr = api.targets.get(h.mesh);
       report.push({
         x: p.x, y: p.y, hit: true, mesh: h.mesh.name,
+        piece: parts.pieces.id[h.tri],
         region: parts.regions.id[h.tri],
         triangles: set.size,
         point: [r3(geo.center[h.tri * 3]), r3(geo.center[h.tri * 3 + 1]), r3(geo.center[h.tri * 3 + 2])],
@@ -908,7 +963,7 @@ export function createMcpTools(api) {
     if (!dry_run) {
       if (!hits.length) throw new Error('No point hit the model. Check the pixels against the same render_view (view, width, height).');
       if (!how.color) throw new Error('color is required unless dry_run is true.');
-      paint(hits, how);
+      paint(hits, how, 2);
     }
     return { dry_run, points: report, filled: dry_run ? 0 : hits.reduce((n, x) => n + x.set.size, 0) };
   }
@@ -921,6 +976,8 @@ export function createMcpTools(api) {
       const e = h.entries[h.index];
       if (!e || e.label !== 'act.aiFill') break;   // чужую работу не трогаем
       h.undo();
+      const ks = kindSteps.pop();
+      if (ks) { const k = kindOf(ks.mesh); ks.tris.forEach((t, i) => { k[t] = ks.prev[i]; }); }
       done++;
     }
     if (!done) throw new Error('Nothing to undo: the last step is not yours (or there are no steps).');
