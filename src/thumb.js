@@ -56,16 +56,17 @@ export function снятьСВьюпорта(холстВьюпорта) {
  *
  * @param {ArrayBuffer} буфер
  * @param {string} имя
+ * @param {Map<string, ArrayBuffer>} [соседи] .mtl и текстуры — без них OBJ белый
  * @returns {Promise<string|null>} data-URL
  */
-export async function нарисоватьПревью(буфер, имя) {
+export async function нарисоватьПревью(буфер, имя, соседи = null) {
   let renderer = null;
   try {
     const THREE = await import('three');
     const { parseModel } = await import('./formats.js');
     const { RoomEnvironment } = await import('three/addons/environments/RoomEnvironment.js');
 
-    const модель = await parseModel(буфер.slice(0), имя);
+    const модель = await parseModel(буфер.slice(0), имя, соседи && соседи.size ? соседи : null);
     if (!модель) return null;
 
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });

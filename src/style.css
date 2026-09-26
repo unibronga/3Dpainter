@@ -20,6 +20,8 @@
 html, body {
   height: 100%;
   overflow: hidden;
+  /* Снимает заглушку из index.html: страница видна, только когда стили на месте. */
+  visibility: visible;
   background: var(--bg);
   color: var(--text);
   font: 12px/1.45 -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
@@ -487,6 +489,34 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 .view-flyout button:hover { background: var(--panel-3); }
 .view-flyout button.on { background: var(--accent-dim); color: #ffd9a0; }
 .view-flyout button i { font-style: normal; color: var(--text-dim); font-size: 11px; }
+.pose-flyout { min-width: 190px; }
+
+/* Подсказка про положение модели — у кнопки, после открытия файла. */
+.pose-callout {
+  display: none;
+  max-width: 250px;
+  padding: 8px 10px;
+  background: var(--panel-3);
+  border: 1px solid var(--accent-dim);
+  border-radius: 7px;
+  box-shadow: 0 10px 28px #0009;
+  color: var(--text-dim);
+  text-align: left;
+  font: inherit;
+  line-height: 1.45;
+  cursor: pointer;
+}
+.pose-callout.on { display: block; }
+.pose-callout b { display: block; color: var(--text); font-weight: 600; margin-bottom: 2px; }
+#ov-pose.hint { border-color: var(--accent); color: var(--accent); animation: pose-pulse 1.2s ease-in-out infinite; }
+@keyframes pose-pulse { 50% { box-shadow: 0 0 0 4px #e0a35533; } }
+@media (prefers-reduced-motion: reduce) { #ov-pose.hint { animation: none; } }
+/* Модель повёрнута относительно файла — у кнопки положения точка-метка. */
+#ov-pose { position: relative; }
+#ov-pose.changed::after {
+  content: ''; position: absolute; right: 3px; top: 3px;
+  width: 5px; height: 5px; border-radius: 50%; background: var(--accent);
+}
 
 #viewcube-host {
   padding: 2px;
@@ -1381,3 +1411,18 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
   white-space: nowrap;
 }
 .tip-text { margin-top: 4px; color: var(--text-dim); line-height: 1.45; }
+
+/* ── О программе ──────────────────────────────────────────────── */
+
+.about-head { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; }
+.about-icon { width: 64px; height: 64px; flex: none; }
+.about-name { font-size: 18px; font-weight: 700; color: var(--text); }
+.about-version { color: var(--text-dim); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.about-desc { color: var(--text); line-height: 1.55; margin: 0 0 12px; }
+.about-row { display: grid; grid-template-columns: 120px 1fr; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); }
+.about-key { color: var(--text-dim); }
+.about-val { color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+.about-link { color: var(--accent); text-decoration: none; }
+.about-link:hover { text-decoration: underline; text-underline-offset: 2px; }
+.about-dim { color: var(--text-dim); }
+.about-note { color: var(--text-dim); font-size: 11px; line-height: 1.5; margin: -2px 0 6px 130px; }

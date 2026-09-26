@@ -4,6 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>3DPainter</title>
+  <!-- 🔴 Пока не пришли стили, страница спрятана, а фон — в цвет программы.
+       Стили подключает скрипт (в разработке Vite вставляет их уже после
+       загрузки модулей), и без этой заглушки на миг видна голая разметка:
+       белый лист, кнопки браузера, Times. Показывает страницу сам style.css
+       — значит, ровно в тот миг, когда он применился. -->
+  <style>
+    html { background: #1b1d21; }
+    body { visibility: hidden; }
+  </style>
 </head>
 <body>
 <div id="app">
@@ -170,6 +179,9 @@
           <button class="obtn" id="ov-views" data-i18n-title="tip.views" title="Виды: спереди, сзади, слева, справа, сверху, снизу (1–4, 6, 7, 0)">
             <svg viewBox="0 0 24 24"><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5 12 12l8-4.5"/><path d="M12 12v9"/></svg>
           </button>
+          <button class="obtn" id="ov-pose" data-i18n-title="tip.pose" title="Положение модели: где у неё перед и верх">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="5.5" r="2.2"/><path d="M12 8v7"/><path d="M8 11h8"/><path d="m9 20 3-5 3 5"/><path d="M4.5 16.5a8.5 3 0 0 0 15 0" opacity=".55"/><path d="m18.2 15 1.3 1.5-1.8.6" opacity=".55"/></svg>
+          </button>
           <button class="obtn" id="ov-center" data-i18n-title="tip.center" title="Вписать модель в кадр (Home)">
             <svg viewBox="0 0 24 24"><path d="M4 9V5a1 1 0 0 1 1-1h4"/><path d="M15 4h4a1 1 0 0 1 1 1v4"/><path d="M20 15v4a1 1 0 0 1-1 1h-4"/><path d="M9 20H5a1 1 0 0 1-1-1v-4"/><circle cx="12" cy="12" r="2.6"/></svg>
           </button>
@@ -196,6 +208,21 @@
           <button data-view="top"><span data-i18n="view.short.top">сверху</span><i>6</i></button>
           <button data-view="bottom"><span data-i18n="view.short.bottom">снизу</span><i>7</i></button>
           <button data-view="user">3/4<i>0</i></button>
+        </div>
+
+        <!-- Подсказка после открытия: где у модели перед, в файле не записано. -->
+        <button class="pose-callout" id="pose-callout">
+          <b data-i18n="pose.calloutTitle">Модель стоит не лицом?</b>
+          <span data-i18n="pose.calloutText">Поверните вид к её лицу и нажмите здесь «Это перед» — положение запомнится.</span>
+        </button>
+
+        <!-- Положение модели: перед и верх задаёт человек, камерой. -->
+        <div class="view-flyout pose-flyout" id="pose-flyout">
+          <button data-pose="front" data-i18n-title="tip.poseFront" title="Поверните вид так, чтобы модель смотрела на вас, и нажмите"><span data-i18n="pose.front">Это перед</span></button>
+          <button data-pose="up" data-i18n-title="tip.poseUp" title="Для моделей, лежащих на боку: смотрите на то, что должно быть верхом, и нажмите"><span data-i18n="pose.up">Это верх</span></button>
+          <button data-pose="left"><span data-i18n="pose.left">Повернуть на 90° влево</span></button>
+          <button data-pose="right"><span data-i18n="pose.right">Повернуть на 90° вправо</span></button>
+          <button data-pose="reset"><span data-i18n="pose.reset">Как в файле</span></button>
         </div>
 
         <div id="viewcube-host"></div>

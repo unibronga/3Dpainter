@@ -77,24 +77,43 @@ export async function setThumb(id, thumb) {
   }
 }
 
-/** Достать файл целиком, чтобы открыть его заново. */
+/**
+ * Достать файл целиком, чтобы открыть его заново. Соседние файлы (`.mtl`,
+ * текстуры) приходят словарём «имя → содержимое» — в том виде, в каком их
+ * ждёт загрузчик.
+ */
 export async function getRecent(id) {
   try {
     const запись = await вТранзакции('readonly', (хр) => хр.get(id));
-    return запись || null;
+    if (!запись) return null;
+    запись.sidecars = new Map(запись.sidecars || []);
+    return запись;
   } catch {
     return null;
   }
 }
 
-/** Запомнить открытый файл. Слишком крупные не храним — молча и честно. */
-export async function addRecent(name, buffer) {
-  if (!buffer || buffer.byteLength > ПРЕДЕЛ_БАЙТ) return false;
+/**
+ * Запомнить открытый файл вместе с соседними. Слишком крупные не храним —
+ * молча и честно.
+ *
+ * Соседние файлы — это `.mtl` и текстуры, открытые вместе с моделью: без них
+ * OBJ из недавних приходил белым, цвета материалов жили в `.mtl`.
+ *
+ * @param {Map<string, ArrayBuffer>} [sidecars] имя → содержимое
+ */
+export async function addRecent(name, buffer, sidecars = null) {
+  if (!buffer) return false;
+  let всего = buffer.byteLength;
+  for (const b of sidecars?.values() || []) всего += b.byteLength;
+  if (всего > ПРЕДЕЛ_БАЙТ) return false;
   try {
     // Превью у прежней записи бережём: модель та же, а рисовать его заново
-    // дорого.
+    // дорого. Соседей тоже: модель могли открыть и одним файлом, без папки,
+    // — прежний .mtl от этого не должен пропасть.
     const id = recentId(name, buffer.byteLength);
     const прежняя = await вТранзакции('readonly', (хр) => хр.get(id));
+    const соседи = sidecars && sidecars.size ? [...sidecars] : (прежняя?.sidecars || []);
     const запись = {
       id,
       name,
@@ -102,6 +121,7 @@ export async function addRecent(name, buffer) {
       opened: Date.now(),
       thumb: прежняя?.thumb || null,
       buffer,
+      sidecars: соседи,
     };
     await вТранзакции('readwrite', (хр) => хр.put(запись));
     await подрезать();

@@ -11,6 +11,7 @@
 import { t, onLangChange } from './i18n.js';
 import значокПрограммы from './app-icon.png';
 import { listRecent, getRecent, removeRecent, setThumb } from './recent.js';
+import { formatBytes } from './ui.js';
 
 const эл = (тег, класс, текст) => {
   const у = document.createElement(тег);
@@ -19,15 +20,11 @@ const эл = (тег, класс, текст) => {
   return у;
 };
 
-function размерЧеловеку(байты) {
-  if (байты > 1024 * 1024) return (байты / 1024 / 1024).toFixed(1) + ' MB';
-  if (байты > 1024) return Math.round(байты / 1024) + ' KB';
-  return байты + ' B';
-}
+const размерЧеловеку = formatBytes;
 
 function датаЧеловеку(время, язык) {
   try {
-    return new Date(время).toLocaleDateString(язык === 'en' ? 'en-US' : 'ru-RU',
+    return new Date(время).toLocaleDateString(язык || 'ru',
       { day: 'numeric', month: 'short' });
   } catch {
     return '';
@@ -144,7 +141,7 @@ export function createWelcome(api) {
       нарисоватьНедавние(document.documentElement.lang);
       return;
     }
-    if (await api.openBuffer(запись.buffer, запись.name)) скрыть();
+    if (await api.openBuffer(запись.buffer, запись.name, запись.sidecars)) скрыть();
   }
 
   /**
@@ -179,7 +176,7 @@ export function createWelcome(api) {
     if (!запись) { подсказкаПревью.textContent = t('welcome.previewNone'); return; }
 
     const { нарисоватьПревью } = await import('./thumb.js');
-    const картинка = await нарисоватьПревью(запись.buffer, запись.name);
+    const картинка = await нарисоватьПревью(запись.buffer, запись.name, запись.sidecars);
     if (моё !== поколение) return;
     if (!картинка) { подсказкаПревью.textContent = t('welcome.previewNone'); return; }
 

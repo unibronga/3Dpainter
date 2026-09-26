@@ -155,6 +155,13 @@ function сеткаПревью(cache, S, dpr) {
 }
 
 /** Подпись размера кисти в метрах или сантиметрах — масштаб проекта метровый. */
+/** Размер файла: B, KB, MB — символы единиц, одинаковые на любом языке. */
+export function formatBytes(байты) {
+  if (байты > 1024 * 1024) return (байты / 1024 / 1024).toFixed(1) + ' MB';
+  if (байты > 1024) return Math.round(байты / 1024) + ' KB';
+  return байты + ' B';
+}
+
 export function formatSize(metres) {
   if (metres >= 1) return metres.toFixed(2).replace(/0$/, '') + ' ' + t('unit.m');
   return Math.round(metres * 100) + ' ' + t('unit.cm');

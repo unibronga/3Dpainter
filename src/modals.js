@@ -739,6 +739,74 @@ export const HELP = [
   ] },
 ];
 
+/* ── О программе ───────────────────────────────────────────────── */
+
+const РЕПОЗИТОРИЙ = 'https://github.com/unibronga/3Dpainter';
+const АВТОР = 'https://github.com/unibronga';
+const ПОЧТА = 'icon.dnepr@gmail.com';
+
+/**
+ * О программе: что это, кто сделал, где код и на каких условиях.
+ * Ссылки уходят во внешний браузер — окно инструмента их не открывает
+ * (см. setWindowOpenHandler в electron/main.cjs).
+ *
+ * @param {{version: string, icon: string}} о
+ */
+export function createAboutModal({ version, icon }) {
+  const m = new Modal('about.title');
+
+  const ссылка = (адрес, текст) => {
+    const a = el('a', 'about-link', текст ?? адрес.replace(/^https:\/\//, ''));
+    a.href = адрес; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    return a;
+  };
+  const ряд = (ключ, ...содержимое) => {
+    const r = el('div', 'about-row');
+    const знач = el('div', 'about-val');
+    знач.append(...содержимое);
+    r.append(elT('div', 'about-key', ключ), знач);
+    return r;
+  };
+
+  const шапка = el('div', 'about-head');
+  const значок = el('img', 'about-icon');
+  значок.src = icon; значок.alt = ''; значок.width = 64; значок.height = 64;
+  const имя = el('div', 'about-titles');
+  const версия = el('div', 'about-version');
+  имя.append(el('div', 'about-name', '3DPainter'), версия);
+  шапка.append(значок, имя);
+
+  const описание = elT('p', 'about-desc', 'about.desc');
+
+  const лицензия = el('span');
+  лицензия.append(ссылка(`${РЕПОЗИТОРИЙ}/blob/main/LICENSE`, 'MIT'), el('span', 'about-dim', ' · © 2026 Kostiantyn Timchenko'));
+  const пояснениеЛицензии = elT('div', 'about-note', 'about.licenseNote');
+
+  const основа = el('span');
+  основа.append(ссылка('https://threejs.org', 'three.js'), el('span', null, ', '),
+                ссылка('https://www.electronjs.org', 'Electron'), el('span', 'about-dim', ' — MIT'));
+
+  m.body.append(
+    шапка, описание,
+    ряд('about.author', el('span', null, 'Kostiantyn Timchenko '), ссылка(АВТОР, '(Unibronga)')),
+    ряд('about.email', ссылка(`mailto:${ПОЧТА}`, ПОЧТА)),
+    ряд('about.source', ссылка(РЕПОЗИТОРИЙ)),
+    ряд('about.license', лицензия),
+    пояснениеЛицензии,
+    ряд('about.builtWith', основа),
+  );
+
+  const готово = elT('button', 'btn accent', 'settings.close');
+  готово.addEventListener('click', () => m.close());
+  m.foot.append(el('div', 'foot-hint'), готово);   // пустое место слева — кнопка встаёт вправо, как в других окнах
+
+  const синхронизировать = () => { версия.textContent = t('about.version', version); };
+  onLangChange(синхронизировать);
+  синхронизировать();
+
+  return { open: () => { синхронизировать(); m.open(); }, modal: m };
+}
+
 export function createHelpModal() {
   const m = new Modal('help.title', 'xwide');
 
@@ -787,6 +855,7 @@ export function createSaveAsModal(api) {
     { id: 'gltf', kind: 'model', key: 'save.gltf' },
     { id: 'obj',  kind: 'model', key: 'save.obj' },
     { id: 'png',  kind: 'maps',  key: 'save.png' },
+    { id: 'project', kind: 'project', key: 'save.project' },
   ];
 
   let выбран = 'glb';
@@ -813,7 +882,8 @@ export function createSaveAsModal(api) {
   function синхронизировать() {
     кнопки.forEach((_, id) => кнопки.get(id).строка.classList.toggle('on', id === выбран));
     const ф = ФОРМАТЫ.find((x) => x.id === выбран);
-    пояснение.dataset.i18n = ф.kind === 'model' ? 'save.modelHint' : 'save.mapsHint';
+    пояснение.dataset.i18n = ф.kind === 'model' ? 'save.modelHint'
+      : ф.kind === 'project' ? 'save.projectHint' : 'save.mapsHint';
     пояснение.textContent = t(пояснение.dataset.i18n);
   }
 

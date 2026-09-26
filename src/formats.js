@@ -80,9 +80,20 @@ async function читатьMTL(текстOBJ, спутники) {
     return ссылка;
   });
 
+  // Картинки из map_Kd грузятся сами по себе, после разбора. Покраска из
+  // них переносится в слой сразу после открытия — значит, их надо дождаться,
+  // иначе выпечка пройдёт по пустой текстуре.
+  const готово = new Promise((ok) => {
+    manager.onLoad = ok;
+    manager.onError = () => {};
+    setTimeout(ok, 8000);          // битая ссылка не должна держать открытие вечно
+  });
+
   try {
     const creator = new MTLLoader(manager).parse(декодер.decode(спутники.get(имя)), '');
     creator.preload();
+    const естьКарты = Object.values(creator.materials).some((m) => m.map || m.bumpMap || m.normalMap);
+    if (естьКарты) await готово;
     // Адреса blob живут, пока картинки не прочитаны; отпускаем их следующим
     // кадром, когда загрузчик уже забрал содержимое.
     setTimeout(() => ссылки.forEach((u) => URL.revokeObjectURL(u)), 30000);
@@ -195,6 +206,35 @@ export async function parseModel(буфер, имя, спутники = null) {
 /* ── Запись результата ─────────────────────────────────────────── */
 
 /**
+ * Геометрия модели для проекта: сетка, развёртка, иерархия — без карт.
+ *
+ * Карты в проекте лежат слоями, в модель их класть незачем. Материал на
+ * время выдачи один на меш и простой: с массивом материалов экспортёр режет
+ * меш на части, и при открытии слои не нашли бы своих объектов. userData
+ * прячем по той же причине, что и в кВыдаче: там кэш покраски на сотни МБ.
+ *
+ * @returns {Promise<Uint8Array>}
+ */
+export async function exportGeometryGLB(модель) {
+  const { GLTFExporter } = await import('three/addons/exporters/GLTFExporter.js');
+  const прежние = new Map();
+  const прежниеДанные = new Map();
+  const простой = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
+  модель.traverse((o) => {
+    if (o.userData && Object.keys(o.userData).length) { прежниеДанные.set(o, o.userData); o.userData = {}; }
+    if (o.isMesh) { прежние.set(o, o.material); o.material = простой; }
+  });
+  try {
+    const результат = await new GLTFExporter().parseAsync(модель, { binary: true });
+    return new Uint8Array(результат);
+  } finally {
+    прежние.forEach((м, o) => { o.material = м; });
+    прежниеДанные.forEach((д, o) => { o.userData = д; });
+    простой.dispose();
+  }
+}
+
+/**
  * Подготовить модель к выдаче — только на время экспорта.
  *
  * Делается две вещи. Первая: материалы подменяются на покрашенные, чтобы в
@@ -225,17 +265,21 @@ function кВыдаче(модель, карты) {
 
     прежние.set(o, o.material);
 
+    // 🔴 flipY НЕ снимать. Холст покраски лежит верхом к v = 1 (обычная
+    // ориентация three.js), а в glTF верх картинки — у v = 0. Экспортёр сам
+    // переворачивает картинку текстуры с flipY; с flipY = false он писал её
+    // как есть, и в любом просмотрщике — и при повторном открытии здесь же —
+    // покраска ложилась не на те грани (замер: 41 803 пикселя мазка в
+    // «чужом» кадре против 0 на тех же местах в нашем).
     const цвет = new THREE.CanvasTexture(набор.colorCanvas);
     цвет.colorSpace = THREE.SRGBColorSpace;
-    цвет.flipY = false;
     созданные.push(цвет);
 
     const параметры = { map: цвет, roughness: 1, metalness: 0 };
 
     // Шероховатость в зелёном, металл в синем — стандартная упаковка glTF.
     if (набор.ormCanvas) {
-      const orm = new THREE.CanvasTexture(набор.ormCanvas);
-      orm.flipY = false;
+      const orm = new THREE.CanvasTexture(набор.ormCanvas);   // flipY — см. выше
       созданные.push(orm);
       параметры.roughnessMap = orm;
       параметры.metalnessMap = orm;

@@ -14,11 +14,20 @@
 
 import ru from './lang/ru.js';
 import en from './lang/en.js';
+import de from './lang/de.js';
+import es from './lang/es.js';
+import fr from './lang/fr.js';
+import nl from './lang/nl.js';
+import uk from './lang/uk.js';
 
-/** Языки, между которыми переключается интерфейс. */
-export const LANGS = { ru: 'Русский', en: 'English' };
+/** Языки, между которыми переключается интерфейс. Имя — на самом языке:
+    так его находит тот, кто им говорит, а не тот, кто выставил другой. */
+export const LANGS = {
+  ru: 'Русский', en: 'English', de: 'Deutsch', es: 'Español',
+  fr: 'Français', nl: 'Nederlands', uk: 'Українська',
+};
 
-const СЛОВАРИ = { ru, en };
+const СЛОВАРИ = { ru, en, de, es, fr, nl, uk };
 
 /** Какие ключи есть в русском, но потерялись в другом языке. */
 export function missingKeys(код) {

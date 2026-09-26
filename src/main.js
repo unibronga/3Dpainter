@@ -8,21 +8,25 @@ import { Viewport, ORBIT_SPEED } from './viewport.js';
 import { UVEditor } from './uveditor.js';
 import { ViewCube } from './viewcube.js';
 import { MenuBar } from './menubar.js';
-import { PaintTarget, History, bleedLayer } from './layers.js';
+import { PaintTarget, History, bleedLayer, Layer } from './layers.js';
 import { Stroke, rectStencil, ellipseStencil, imageStencil } from './painter.js';
 import * as THREE from 'three';
 import { floodFaces } from './mesh-cache.js';
 import * as UI from './ui.js';
 import { createBrushModal, createMaterialModal, createHelpModal,
-         createSaveAsModal, createSettingsModal, createViewPngModal } from './modals.js';
+         createSaveAsModal, createSettingsModal, createViewPngModal, createAboutModal } from './modals.js';
+import значокПрограммы from './app-icon.png';
 import { drawMaterialBall } from './matball.js';
 import { t, setLang, getLang, onLangChange, applyDOM, LANGS } from './i18n.js';
-import { acceptAttribute, isSupported, isSidecar, extensionOf, exportGLTF, exportOBJ } from './formats.js';
+import { acceptAttribute, isSupported, isSidecar, extensionOf, exportGLTF, exportOBJ, exportGeometryGLB } from './formats.js';
+import { packProject, unpackProject, isProject, PROJECT_EXT } from './project.js';
+import { version as APP_VERSION } from '../package.json';
 import { createWelcome } from './welcome.js';
 import { addRecent, recentId, setThumb } from './recent.js';
 import { withBusy, busyNote } from './busy.js';
 import { rasterPolygon, projectCover, combine, isEmpty, outline } from './selection.js';
 import { initTooltips } from './tooltip.js';
+import { canSaveToFolder, pickFolder, writeToFolder, downloadBlob, canvasBlob, safeName } from './savefiles.js';
 
 // Сбор ошибок с самого начала загрузки: в консоли браузера вперемешку лежат
 // сообщения от прошлых версий модулей, и по ней не понять, живая ошибка или
@@ -218,6 +222,64 @@ function bakeSourceColors(paintables) {
     }
   }
   return перенесено;
+}
+
+/**
+ * Перенести готовые карты из файла в первый слой: модель, сохранённая с
+ * покраской, открывается с ней же, и её можно красить дальше.
+ *
+ * Карта кладётся по текселям целиком — это та же развёртка, что у файла.
+ *   цвет        → цвет слоя, альфа карты → прозрачность материала (так её
+ *                 и пишет наша выгрузка);
+ *   карта ORM   → шероховатость из зелёного канала, металл из синего.
+ *
+ * Ориентация: наш холст покраски лежит строками сверху вниз, как текстура с
+ * flipY. Картинки glTF приходят без flipY — их переворачиваем.
+ *
+ * @returns {number} на скольких мешах карта легла
+ */
+function bakeSourceMaps(paintables) {
+  let легло = 0;
+  for (const { mesh } of paintables) {
+    const карты = mesh.userData.sourceMaps;
+    const target = targets.get(mesh);
+    if (!карты?.color || !target) continue;
+    const S = target.size;
+    const L = target.layers[0];
+    const цвет = пикселиКарты(карты.color, S);
+    if (!цвет) continue;
+    for (let p = 0; p < S * S; p++) {
+      const o = p * 4;
+      L.rgba[o] = цвет[o]; L.rgba[o + 1] = цвет[o + 1]; L.rgba[o + 2] = цвет[o + 2];
+      L.rgba[o + 3] = 255;
+      L.opac[p] = цвет[o + 3];
+    }
+    const орм = карты.orm && пикселиКарты(карты.orm, S);
+    if (орм) {
+      for (let p = 0; p < S * S; p++) { L.rough[p] = орм[p * 4 + 1]; L.metal[p] = орм[p * 4 + 2]; }
+    }
+    target.compositeRect(null);
+    target.updateTransparency?.();
+    легло += 1;
+  }
+  if (легло) viewport.syncTransparency();
+  return легло;
+}
+
+/** Картинку текстуры — в пиксели S×S, в ориентации холста покраски. */
+function пикселиКарты(карта, S) {
+  try {
+    const c = document.createElement('canvas');
+    c.width = c.height = S;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    g.imageSmoothingQuality = 'high';
+    if (!карта.flipY) { g.translate(0, S); g.scale(1, -1); }
+    g.drawImage(карта.image, 0, 0, S, S);
+    return g.getImageData(0, 0, S, S).data;
+  } catch (err) {
+    console.warn('[3DPainter] карта из файла не прочиталась:', err);
+    return null;
+  }
 }
 
 function addLayer() {
@@ -1518,6 +1580,7 @@ const flyout = $('view-flyout');
 function closeFlyout() { flyout.classList.remove('open'); $('ov-views').classList.remove('on'); }
 
 $('ov-views').addEventListener('click', () => {
+  closePoseFlyout();
   const open = flyout.classList.toggle('open');
   $('ov-views').classList.toggle('on', open);
 });
@@ -1528,6 +1591,102 @@ document.addEventListener('pointerdown', (e) => {
 });
 document.querySelectorAll('#view-flyout button').forEach((b) => {
   b.addEventListener('click', () => { applyView(b.dataset.view); closeFlyout(); });
+});
+
+/* ── Положение модели ──────────────────────────────────────────── */
+
+/*
+ * Модель при открытии всегда встаёт на пол в центр мира. Поворот — «где
+ * перед, где верх» — задаёт человек: в файле этого нет. Заданное
+ * запоминается по модели (имя + размер, как у недавних), и в следующий раз
+ * она открывается уже стоящей как надо.
+ */
+let modelKey = 'demo';
+const POSES = 'paint-tool.poses';
+function loadPoses() {
+  try { return JSON.parse(localStorage.getItem(POSES) || '{}'); } catch { return {}; }
+}
+function savePose(q) {
+  const все = loadPoses();
+  const как_в_файле = Math.abs(q[3]) > 0.999999;          // поворота нет
+  if (как_в_файле) delete все[modelKey]; else все[modelKey] = q;
+  try { localStorage.setItem(POSES, JSON.stringify(все)); } catch { /* приватный режим */ }
+}
+
+/**
+ * Поменять положение модели. После поворота модель заново ставится на пол,
+ * камера — на вид «спереди» (или прежний ракурс для поворотов на 90°), и
+ * модель вписывается в кадр.
+ */
+function applyPose(что) {
+  if (!viewport.model) return;
+  let q;
+  if (что === 'front') q = viewport.poseFrontFromCamera();
+  else if (что === 'up') q = viewport.poseUpFromCamera();
+  else if (что === 'left') q = viewport.poseTurn(90);
+  else if (что === 'right') q = viewport.poseTurn(-90);
+  else q = viewport.setPose(null);
+  savePose(q);
+  if (что === 'front' || что === 'up') viewport.setView('front');
+  viewport.frameModel(true);
+  syncViewUI();
+  syncPoseUI();
+  setStatusHint(t(что === 'reset' ? 'status.poseReset' : 'status.poseSet'));
+}
+
+/**
+ * Модель открыта из файла — любым путём: диалогом, перетаскиванием, из
+ * недавних.
+ *
+ * 🔴 Начальный экран закрываем здесь, а не в местах вызова: кнопка «Открыть
+ * модель» на нём только зовёт диалог, файл приходит в общий обработчик, и
+ * экран оставался висеть поверх открытой модели.
+ */
+function модельОткрыта() {
+  welcome.hide();
+  // Положение ещё не задавали — подсказать, где это делается: перед модели в
+  // файле не записан, и без подсказки кнопку не найти.
+  if (!loadPoses()[modelKey]) показатьПодсказкуПоложения();
+}
+
+let таймерПодсказки = 0;
+function показатьПодсказкуПоложения() {
+  const п = $('pose-callout');
+  п.classList.add('on');
+  $('ov-pose').classList.add('hint');
+  clearTimeout(таймерПодсказки);
+  таймерПодсказки = setTimeout(спрятатьПодсказкуПоложения, 9000);
+}
+function спрятатьПодсказкуПоложения() {
+  clearTimeout(таймерПодсказки);
+  $('pose-callout').classList.remove('on');
+  $('ov-pose').classList.remove('hint');
+}
+$('pose-callout').addEventListener('click', () => {
+  спрятатьПодсказкуПоложения();
+  $('ov-pose').click();
+});
+
+function syncPoseUI() {
+  const повёрнута = Math.abs(viewport.pose()[3]) < 0.999999;
+  $('ov-pose').classList.toggle('changed', повёрнута);
+}
+
+const poseFlyout = $('pose-flyout');
+function closePoseFlyout() { poseFlyout.classList.remove('open'); $('ov-pose').classList.remove('on'); }
+$('ov-pose').addEventListener('click', () => {
+  closeFlyout();
+  спрятатьПодсказкуПоложения();
+  const open = poseFlyout.classList.toggle('open');
+  $('ov-pose').classList.toggle('on', open);
+});
+document.addEventListener('pointerdown', (e) => {
+  if (!poseFlyout.classList.contains('open')) return;
+  if (inside(poseFlyout, e.target) || inside($('ov-pose'), e.target)) return;
+  closePoseFlyout();
+});
+poseFlyout.querySelectorAll('button').forEach((b) => {
+  b.addEventListener('click', () => { applyPose(b.dataset.pose); closePoseFlyout(); });
 });
 
 $('ov-center').addEventListener('click', () => viewport.centerCamera());
@@ -1632,7 +1791,7 @@ const settingsModal = createSettingsModal({
  */
 const welcome = createWelcome({
   openFile: (файл) => openFile(файл),
-  openBuffer: (буфер, имя) => openBuffer(буфер, имя),
+  openBuffer: (буфер, имя, соседи) => openBuffer(буфер, имя, соседи),
   openDemo: () => afterModelLoaded(viewport.loadDemo()),
   pickFile: () => $('file-input').click(),
   getShowOnStartup: () => loadPrefs().showWelcome !== false,
@@ -1657,10 +1816,22 @@ function setActiveMesh(mesh) {
   syncStatusModel();
 }
 
-function afterModelLoaded(report) {
+/**
+ * @param {object} report что сообщил загрузчик
+ * @param {string} [key] чем модель помечена для запомненного положения:
+ *        файл — именем и размером, демо — 'demo'; при пересборке текстур
+ *        (та же модель) остаётся прежним
+ */
+function afterModelLoaded(report, key) {
+  modelKey = key ?? (typeof report.name === 'function' ? 'demo' : modelKey);
+  // Положение, в которое эту модель уже ставили, — сразу, до кадрирования.
+  const поза = loadPoses()[modelKey];
+  if (поза) { viewport.setPose(поза); viewport.frameModel(false); }
+  syncPoseUI();
   const downgraded = buildTargets(viewport.paintables);
   report.downgraded = downgraded;
   report.baked = bakeSourceColors(viewport.paintables);
+  report.bakedMaps = bakeSourceMaps(viewport.paintables);
   modelName = report.name;
   lastReport = report;
 
@@ -1694,7 +1865,9 @@ function syncModelNotes() {
   const notes = [];
   if (report.downgraded) notes.push(t('status.manyMeshes', report.downgraded));
   if (report.noUV?.length) notes.push(t('status.noUVList', report.noUV.join(', ')));
-  if (report.baked) notes.push(t('status.baked', report.baked));
+  if (report.baked && !report.bakedMaps) notes.push(t('status.baked', report.baked));
+  if (report.bakedMaps) notes.push(t('status.bakedMaps', report.bakedMaps));
+  if (report.mapsDropped) notes.push(t('status.mapsDropped', report.mapsDropped));
   if (report.unwrapped?.length) {
     // Развёртку подменили — об этом надо сказать вслух: человек открыл свой
     // файл, а красит по другим координатам, чем в нём лежали.
@@ -1715,7 +1888,7 @@ function syncModelNotes() {
 function syncStatusCounts() {
   $('stat-tris').textContent = lastReport
     ? t('status.tris',
-        (lastReport.tris || 0).toLocaleString(getLang() === 'en' ? 'en-US' : 'ru'),
+        (lastReport.tris || 0).toLocaleString(getLang()),
         lastReport.meshes)
     : '';
 }
@@ -1746,9 +1919,10 @@ $('file-input').addEventListener('change', async (e) => {
   e.target.value = '';
 });
 
-/** Положить файл в недавние. Не удалось (квота, приватный режим) — не беда. */
-function rememberRecent(name, buffer) {
-  return addRecent(name, buffer).catch(() => false);
+/** Положить файл в недавние — вместе с .mtl и текстурами. Не удалось (квота,
+    приватный режим) — не беда. */
+function rememberRecent(name, buffer, sidecars) {
+  return addRecent(name, buffer, sidecars).catch(() => false);
 }
 
 /**
@@ -1768,16 +1942,19 @@ async function rememberThumb(name, size) {
   } catch { /* превью — удобство, не обязанность */ }
 }
 
-/** Открыть модель из уже прочитанного буфера — так возвращаются недавние. */
-async function openBuffer(buffer, name) {
+/** Открыть модель из уже прочитанного буфера — так возвращаются недавние.
+    Соседние файлы (.mtl, текстуры) хранятся вместе с моделью и приходят сюда же. */
+async function openBuffer(buffer, name, sidecars = null) {
+  if (isProject(name)) return openProject(buffer.slice(0), name);
   setStatusHint(t('load.loading', name));
   return withBusy('busy.open', async () => {
     try {
-      const report = await viewport.loadFile(buffer.slice(0), name);
+      const report = await viewport.loadFile(buffer.slice(0), name, sidecars && sidecars.size ? sidecars : null);
       if (!report.meshes && !report.noUV?.length) { setStatusHint(t('load.noMesh')); return false; }
       // Разбор позади, дальше считаются цели покраски — про это и пишем.
       busyNote('busy.prepare');
-      afterModelLoaded(report);
+      afterModelLoaded(report, recentId(name, buffer.byteLength));
+      модельОткрыта();
       rememberThumb(name, buffer.byteLength);
       return true;
     } catch (err) {
@@ -1827,6 +2004,9 @@ async function filesFromDrop(dt) {
 
 async function openFile(что) {
   const набор = что instanceof File ? [что] : [...что];
+  // Проект открывается сам по себе: модель и слои у него внутри.
+  const проект = набор.find((f) => isProject(f.name));
+  if (проект) return openProject(await проект.arrayBuffer(), проект.name);
   const file = набор.find((f) => isSupported(f.name) && !isSidecar(f.name));
   if (!file) {
     const первый = набор[0];
@@ -1849,9 +2029,10 @@ async function openFile(что) {
         return false;
       }
       busyNote('busy.prepare');
-      afterModelLoaded(report);
+      afterModelLoaded(report, recentId(file.name, buf.byteLength));
+      модельОткрыта();
       // Превью дописывается к уже сохранённой записи, поэтому сначала запись.
-      await rememberRecent(file.name, buf);
+      await rememberRecent(file.name, buf, спутники);
       rememberThumb(file.name, buf.byteLength);
       return true;
     } catch (err) {
@@ -1884,13 +2065,42 @@ function setTexSize(next) {
 
 /* ── Сохранение ────────────────────────────────────────────────── */
 
-/** Отдать готовый blob файлом — тем же способом, что и картинки. */
-function downloadBlob(blob, name) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+/**
+ * Сохранить набор файлов.
+ *
+ * 🔴 Больше одного файла — одна папка, а не окно на каждый: Electron на
+ * каждое «скачивание» показывает своё окно сохранения, и OBJ с материалом и
+ * картой спрашивал три раза подряд. Место выбирается сразу по нажатию — до
+ * экспорта под индикатором, иначе браузер уже не даст открыть окно выбора.
+ *
+ * @param {string} имяПапки папка, которая будет создана в выбранном месте
+ * @param {number} сколько сколько файлов будет — решает, нужна ли папка
+ * @param {() => Promise<{name: string, blob: Blob}[]>} собрать
+ * @returns {Promise<number>} сколько файлов сохранено
+ */
+async function сохранитьФайлы(имяПапки, сколько, собрать, ключЗанятости, ...значения) {
+  let место;                            // undefined — папкой не сохраняем
+  if (сколько > 1 && canSaveToFolder()) {
+    try { место = await pickFolder(); } catch (err) { console.warn(err); }
+    if (место === null) { setStatusHint(t('save.cancelled')); return 0; }
+  }
+  return withBusy(ключЗанятости, async () => {
+    try {
+      const файлы = await собрать();
+      if (место) {
+        const папка = await writeToFolder(место, имяПапки, файлы);
+        setStatusHint(t('save.toFolder', файлы.length, папка));
+      } else {
+        for (const { name, blob } of файлы) downloadBlob(blob, name);
+        setStatusHint(t('save.done', файлы.length));
+      }
+      return файлы.length;
+    } catch (err) {
+      setStatusHint(t('save.failed', err.message));
+      console.error(err);
+      return 0;
+    }
+  }, ...значения);
 }
 
 /**
@@ -1921,45 +2131,33 @@ async function saveAs(формат) {
     return 0;
   }
 
-  const основа = имяМодели().replace(/\.[^.]+$/, '') || 'model';
+  const основа = safeName(имяМодели().replace(/\.[^.]+$/, '') || 'model');
 
-  if (формат === 'png') { await saveTextures(); return targets.size; }
+  if (формат === 'png') return saveTextures();
+  if (формат === 'project') return saveProject(true);
 
   const карты = картыДляЭкспорта();
-  let файлов = 0;
 
-  return withBusy('busy.save', async () => {
-  try {
-    if (формат === 'glb' || формат === 'gltf') {
-      const blob = await exportGLTF(viewport.model, карты, формат === 'glb');
-      downloadBlob(blob, `${основа}.${формат}`);
-      файлов = 1;
-    } else if (формат === 'obj') {
-      const { obj, mtl } = await exportOBJ(viewport.model, карты, основа);
-      downloadBlob(obj, `${основа}.obj`);
-      downloadBlob(mtl, `${основа}.mtl`);
-      файлов = 2;
-      // OBJ ссылается на карту по имени: без самой картинки рядом редактор
-      // откроет модель серой, и покраска окажется «потерянной».
-      for (const [, t] of targets) { download(t.canvas, `${основа}.png`); файлов += 1; break; }
-    }
-    setStatusHint(t('save.done', файлов));
-  } catch (err) {
-    setStatusHint(t('load.failed', основа, err.message));
-    console.error(err);
+  // В файл — в исходных координатах: поворот модели нужен для работы, а не
+  // для чужого пайплайна.
+  if (формат === 'glb' || формат === 'gltf') {
+    return сохранитьФайлы(основа, 1, async () => [{
+      name: `${основа}.${формат}`,
+      blob: await viewport.inFileSpace(() => exportGLTF(viewport.model, карты, формат === 'glb')),
+    }], 'busy.save', `${основа}.${формат}`);
   }
-  return файлов;
-  }, `${основа}.${формат}`);
-}
 
-function download(canvas, name) {
-  canvas.toBlob((blob) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }, 'image/png');
+  // OBJ — три файла: геометрия, материал и карта. OBJ ссылается на карту по
+  // имени, поэтому все три должны лечь рядом — одной папкой.
+  return сохранитьФайлы(основа, 3, async () => {
+    const { obj, mtl } = await viewport.inFileSpace(() => exportOBJ(viewport.model, карты, основа));
+    const [, первая] = [...targets][0];
+    return [
+      { name: `${основа}.obj`, blob: obj },
+      { name: `${основа}.mtl`, blob: mtl },
+      { name: `${основа}.png`, blob: await canvasBlob(первая.canvas) },
+    ];
+  }, 'busy.save', `${основа}.obj`);
 }
 
 /** Есть ли на карте материала хоть что-то, кроме подложки. */
@@ -1970,36 +2168,181 @@ function hasMaterialPaint(t) {
   return false;
 }
 
-async function saveTextures() {
-  if (!targets.size) return;
-  return withBusy('busy.maps', () => {
-  const base = имяМодели().replace(/\.[^.]+$/, '') || 'model';
-  let files = 0;
-  let i = 0;
+/**
+ * Карты меша: цветовая и, если по ней красили поверхностью, карта материала.
+ * Без неё работа по поверхности молча потерялась бы.
+ */
+function картыМеша(mesh, t) {
+  const stem = имяКарты(mesh);
+  const список = [{ name: `${stem}.png`, canvas: t.canvas }];
+  if (hasMaterialPaint(t)) список.push({ name: `${stem}_material.png`, canvas: t.ormCanvas });
+  return список;
+}
 
-  for (const [mesh, t] of targets) {
-    const stem = targets.size > 1 ? `${base}_${mesh.name || 'mesh' + i}` : base;
-    download(t.canvas, `${stem}.png`);
-    files += 1;
+/* ── Проект: свой формат со слоями и настройками ───────────────── */
 
-    // Карта материала выгружается, только если по ней действительно красили:
-    // иначе она молча потерялась бы вместе со всей работой по поверхности.
-    if (hasMaterialPaint(t)) {
-      download(t.ormCanvas, `${stem}_material.png`);
-      files += 1;
-    }
-    i += 1;
-  }
-  setStatusHint(t(files > targets.size ? 'status.savedBoth' : 'status.savedColor', files));
+/**
+ * Куда сохранён открытый проект. Есть — ⌘S пишет туда же молча, как
+ * «Сохранить» в любом редакторе; нет — спрашивает место. Проект, открытый
+ * из файла, адреса не даёт (браузер его не раскрывает), поэтому первое
+ * сохранение после открытия тоже спрашивает.
+ */
+let projectHandle = null;
+
+/** Всё, что нужно, чтобы открыть работу ровно такой, какой её оставили. */
+async function собратьПроект() {
+  const modelGLB = await viewport.inFileSpace(() => exportGeometryGLB(viewport.model));
+  const meshes = viewport.paintables.map(({ mesh, cache }) => {
+    const tg = targets.get(mesh);
+    return { name: mesh.name, triCount: cache.triCount, size: tg.size, activeIndex: tg.activeIndex, layers: tg.layers };
   });
+  const meta = {
+    name: имяМодели(),
+    texSize: state.texSize,
+    activeLayer: state.activeLayer,
+    pose: viewport.pose(),
+    view: viewport.viewState(),
+    display: state.display,
+    material: {
+      color: state.color, color2: state.color2, roughness: state.roughness,
+      metalness: state.metalness, opacity: state.opacity, pattern: state.pattern,
+      name: typeof state.matName === 'string' ? state.matName : null,
+    },
+    brush: { ...state.brush }, sizePct: state.sizePct, frontOnly: state.frontOnly,
+  };
+  return packProject({ modelGLB, meta, meshes, app: APP_VERSION });
+}
+
+/**
+ * Сохранить проект. Место спрашивается сразу по нажатию — до сборки под
+ * индикатором, иначе браузер уже не даст открыть окно.
+ * @param {boolean} какНовый «Сохранить как…»: спросить место заново
+ */
+async function saveProject(какНовый = false) {
+  if (!targets.size || !viewport.model) { setStatusHint(t('save.nothing')); return 0; }
+  const имя = `${safeName(имяМодели().replace(/\.[^.]+$/, '') || 'model')}.${PROJECT_EXT}`;
+  let место = какНовый ? null : projectHandle;
+  if (!место && typeof window.showSaveFilePicker === 'function') {
+    try {
+      место = await window.showSaveFilePicker({
+        suggestedName: имя, id: '3dpainter-project',
+        types: [{ description: t('save.projectType'), accept: { 'application/octet-stream': ['.' + PROJECT_EXT] } }],
+      });
+    } catch (err) {
+      if (err?.name === 'AbortError') { setStatusHint(t('save.cancelled')); return 0; }
+      console.warn(err);
+      место = null;                     // не вышло — отдадим обычным скачиванием
+    }
+  }
+  return withBusy('busy.project', async () => {
+    try {
+      const blob = new Blob([await собратьПроект()], { type: 'application/octet-stream' });
+      if (место) {
+        const поток = await место.createWritable();
+        await поток.write(blob);
+        await поток.close();
+        projectHandle = место;
+      } else {
+        downloadBlob(blob, имя);
+      }
+      setStatusHint(t('project.saved', место?.name || имя, UI.formatBytes(blob.size)));
+      return 1;
+    } catch (err) {
+      setStatusHint(t('save.failed', err.message));
+      console.error(err);
+      return 0;
+    }
+  }, имя);
+}
+
+/**
+ * Открыть проект: модель, слои, свойства слоёв, положение, ракурс, материал
+ * и кисть — всё как при сохранении.
+ */
+async function openProject(buffer, fileName) {
+  setStatusHint(t('load.loading', fileName));
+  return withBusy('busy.open', async () => {
+    try {
+      const { meta, modelGLB, file } = unpackProject(buffer);
+      busyNote('busy.prepare');
+      const glb = modelGLB.buffer.slice(modelGLB.byteOffset, modelGLB.byteOffset + modelGLB.byteLength);
+      const report = await viewport.loadFile(glb, 'model.glb');
+      report.name = meta.name || fileName;
+      // Размер карт — как при сохранении: слои лежат в нём байт в байт.
+      if (meta.texSize) state.texSize = meta.texSize;
+      afterModelLoaded(report, recentId(fileName, buffer.byteLength));
+
+      // Слои — по мешам в порядке обхода. Геометрия своя, из проекта, поэтому
+      // порядок и число треугольников обязаны совпасть; не совпали — значит,
+      // файл повреждён, и класть краску наугад нельзя.
+      const пары = viewport.paintables;
+      if (пары.length !== meta.meshes.length) throw new Error(t('project.mismatch'));
+      пары.forEach(({ mesh, cache }, i) => {
+        const м = meta.meshes[i];
+        const tg = targets.get(mesh);
+        if (!tg || tg.size !== м.size || cache.triCount !== м.triCount) throw new Error(t('project.mismatch'));
+        tg.layers = м.layers.map((L) => {
+          const слой = new Layer(tg.size, L.name, L.auto);
+          слой.visible = L.visible; слой.opacity = L.opacity; слой.blend = L.blend;
+          for (const [ключ, путь] of Object.entries(L.files)) {
+            const байты = file(путь);
+            if (!байты) continue;
+            if (ключ === 'mask') слой.ensureMask(tg.size);
+            слой[ключ].set(байты);
+          }
+          return слой;
+        });
+        tg.activeIndex = Math.min(м.activeIndex ?? 0, tg.layers.length - 1);
+        tg.compositeRect(null);
+      });
+      state.activeLayer = Math.min(meta.activeLayer ?? 0, (пары.length ? targets.get(пары[0].mesh).layers.length : 1) - 1);
+
+      if (meta.pose) { viewport.setPose(meta.pose); savePose(meta.pose); }
+      viewport.setViewState(meta.view);
+      if (meta.display) setDisplayMode(meta.display);
+      if (meta.material) {
+        const { name, ...остальное } = meta.material;
+        setMaterial({ ...остальное, name: name || (() => t('mat.paint')) });
+      }
+      if (meta.brush) state.brush = { ...state.brush, ...meta.brush };
+      if (meta.sizePct) state.sizePct = meta.sizePct;
+      if (typeof meta.frontOnly === 'boolean') { state.frontOnly = meta.frontOnly; $('brush-frontface').checked = meta.frontOnly; }
+
+      viewport.syncTransparency();
+      syncBrushLabels(); syncLayers(); syncPoseUI(); syncViewUI();
+      drawUVRows(); refreshUV();
+      history.clear(); renderHistory(); syncHistoryButtons();
+      state.painted = false;
+      projectHandle = null;
+      welcome.hide();
+      setStatusHint(t('project.opened', fileName));
+      await rememberRecent(fileName, buffer);
+      rememberThumb(fileName, buffer.byteLength);
+      return true;
+    } catch (err) {
+      setStatusHint(t('load.failed', fileName, err.message));
+      console.error(err);
+      return false;
+    }
+  }, fileName);
+}
+
+/** Все карты всех мешей — одной папкой, если их больше одной. */
+async function saveTextures() {
+  if (!targets.size) return 0;
+  const base = safeName(имяМодели().replace(/\.[^.]+$/, '') || 'model');
+  const все = [...targets].flatMap(([mesh, t]) => картыМеша(mesh, t));
+  return сохранитьФайлы(`${base} — карты`, все.length,
+    async () => Promise.all(все.map(async (к) => ({ name: к.name, blob: await canvasBlob(к.canvas) }))),
+    'busy.maps');
 }
 
 /** Имя файла для карт меша: у составной модели к имени модели — имя меша. */
 function имяКарты(mesh) {
-  const base = имяМодели().replace(/\.[^.]+$/, '') || 'model';
+  const base = safeName(имяМодели().replace(/\.[^.]+$/, '') || 'model');
   if (targets.size <= 1) return base;
   const i = [...targets.keys()].indexOf(mesh);
-  return `${base}_${mesh.name || 'mesh' + i}`;
+  return safeName(`${base}_${mesh.name || 'mesh' + i}`);
 }
 
 /**
@@ -2009,13 +2352,14 @@ function имяКарты(mesh) {
 function saveUVPng() {
   const target = activeTarget();
   if (!state.uvOpen || !target) return;
-  const stem = имяКарты(activeMesh);
-  download(target.canvas, `${stem}.png`);
-  const обе = hasMaterialPaint(target);
-  if (обе) download(target.ormCanvas, `${stem}_material.png`);
-  setStatusHint(t(обе ? 'status.savedBoth' : 'status.savedColor', обе ? 2 : 1));
+  const карты = картыМеша(activeMesh, target);
+  return сохранитьФайлы(имяКарты(activeMesh), карты.length,
+    async () => Promise.all(карты.map(async (к) => ({ name: к.name, blob: await canvasBlob(к.canvas) }))),
+    'busy.maps');
 }
 $('btn-uv-png').addEventListener('click', saveUVPng);
+
+const aboutModal = createAboutModal({ version: APP_VERSION, icon: значокПрограммы });
 
 /* «Вид в PNG» — снимок модели в текущем ракурсе на прозрачном фоне. */
 const viewPngModal = createViewPngModal({
@@ -2027,7 +2371,7 @@ const viewPngModal = createViewPngModal({
     холст.width = w; холст.height = h;
     холст.getContext('2d').putImageData(картинка, 0, 0);
     холст.toBlob((blob) => {
-      const base = имяМодели().replace(/\.[^.]+$/, '') || 'model';
+      const base = safeName(имяМодели().replace(/\.[^.]+$/, '') || 'model');
       if (blob) downloadBlob(blob, `${base}_view.png`);
       setStatusHint(t('status.viewSaved', w, h));
       готово();
@@ -2057,6 +2401,7 @@ window.addEventListener('keydown', (e) => {
   // Выделение — те же сочетания, что в Photoshop.
   if (e.metaKey || e.ctrlKey) {
     const kk = e.key.toLowerCase();
+    if (kk === 's') { e.preventDefault(); saveProject(e.shiftKey); return; }
     if (kk === 'a' && !e.shiftKey) { e.preventDefault(); selectAll(); return; }
     if (kk === 'd' && !e.shiftKey) { e.preventDefault(); clearSelection(); return; }
     if (kk === 'i' && e.shiftKey) { e.preventDefault(); invertSelection(); return; }
@@ -2113,6 +2458,9 @@ const menuBar = new MenuBar($('menubar'), [
     { label: () => t('file.open'), action: () => $('file-input').click() },
     { label: () => t('file.demo'), action: () => afterModelLoaded(viewport.loadDemo()) },
     '-',
+    { label: () => t('file.saveProject'), hint: MOD + 'S', disabled: () => !targets.size, action: () => saveProject(false) },
+    { label: () => t('file.saveProjectAs'), hint: '⇧' + MOD + 'S', disabled: () => !targets.size, action: () => saveProject(true) },
+    '-',
     { label: () => t('file.saveAs'), disabled: () => !targets.size, action: () => saveAsModal.open() },
     { label: () => t('file.savePng'), disabled: () => !targets.size, action: saveTextures },
     '-',
@@ -2158,6 +2506,12 @@ const menuBar = new MenuBar($('menubar'), [
     { label: () => t('view.ortho'), hint: '5', checked: () => viewport.projection === 'ortho',
       action: () => setProjection(viewport.projection === 'ortho' ? 'persp' : 'ortho') },
     { label: () => t('view.fit'), hint: 'Home', action: () => viewport.centerCamera() },
+    '-',
+    { label: () => t('pose.front'), disabled: () => !viewport.model, action: () => applyPose('front') },
+    { label: () => t('pose.up'), disabled: () => !viewport.model, action: () => applyPose('up') },
+    { label: () => t('pose.left'), disabled: () => !viewport.model, action: () => applyPose('left') },
+    { label: () => t('pose.right'), disabled: () => !viewport.model, action: () => applyPose('right') },
+    { label: () => t('pose.reset'), disabled: () => !viewport.model, action: () => applyPose('reset') },
     '-',
     { label: () => t('view.pivot.world'), radio: () => state.pivot === 'world', action: () => setPivot('world') },
     { label: () => t('view.pivot.local'), radio: () => state.pivot === 'local', action: () => setPivot('local') },
@@ -2208,6 +2562,8 @@ const menuBar = new MenuBar($('menubar'), [
 
   { title: () => t('menu.help'), items: [
     { label: () => t('help.keys'), hint: 'F1', action: () => helpModal.open() },
+    '-',
+    { label: () => t('about.menu'), action: () => aboutModal.open() },
   ] },
 ]);
 
@@ -2268,7 +2624,7 @@ syncViewUI();
 // Перевести разметку и принимать все форматы, которые умеем читать.
 applyDOM();
 syncStatusModel();   // applyDOM() прошёл по разметке — вернуть имя модели на место
-$('file-input').accept = acceptAttribute();
+$('file-input').accept = acceptAttribute() + ',.' + PROJECT_EXT;
 
 // Начальный экран — поверх готовой программы: под ним уже стоит демо-модель,
 // поэтому закрыть его можно в любой момент и сразу красить.

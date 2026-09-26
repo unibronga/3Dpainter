@@ -21,6 +21,17 @@ import { uvVerdict, buildUV } from './unwrap.js';
  *
  * @returns {Array<{from:number, to:number, rgb:number[]}>}
  */
+/**
+ * Картинка текстуры и её ориентация. Повторённую или сдвинутую (плитка
+ * кирпича по стене) не берём: одна картинка на всю развёртку — только тогда
+ * тексель карты и тексель покраски совпадают.
+ */
+function картаИз(tex) {
+  if (!tex?.image) return null;
+  const плитка = tex.repeat.x !== 1 || tex.repeat.y !== 1 || tex.offset.x !== 0 || tex.offset.y !== 0;
+  return плитка ? null : { image: tex.image, flipY: tex.flipY };
+}
+
 function sourceGroups(mesh, triCount) {
   const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
   const цвет = (m) => {
@@ -175,6 +186,13 @@ export class Viewport {
     this._buildHelpers();
     this._buildCursor();
     this._buildPivotMarker();
+
+    // Подставка: модель стоит на ней, а не прямо в сцене. Подставка ставит
+    // модель на пол в центр мира и поворачивает её «лицом» — сама модель
+    // при этом не меняется, и в файл уходит в исходных координатах.
+    this.stand = new THREE.Group();
+    this.stand.name = '__stand';
+    this.scene.add(this.stand);
 
     this.model = null;
     this.paintables = [];   // [{mesh, cache}]
@@ -390,7 +408,8 @@ export class Viewport {
     this.clearModel();
 
     this.model = object3D;
-    this.scene.add(object3D);
+    this.stand.add(object3D);
+    this.setPose(null);        // на пол и в центр; поворот — как в файле
 
     const report = { name, meshes: 0, tris: 0, noUV: [], overlapping: [], unwrapped: [] };
 
@@ -418,6 +437,20 @@ export class Viewport {
         return;
       }
       o.userData.paintCache = cache;
+      // Готовая покраска из файла — карта цвета и карта материала. Берётся,
+      // только если развёртка своя, из файла: к построенной заново старая
+      // картинка не подходит, она легла бы кашей.
+      const сКартой = (Array.isArray(o.material) ? o.material : [o.material]).find((m) => m?.map?.image);
+      if (сКартой) {
+        if (verdict.ok) {
+          o.userData.sourceMaps = {
+            color: картаИз(сКартой.map),
+            orm: сКартой.roughnessMap?.image ? картаИз(сКартой.roughnessMap) : null,
+          };
+        } else {
+          report.mapsDropped = (report.mapsDropped || 0) + 1;
+        }
+      }
       // Цвета материалов из файла — пока материал не подменён нашим. Кладём
       // их диапазонами треугольников: дальше из них выпекается первый слой.
       if (object3D.userData.materialsFromFile) {
@@ -444,7 +477,7 @@ export class Viewport {
 
   clearModel() {
     if (!this.model) return;
-    this.scene.remove(this.model);
+    this.stand.remove(this.model);
     this.model.traverse((o) => {
       if (!o.isMesh) return;
       o.geometry.dispose();
@@ -926,6 +959,106 @@ export class Viewport {
       rt.dispose();
     }
     return shrinkPremultiplied(buf, w, h, ss);
+  }
+
+  /** Ракурс камеры — для проекта: открыл и смотришь туда же, куда смотрел. */
+  viewState() {
+    const c = this.camera;
+    return {
+      projection: this.projection,
+      position: c.position.toArray(), up: c.up.toArray(),
+      target: this.controls.target.toArray(),
+      zoom: c.zoom, orthoHeight: this._orthoHeight || null,
+    };
+  }
+
+  setViewState(v) {
+    if (!v) return;
+    if (v.projection && v.projection !== this.projection) this.setProjection(v.projection);
+    const c = this.camera;
+    c.position.fromArray(v.position);
+    if (v.up) c.up.fromArray(v.up);
+    this.controls.target.fromArray(v.target);
+    if (c.isOrthographicCamera && v.orthoHeight) this._updateOrthoFrustum(v.orthoHeight);
+    if (v.zoom) c.zoom = v.zoom;
+    c.updateProjectionMatrix();
+    c.lookAt(this.controls.target);
+    this.controls.update();
+  }
+
+  /* ── Положение модели ────────────────────────────────────────── */
+
+  /**
+   * Поставить модель: повернуть подставку и опустить модель на пол, в центр.
+   *
+   * Где у модели верх, файл сообщает не всегда (у OBJ и STL оси как у того,
+   * кто экспортировал), а где перед — никогда: этого в геометрии нет. Поэтому
+   * поворот задаёт человек, а на пол и в центр модель ставится всегда —
+   * иначе она наполовину уходит под сетку, а «вокруг мира» вращает мимо.
+   *
+   * @param {number[]|null} q кватернион [x, y, z, w]; null — как в файле
+   * @returns {number[]} что стоит теперь
+   */
+  setPose(q) {
+    const s = this.stand;
+    if (q) s.quaternion.fromArray(q).normalize(); else s.quaternion.identity();
+    s.position.set(0, 0, 0);
+    s.updateMatrixWorld(true);
+    if (this.model) {
+      const box = new THREE.Box3().setFromObject(this.model);
+      if (!box.isEmpty()) {
+        const c = box.getCenter(new THREE.Vector3());
+        s.position.set(-c.x, -box.min.y, -c.z);
+        s.updateMatrixWorld(true);
+      }
+    }
+    return this.pose();
+  }
+
+  /** Текущий поворот подставки. */
+  pose() { return this.stand.quaternion.toArray().map((v) => +v.toFixed(6)); }
+
+  /** Довернуть подставку поворотом q (в мировых осях) и поставить заново. */
+  _turnStand(q) {
+    return this.setPose(q.multiply(this.stand.quaternion).toArray());
+  }
+
+  /**
+   * «Это перед»: модель смотрит на камеру — развернуть её так, чтобы этот
+   * бок встал к виду «Спереди». Поворот только вокруг вертикали: верх не
+   * трогаем, даже если камера смотрела сверху.
+   */
+  poseFrontFromCamera() {
+    const d = this.camera.position.clone().sub(this.controls.target);
+    const угол = Math.atan2(d.x, d.z);             // 0 — камера на виде «спереди»
+    return this._turnStand(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -угол));
+  }
+
+  /** «Это верх»: то, что обращено к камере, повернуть вверх. */
+  poseUpFromCamera() {
+    const d = this.camera.position.clone().sub(this.controls.target).normalize();
+    return this._turnStand(new THREE.Quaternion().setFromUnitVectors(d, new THREE.Vector3(0, 1, 0)));
+  }
+
+  /** Повернуть модель вокруг вертикали на deg градусов. */
+  poseTurn(deg) {
+    return this._turnStand(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), (deg * Math.PI) / 180));
+  }
+
+  /**
+   * Сделать что-то с моделью в её исходных координатах — для выдачи в файл.
+   * GLTFExporter пишет собственное положение узла, а OBJExporter берёт
+   * мировую матрицу: без этого поворот подставки уехал бы в OBJ.
+   */
+  async inFileSpace(дело) {
+    const s = this.stand;
+    const q = s.quaternion.clone(), p = s.position.clone();
+    s.quaternion.identity(); s.position.set(0, 0, 0);
+    s.updateMatrixWorld(true);
+    try { return await дело(); } finally {
+      s.quaternion.copy(q); s.position.copy(p);
+      s.updateMatrixWorld(true);
+    }
   }
 
   /** Вернуть вид, с которым модель открылась: три четверти, модель в кадре. */

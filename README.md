@@ -106,6 +106,7 @@ Other commands:
 | UV editor | **U** |
 | Hide all panels | **Tab** |
 | Undo / redo | **Cmd+Z** / **Cmd+Shift+Z** |
+| Save project / save as | **Cmd+S** / **Cmd+Shift+S** |
 | Select all / deselect / invert | **Cmd+A** / **Cmd+D** / **Cmd+Shift+I** |
 
 ## What it can do
@@ -147,6 +148,22 @@ the whole model with the paint baked in, via **File ▸ Save as…**. And
 **View to PNG** renders the model exactly as framed in the viewport, on a
 transparent background, at the size and edge smoothing you pick.
 
+**Project files.** **File ▸ Save project** (Cmd+S) writes the whole session
+to a native `.3dpaint` file — like a PSD: every layer with its colour,
+roughness, metalness and transparency maps, layer settings, model orientation,
+camera, material and brush. It is a plain zip inside. Undo history is not
+stored.
+
+**Round trip.** A model saved with its paint opens with it again — GLB, or
+OBJ together with its `.mtl` and `.png` — and you keep painting where you
+left off. Multi-file saves go into one folder, chosen once.
+
+**Model orientation.** On opening, a model always stands on the floor at
+the world origin. Where its front is, no file says — so you look at the model's
+face and click **This is the front** (or **This is the top** for models lying
+on their side). The orientation is remembered per model; exported files keep
+the original coordinates.
+
 **Settings** (File ▸ Settings…) hold the interface language, the interface
 scale (80–200%: text, icons, panels and dialogs grow together — for large
 screens), the default texture size and whether the start screen appears on
@@ -155,7 +172,8 @@ launch.
 **Long operations** — opening a model, saving, rebuilding textures — run
 under a busy indicator, so it is clear the program is working.
 
-**Languages.** The whole interface speaks English and Russian, and switches
+**Languages.** The whole interface speaks English, Russian, German, Spanish,
+French, Dutch and Ukrainian, and switches
 live — your paint is kept. Dictionaries are one file per language in
 `src/lang/`, flat `'section.name'` keys; adding a language means adding a
 file and one line in `LANGS`, with no other code touched. Code comments
@@ -198,10 +216,6 @@ selection, an interface scale setting for large screens, tooltips on every
 control, a rotation step for the orbit tool, **View to PNG** and saving the
 open UV map on its own. Not yet done:
 
-- Saving a painting session (layers) — right now only the final PNG
-  is baked, so you cannot pick the work up the next day.
-- Reading the texture that comes with a model: colours from an `.mtl` are
-  picked up, a finished image inside a GLB is not yet.
 - Occlusion for shapes, text and the lasso: back-facing polygons are skipped,
   but a chimney does not cast a "shadow" onto the roof behind it.
 - Layer reordering and duplication; symmetry, straight-line strokes, stroke
