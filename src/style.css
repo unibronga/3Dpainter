@@ -1060,8 +1060,7 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
   width: 72px;
   height: 72px;
   border-radius: 16px;
-  /* Тень отделяет тёмный значок от тёмной панели — без неё он сливается. */
-  box-shadow: 0 6px 18px rgba(0, 0, 0, .45);
+  /* Без тени: фон значка — тон панели, дракон стоит прямо на ней. */
 }
 .welcome-titles { min-width: 0; }
 .welcome-title {
@@ -1071,6 +1070,17 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
   letter-spacing: -.015em;
   line-height: 1.1;
 }
+/* Название двумя градиентами, как краски на драконе: «3D» — голубое,
+   «Painter» — жёлто-оранжевое. Цвет текста — фон, обрезанный по буквам. */
+.welcome-name { font-weight: 800; }
+.welcome-name-3d,
+.welcome-name-rest {
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.welcome-name-3d { background-image: linear-gradient(180deg, #00d0ff 0%, #1d8ff0 100%); }
+.welcome-name-rest { background-image: linear-gradient(180deg, #ffc21a 0%, #f59100 100%); }
 /* Версия — тихо, рядом с названием: тонко, мелко, по базовой линии. */
 .welcome-version {
   margin-left: 9px;

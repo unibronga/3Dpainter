@@ -230,13 +230,16 @@ unwrap in Blender.
 
 ## Status and roadmap
 
-Working and usable, version 0.6.0. New in 0.6.0: the **Effects** menu with
-pixel art and anime (cel shading) views, and **AI painting over MCP** — Claude
-or another MCP client can describe, fill and render the open model. Not yet
-done:
+Working and usable, version 0.7.0. New in 0.7.0: AI painting grew from a
+first version into a full toolkit — the AI sees the model as separate
+geometry pieces, paints them whole or points at pixels of a render, previews
+a fill before painting, looks at close-ups and at parts hidden behind others,
+finds leftover patches, undoes its own steps and works from an inventory of
+the reference. Dense models open with a 2048 texture, thin slivers no longer
+keep their old colour, clothing is drawn double-sided, and the app has a new
+icon. Not yet done:
 
-- AI painting, second wave: brush strokes along surface points, undo, brush
-  and material presets.
+- AI painting: brush strokes along surface points, brush and material presets.
 
 - Occlusion for shapes, text and the lasso: back-facing polygons are skipped,
   but a chimney does not cast a "shadow" onto the roof behind it.

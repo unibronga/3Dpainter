@@ -14,6 +14,20 @@ import { listRecent, getRecent, removeRecent, setThumb } from './recent.js';
 import { formatBytes } from './ui.js';
 import { version as ВЕРСИЯ } from '../package.json';
 
+/**
+ * Название — двумя цветами, как в значке: «3D» голубым, остальное
+ * жёлто-оранжевым. Разбираем строку, а не пишем готовое: название живёт в
+ * словаре, и если его когда-нибудь поменяют, заголовок не разойдётся.
+ */
+function имяИзДвух(узел, текст) {
+  const m = /^(3D)(.*)$/.exec(текст);
+  узел.textContent = '';
+  if (!m) { узел.textContent = текст; return; }
+  const a = document.createElement('span'); a.className = 'welcome-name-3d'; a.textContent = m[1];
+  const b = document.createElement('span'); b.className = 'welcome-name-rest'; b.textContent = m[2];
+  узел.append(a, b);
+}
+
 const эл = (тег, класс, текст) => {
   const у = document.createElement(тег);
   if (класс) у.className = класс;
@@ -57,7 +71,8 @@ export function createWelcome(api) {
   // Название и версия — разными элементами: при смене языка переписывается
   // только название, иначе версия пропадала бы с каждым переключением.
   const заголовок = эл('h1', 'welcome-title');
-  const имя = эл('span', 'welcome-name', t('welcome.title'));
+  const имя = эл('span', 'welcome-name');
+  имяИзДвух(имя, t('welcome.title'));
   const версия = эл('span', 'welcome-version', ВЕРСИЯ);
   заголовок.append(имя, версия);
   const подзаголовок = эл('p', 'welcome-sub', t('welcome.subtitle'));
@@ -226,7 +241,7 @@ export function createWelcome(api) {
   }
 
   function перевести() {
-    имя.textContent = t('welcome.title');
+    имяИзДвух(имя, t('welcome.title'));
     подзаголовок.textContent = t('welcome.subtitle');
     for (const к of [картОткрыть, картДемо]) {
       к.имя.textContent = t(к.ключИмени);
