@@ -331,7 +331,10 @@ export function createMaterialModal(api) {
 
   const pick = el('div', 'picker');
   const sv = el('canvas', 'picker-sv');
-  sv.width = 236; sv.height = 190;
+  // Ширина — ровно то, что остаётся в колонке (254) за вычетом полосы тона
+  // (24 с рамкой), промежутка (8) и своей рамки (2). При 236 палитра
+  // вылезала на 16 px, и под ней появлялась горизонтальная прокрутка.
+  sv.width = 220; sv.height = 190;
   const hue = el('canvas', 'picker-hue');
   hue.width = 22; hue.height = 190;
   pick.append(sv, hue);
@@ -700,10 +703,10 @@ export const HELP = [
     ['I', 'help.tools.eyedropper'],
     ['F', 'help.tools.fillFaces'],
     ['G', 'help.tools.fillIsland'],
-    ['M', 'help.tools.mask'],
     ['R', 'help.tools.rect'],
     ['C', 'help.tools.ellipse'],
     ['T', 'help.tools.text'],
+    ['L', 'help.tools.lasso'],
     ['[  ]', 'help.tools.size'],
   ] },
   { key: 'help.view', rows: [
@@ -723,6 +726,8 @@ export const HELP = [
     ['⌘Z', 'help.edit.undo'],
     ['⇧⌘Z', 'help.edit.redo'],
     ['key.histStep', 'help.edit.step'],
+    ['⌘A · ⌘D', 'help.edit.selAll'],
+    ['⇧⌘I', 'help.edit.selInvert'],
   ] },
   { key: 'help.uv', rows: [
     ['key.lmb', 'help.uv.lmb'],
@@ -829,6 +834,154 @@ export function createSaveAsModal(api) {
   return { open: () => { синхронизировать(); m.open(); }, modal: m };
 }
 
+/* ── Окно «Вид в PNG» ──────────────────────────────────────────── */
+
+/** Сколько пикселей снимка держим в памяти за раз (с учётом сглаживания):
+    64 Мп — это 256 МБ буфера, больше вкладка может не пережить. */
+const БЮДЖЕТ_ПИКСЕЛЕЙ = 64e6;
+
+/**
+ * Снимок вида модели: размер и качество.
+ *
+ * PNG сжимает без потерь, поэтому «качество» здесь — сглаживание края:
+ * снимок считается в 2×2 или 3×3 раза крупнее и усредняется. Размер — от
+ * кадра вьюпорта или свой, с замком пропорций.
+ *
+ * @param {{viewSize: () => {w,h}, maxSide: () => number,
+ *          save: (o: {w:number, h:number, ss:number}) => Promise<void>}} api
+ */
+export function createViewPngModal(api) {
+  const m = new Modal('view.title');
+
+  const РАЗМЕРЫ = [
+    { id: '1', k: 1, key: 'view.size1' },
+    { id: '2', k: 2, key: 'view.size2' },
+    { id: '4', k: 4, key: 'view.size4' },
+    { id: 'custom', key: 'view.sizeCustom' },
+  ];
+  const КАЧЕСТВО = [
+    { ss: 1, key: 'view.q1' },
+    { ss: 2, key: 'view.q2' },
+    { ss: 3, key: 'view.q3' },
+  ];
+
+  let размер = '2';
+  let ss = 2;
+  let свой = { w: 1920, h: 1080 };
+  let замок = true;
+  let кадр = { w: 1600, h: 900 };
+
+  /** Строка выбора: точка, подпись и справа — число, которое она даст. */
+  function строка(ключ, наЩелчок) {
+    const r = el('button', 'save-row');
+    const мета = el('span', 'save-meta');
+    r.append(el('span', 'save-dot'), elT('span', 'save-text', ключ), мета);
+    r.addEventListener('click', наЩелчок);
+    return { r, мета };
+  }
+
+  const строкиРазмера = new Map();
+  const списокРазмера = el('div', 'save-list');
+  for (const р of РАЗМЕРЫ) {
+    const x = строка(р.key, () => { размер = р.id; синхронизировать(); });
+    списокРазмера.appendChild(x.r);
+    строкиРазмера.set(р.id, x);
+  }
+
+  // Свой размер: ширина × высота и замок пропорций кадра.
+  const свойБлок = el('div', 'view-custom');
+  const полеW = el('input', 'opt-num view-num'); полеW.type = 'number'; полеW.min = 16;
+  const полеH = el('input', 'opt-num view-num'); полеH.type = 'number'; полеH.min = 16;
+  const галкаЗамка = el('input'); галкаЗамка.type = 'checkbox'; галкаЗамка.checked = true;
+  const подписьЗамка = el('label', 'opt-check');
+  подписьЗамка.append(галкаЗамка, elT('span', null, 'view.lock'));
+  свойБлок.append(полеW, el('span', 'opt-label', '×'), полеH, el('span', 'opt-label', 'px'), подписьЗамка);
+  полеW.addEventListener('input', () => {
+    свой.w = Math.max(16, Math.round(+полеW.value) || 16);
+    if (замок) { свой.h = Math.max(16, Math.round(свой.w * кадр.h / кадр.w)); полеH.value = свой.h; }
+    синхронизировать(false);
+  });
+  полеH.addEventListener('input', () => {
+    свой.h = Math.max(16, Math.round(+полеH.value) || 16);
+    if (замок) { свой.w = Math.max(16, Math.round(свой.h * кадр.w / кадр.h)); полеW.value = свой.w; }
+    синхронизировать(false);
+  });
+  галкаЗамка.addEventListener('change', () => { замок = галкаЗамка.checked; });
+
+  const строкиКачества = new Map();
+  const списокКачества = el('div', 'save-list');
+  for (const к of КАЧЕСТВО) {
+    const x = строка(к.key, () => { ss = к.ss; синхронизировать(); });
+    списокКачества.appendChild(x.r);
+    строкиКачества.set(к.ss, x);
+  }
+
+  m.body.append(
+    elT('div', 'modal-sub', 'view.size'), списокРазмера, свойБлок,
+    elT('div', 'modal-sub', 'view.quality'), списокКачества,
+  );
+
+  /**
+   * Что получится на самом деле: размер урезается до предела видеокарты,
+   * а сглаживание понижается, пока снимок не влезет в память.
+   */
+  function итог() {
+    const max = api.maxSide();
+    let w, h;
+    if (размер === 'custom') { w = свой.w; h = свой.h; }
+    else { const k = РАЗМЕРЫ.find((р) => р.id === размер).k; w = кадр.w * k; h = кадр.h * k; }
+    const уменьшить = Math.min(1, max / Math.max(w, h));
+    w = Math.max(16, Math.floor(w * уменьшить));
+    h = Math.max(16, Math.floor(h * уменьшить));
+    let s = ss;
+    while (s > 1 && (w * s > max || h * s > max || w * h * s * s > БЮДЖЕТ_ПИКСЕЛЕЙ)) s -= 1;
+    return { w, h, ss: s, урезан: уменьшить < 1, понижено: s < ss };
+  }
+
+  const пояснение = el('div', 'foot-hint');
+
+  function синхронизировать(обновитьПоля = true) {
+    строкиРазмера.forEach(({ r, мета }, id) => {
+      r.classList.toggle('on', id === размер);
+      const р = РАЗМЕРЫ.find((x) => x.id === id);
+      мета.textContent = р.k ? `${кадр.w * р.k} × ${кадр.h * р.k}` : '';
+    });
+    свойБлок.classList.toggle('on', размер === 'custom');
+    if (обновитьПоля) { полеW.value = свой.w; полеH.value = свой.h; }
+    строкиКачества.forEach(({ r }, к) => r.classList.toggle('on', к === ss));
+
+    const и = итог();
+    let текст = t('view.result', и.w, и.h);
+    if (и.урезан) текст += ' · ' + t('view.clamped', api.maxSide());
+    if (и.понижено) текст += ' · ' + t('view.lowered', и.ss);
+    пояснение.textContent = текст;
+  }
+
+  const отмена = elT('button', 'btn', 'save.cancel');
+  отмена.addEventListener('click', () => m.close());
+  const готово = elT('button', 'btn accent', 'save.go');
+  готово.addEventListener('click', async () => {
+    готово.disabled = true;
+    const и = итог();
+    m.close();
+    try { await api.save(и); } finally { готово.disabled = false; }
+  });
+  m.foot.append(пояснение, отмена, готово);
+
+  onLangChange(() => синхронизировать(false));
+
+  return {
+    open: () => {
+      // Кадр берём в момент открытия: вьюпорт могли растянуть или сузить.
+      кадр = api.viewSize();
+      if (замок) свой.h = Math.max(16, Math.round(свой.w * кадр.h / кадр.w));
+      синхронизировать();
+      m.open();
+    },
+    modal: m,
+  };
+}
+
 /* ── Окно настроек ─────────────────────────────────────────────── */
 
 /**
@@ -870,6 +1023,19 @@ export function createSettingsModal(api) {
   выборЯзыка.addEventListener('change', () => api.setLang(выборЯзыка.value));
   ряды.push(ряд(m.body, 'settings.language', 'settings.languageHint', выборЯзыка));
 
+  // Масштаб интерфейса: ползунок и число рядом, двойной щелчок — 100%.
+  const масштаб = el('div', 'set-scale');
+  const ползунок = el('input', 'set-range');
+  ползунок.type = 'range';
+  ползунок.min = 80; ползунок.max = 200; ползунок.step = 5;
+  const число = el('span', 'val');
+  масштаб.append(ползунок, число);
+  const показатьМасштаб = (k) => { ползунок.value = Math.round(k * 100); число.textContent = Math.round(k * 100) + '%'; };
+  // Меняем на лету, пока тянут: видно сразу, каким станет интерфейс.
+  ползунок.addEventListener('input', () => показатьМасштаб(api.setUiScale(+ползунок.value / 100)));
+  ползунок.addEventListener('dblclick', () => показатьМасштаб(api.setUiScale(1)));
+  ряды.push(ряд(m.body, 'settings.uiScale', 'settings.uiScaleHint', масштаб));
+
   // Размер текстуры
   const выборТекстуры = el('select', 'set-select');
   for (const размер of [512, 1024, 2048]) {
@@ -898,6 +1064,7 @@ export function createSettingsModal(api) {
   // Надписи переводит applyDOM(); здесь — только значения управления.
   function синхронизировать() {
     выборЯзыка.value = api.getLang();
+    показатьМасштаб(api.getUiScale());
     выборТекстуры.value = api.getTexSize();
     галкаСтарта.checked = api.getStartup();
   }

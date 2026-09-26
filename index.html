@@ -40,6 +40,29 @@
         <span class="val" id="shape-font-val">96 px</span>
       </div>
 
+      <div class="opt-group" data-for="lasso lasso-poly">
+        <span class="opt-label" data-i18n="sel.mode">Выделение</span>
+        <div class="seg" id="sel-modes">
+        <button class="btn on" data-mode="new" data-i18n="sel.new" data-i18n-title="tip.selNew" title="Новое выделение">новое</button>
+        <button class="btn" data-mode="add" data-i18n="sel.add" data-i18n-title="tip.selAdd" title="Добавить к выделению (Shift)">добавить</button>
+        <button class="btn" data-mode="sub" data-i18n="sel.sub" data-i18n-title="tip.selSub" title="Вычесть из выделения (Alt)">вычесть</button>
+        <button class="btn" data-mode="and" data-i18n="sel.and" data-i18n-title="tip.selAnd" title="Пересечь с выделением (Shift+Alt)">пересечь</button>
+        </div>
+        <span class="opt-sep"></span>
+        <button class="btn" id="sel-clear" data-i18n="sel.clear" data-i18n-title="tip.selClear" title="Снять выделение (Cmd/Ctrl+D)" disabled>снять</button>
+      </div>
+
+      <div class="opt-group" data-for="orbit">
+        <label class="opt-check" data-i18n-title="tip.orbitSnap" title="Поворачивать вид только целыми шагами">
+          <input type="checkbox" id="orbit-snap"><span data-i18n="orbit.snap">Шаг поворота</span>
+        </label>
+        <input type="range" id="orbit-step" min="1" max="90" step="1" value="30">
+        <input type="number" id="orbit-step-num" class="opt-num" min="1" max="90" step="1" value="30">
+        <span class="opt-label">°</span>
+        <span class="opt-sep"></span>
+        <button class="btn" id="orbit-reset" data-i18n="orbit.reset" data-i18n-title="tip.orbitReset" title="Вернуть вид, с которым модель открылась">сброс вида</button>
+      </div>
+
       <div class="opt-group" data-for="fill-faces">
         <span class="opt-label" data-i18n="fill.angle">Порог угла</span>
         <input type="range" id="fill-angle" min="1" max="180" step="1" value="40">
@@ -59,57 +82,63 @@
       <svg viewBox="0 0 24 24"><rect x="3" y="3" width="10" height="18" rx="1.5" opacity=".35"/><rect x="15" y="3" width="6" height="18" rx="1.5"/></svg>
     </button>
     <div class="sep"></div>
-    <button class="btn accent" id="btn-save" data-i18n="ui.savePng">Сохранить PNG</button>
+    <button class="btn accent" id="btn-view-png" data-i18n="ui.viewPng" data-i18n-title="tip.viewPng" title="Сохранить вид модели в PNG на прозрачном фоне">Вид в PNG</button>
     <input type="file" id="file-input" accept=".glb,.gltf,.obj,.fbx,.dae,.3mf,.wrl,.vrml,.stl,.ply,.amf" hidden>
   </div>
 
   <!-- ── Колонка инструментов ────────────────────────────────── -->
   <div id="toolbar">
-    <button class="tool" data-tool="select" data-i18n-title="tip.select" title="Выбор объекта (V)">
+    <!-- Порядок — по схеме владельца (26.09): вид, выделение, чем кладём
+         краску, заливки, чем правим. Подсказка — свой тултип (data-tip),
+         а не системный title: в нём название, клавиша и описание. -->
+    <button class="tool" data-tool="select" data-tip="select">
       <svg viewBox="0 0 24 24"><path d="M5 3.2 18.3 11l-5.6 1.4-2.3 5.4z" fill="currentColor" stroke="none"/><path d="M5 3.2 18.3 11l-5.6 1.4-2.3 5.4z"/></svg>
     </button>
-    <button class="tool" data-tool="pan" data-i18n-title="tip.pan" title="Перемещение вида (H)">
+    <button class="tool" data-tool="pan" data-tip="pan">
       <svg viewBox="0 0 24 24"><path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V11"/><path d="M12 11V4.5a1.5 1.5 0 0 1 3 0V11"/><path d="M15 11.5V6.5a1.5 1.5 0 0 1 3 0V14a6 6 0 0 1-6 6h-1.2a5 5 0 0 1-3.8-1.8L5 15.2a1.5 1.5 0 0 1 2.2-2L9 15V8.5a1.5 1.5 0 0 1 3 0"/></svg>
     </button>
-    <button class="tool" data-tool="orbit" data-i18n-title="tip.orbit" title="Вращение вида (O)">
+    <button class="tool" data-tool="orbit" data-tip="orbit">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3.5a8.5 8.5 0 0 1 8.5 8.5"/><path d="M20.5 12A8.5 8.5 0 0 1 12 20.5"/><path d="M19.2 8.6 20.6 12l3.1-1.2" transform="translate(-4.6 -0.6)"/><path d="M4.6 15.1 3.4 12 .3 13.2" transform="translate(4.6 0.6)"/></svg>
     </button>
-    <button class="tool" data-tool="zoom" data-i18n-title="tip.zoom" title="Приближение (Z)">
+    <button class="tool" data-tool="zoom" data-tip="zoom">
       <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/><path d="M7.5 10.5h6M10.5 7.5v6"/></svg>
     </button>
     <div class="tool-sep"></div>
-    <button class="tool active" data-tool="brush" data-i18n-title="tip.brush" title="Кисть (B)">
+    <button class="tool" data-tool="lasso" data-tip="lasso">
+      <svg viewBox="0 0 24 24"><path d="M7.5 16.5C4.5 15 3.5 12.5 4.5 10 6 6.5 11 4.5 15.5 5.5c3.5.8 5 3.2 4 5.8-1.3 3.4-6.3 5-10.3 4.6"/><path d="M9.2 15.9c-1.4.9-1.6 2.5-.4 3.3 1 .6 1.9 0 1.6-1.2"/></svg>
+    </button>
+    <button class="tool" data-tool="lasso-poly" data-tip="lasso-poly">
+      <svg viewBox="0 0 24 24"><path d="M5 17 7 6l7.5 3L19 5l-1 11-7 3z"/><g fill="currentColor" stroke="none"><circle cx="5" cy="17" r="1.6"/><circle cx="7" cy="6" r="1.6"/><circle cx="14.5" cy="9" r="1.6"/><circle cx="19" cy="5" r="1.6"/><circle cx="18" cy="16" r="1.6"/><circle cx="11" cy="19" r="1.6"/></g></svg>
+    </button>
+    <div class="tool-sep"></div>
+    <button class="tool active" data-tool="brush" data-tip="brush">
       <svg viewBox="0 0 24 24"><path d="M9.5 14.5 4 20c1.8 1.2 4.3.9 5.7-.6 1-1 1.2-2.4.8-3.6z"/><path d="M11 13 20.2 3.8a1.6 1.6 0 0 1 2.3 2.3L13.3 15.3"/></svg>
     </button>
-    <button class="tool" data-tool="eraser" data-i18n-title="tip.eraser" title="Ластик (E)">
-      <svg viewBox="0 0 24 24"><path d="M4 16.5 11.5 9l6 6-4 4H7z"/><path d="M11.5 9l4-4a1.7 1.7 0 0 1 2.4 0l3.6 3.6a1.7 1.7 0 0 1 0 2.4l-4 4"/><path d="M3 21h18"/></svg>
-    </button>
-    <button class="tool" data-tool="eyedropper" data-i18n-title="tip.eyedropper" title="Пипетка (I)">
-      <svg viewBox="0 0 24 24"><path d="m4 20 1-4 9-9 3 3-9 9z"/><path d="m14.5 6.5 2-2a2.1 2.1 0 0 1 3 3l-2 2"/></svg>
-    </button>
-    <div class="tool-sep"></div>
-    <button class="tool" data-tool="fill-faces" data-i18n-title="tip.fillFaces" title="Заливка связанных граней (F)">
-      <svg viewBox="0 0 24 24"><path d="M3 12 12 3l9 9-9 9z"/><path d="M3 12h18"/></svg>
-    </button>
-    <button class="tool" data-tool="fill-island" data-i18n-title="tip.fillIsland" title="Заливка UV-острова (G)">
-      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8h8v8H8z"/></svg>
-    </button>
-    <button class="tool" data-tool="fill-layer" data-i18n-title="tip.fillLayer" title="Залить весь слой">
-      <svg viewBox="0 0 24 24"><path d="M5 11 11 5l8 8-6 6z"/><path d="m5 11 8 8"/><path d="M19 17c0 1.1.9 2 2 2"/></svg>
-    </button>
-    <div class="tool-sep"></div>
-    <button class="tool" data-tool="rect" data-i18n-title="tip.rect" title="Прямоугольник (R) · Shift — квадрат">
+    <button class="tool" data-tool="rect" data-tip="rect">
       <svg viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="13" rx="1.5"/></svg>
     </button>
-    <button class="tool" data-tool="ellipse" data-i18n-title="tip.ellipse" title="Круг (C) · Shift — правильный">
+    <button class="tool" data-tool="ellipse" data-tip="ellipse">
       <svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="8.5" ry="6.5"/></svg>
     </button>
-    <button class="tool" data-tool="text" data-i18n-title="tip.text" title="Текст (T)">
+    <button class="tool" data-tool="text" data-tip="text">
       <svg viewBox="0 0 24 24"><path d="M5 6.5V5h14v1.5"/><path d="M12 5v14"/><path d="M8.5 19h7"/></svg>
     </button>
     <div class="tool-sep"></div>
-    <button class="tool" data-tool="mask" data-i18n-title="tip.mask" title="Кисть по маске (M) · Shift — вернуть">
-      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none"/></svg>
+    <button class="tool" data-tool="fill-faces" data-tip="fill-faces">
+      <svg viewBox="0 0 24 24"><path d="M3 12 12 3l9 9-9 9z"/><path d="M3 12h18"/></svg>
+    </button>
+    <button class="tool" data-tool="fill-island" data-tip="fill-island">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8h8v8H8z"/></svg>
+    </button>
+    <button class="tool" data-tool="fill-layer" data-tip="fill-layer">
+      <svg viewBox="0 0 24 24"><path d="M5 11 11 5l8 8-6 6z"/><path d="m5 11 8 8"/><path d="M19 17c0 1.1.9 2 2 2"/></svg>
+    </button>
+    <div class="tool-sep"></div>
+    <button class="tool" data-tool="eraser" data-tip="eraser">
+      <svg viewBox="0 0 24 24"><path d="M4 16.5 11.5 9l6 6-4 4H7z"/><path d="M11.5 9l4-4a1.7 1.7 0 0 1 2.4 0l3.6 3.6a1.7 1.7 0 0 1 0 2.4l-4 4"/><path d="M3 21h18"/></svg>
+    </button>
+    <button class="tool" data-tool="eyedropper" data-tip="eyedropper">
+      <svg viewBox="0 0 24 24"><path d="m4 20 1-4 9-9 3 3-9 9z"/><path d="m14.5 6.5 2-2a2.1 2.1 0 0 1 3 3l-2 2"/></svg>
     </button>
   </div>
 
@@ -119,6 +148,9 @@
       <div id="drop-hint" data-i18n="welcome.drop">Перетащите файл модели сюда</div>
 
       <div id="shape-preview"></div>
+      <!-- Контур лассо, пока его ведут: чёрная линия под белым пунктиром
+           видна на любом фоне. -->
+      <svg id="lasso-preview"><path class="under"/><path class="over"/><rect width="7" height="7"/></svg>
 
       <!-- Управление видом поверх вьюпорта: там же, где смотришь. -->
       <div id="view-overlay">
@@ -234,7 +266,6 @@
         <div class="layer-list" id="layer-list"></div>
         <div class="btn-row">
           <button class="btn" id="btn-layer-add" data-i18n="layers.add" data-i18n-title="layer.new" title="Новый слой">+ слой</button>
-          <button class="btn" id="btn-layer-mask" data-i18n="layers.maskBtn" data-i18n-title="layer.mask" title="Маска слоя">маска</button>
           <button class="btn" id="btn-layer-del" data-i18n="layers.del" data-i18n-title="layer.remove" title="Удалить слой">удалить</button>
         </div>
         <div class="row" style="margin-top:6px">
@@ -274,7 +305,14 @@
         <!-- Список развёрток модели: по карте на меш. Щелчок делает меш
              активным и открывает его развёртку; повторный — закрывает. -->
         <div id="uv-list"></div>
-        <label class="check-row"><input type="checkbox" id="uv-preview-wire" checked> <span data-i18n="uv.previewWire">сетка UV</span></label>
+        <!-- Под списком: сетка слева, выгрузка открытой развёртки справа.
+             Кнопка неактивна, пока ни одна развёртка не открыта. -->
+        <div class="uv-foot">
+          <label class="check-row"><input type="checkbox" id="uv-preview-wire" checked> <span data-i18n="uv.previewWire">сетка UV</span></label>
+          <button class="btn uv-png" id="btn-uv-png" disabled data-i18n-title="tip.uvPng" title="Сохранить открытую развёртку в PNG">
+            <svg viewBox="0 0 24 24"><path d="M12 4v11"/><path d="m7.5 10.5 4.5 4.5 4.5-4.5"/><path d="M5 19h14"/></svg><span>PNG</span>
+          </button>
+        </div>
       </div>
     </section>
 

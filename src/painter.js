@@ -47,7 +47,7 @@ export function isEmptyRect(r) { return r.x1 < r.x0 || r.y1 < r.y0; }
  * @param {function(number, number, number, number, number, number):void} cb
  *        (p, X, Y, Z, x, y)
  */
-function rasterTri(cache, S, t, cb) {
+export function rasterTri(cache, S, t, cb) {
   const { pos, uv, idx } = cache;
   const i0 = idx[t * 3], i1 = idx[t * 3 + 1], i2 = idx[t * 3 + 2];
 
@@ -162,6 +162,9 @@ export class Stroke {
     this.opacity = opts.opacity ?? 1;
 
     this.layer = target.activeLayer;
+    // Выделение лассо: красится только внутри. Берём у цели, а не из
+    // параметров — тогда его слушается любой инструмент, не зная о нём.
+    this.sel = target.selection || null;
     if (this.channel === 'mask') this.layer.ensureMask(target.size);
 
     // Поверхность материала ложится вместе с краской, по тем же текселям.
@@ -481,6 +484,7 @@ export class Stroke {
   apply(rect) {
     const S = this.target.size;
     const acc = this.acc, base = this.base, op = this.opacity;
+    const sel = this.sel;
 
     if (this.channel === 'mask') {
       const dst = this.layer.mask;
@@ -488,7 +492,7 @@ export class Stroke {
       for (let y = rect.y0; y <= rect.y1; y++) {
         for (let x = rect.x0; x <= rect.x1; x++) {
           const p = y * S + x;
-          const a = (acc[p] / 255) * op;
+          const a = (acc[p] / 255) * op * (sel ? sel[p] / 255 : 1);
           if (a <= 0) continue;
           const b = base[p];
           dst[p] = sub ? b * (1 - a) : b + (255 - b) * a;
@@ -509,7 +513,7 @@ export class Stroke {
       for (let y = rect.y0; y <= rect.y1; y++) {
         for (let x = rect.x0; x <= rect.x1; x++) {
           const p = y * S + x;
-          const a = (acc[p] / 255) * op;
+          const a = (acc[p] / 255) * op * (sel ? sel[p] / 255 : 1);
           if (a <= 0) continue;
           const o = p * 4;
           const ba = base[o + 3] / 255;

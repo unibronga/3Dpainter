@@ -44,6 +44,86 @@ function sourceGroups(mesh, triCount) {
 }
 import { buildDemoMesh } from './demo.js';
 
+/**
+ * Вшить показ выделения в материал.
+ *
+ * Край ищется по производной маски: там, где она переходит через середину,
+ * рисуется пунктир шириной около двух пикселей экрана при любом зуме.
+ * Верхний предел ширины держим ниже половины — иначе издали, когда тексель
+ * мельче пикселя, «краем» стала бы вся выделенная площадь.
+ */
+/* ── Снимок вида ───────────────────────────────────────────────── */
+
+const SRGB_TO_LIN = new Float32Array(256);
+for (let i = 0; i < 256; i++) {
+  const c = i / 255;
+  SRGB_TO_LIN[i] = c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+const linToSrgb = (v) => {
+  const c = v <= 0.0031308 ? v * 12.92 : 1.055 * v ** (1 / 2.4) - 0.055;
+  return Math.round(Math.min(1, Math.max(0, c)) * 255);
+};
+
+/**
+ * Уменьшить снимок в ss раз и перевернуть по вертикали (видеокарта отдаёт
+ * строки снизу вверх).
+ *
+ * Край модели на прозрачном фоне приходит «умноженным на покрытие»: цвет
+ * полупрозрачного пикселя уже смешан с чёрной очисткой. Поэтому усредняем в
+ * линейном свете вместе с альфой, а потом делим цвет обратно на покрытие —
+ * иначе по контуру модели легла бы тёмная кайма.
+ */
+function shrinkPremultiplied(buf, w, h, ss) {
+  const W = w / ss, H = h / ss;
+  const out = new ImageData(W, H);
+  const d = out.data;
+  const n = ss * ss;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      let r = 0, g = 0, b = 0, a = 0;
+      for (let j = 0; j < ss; j++) {
+        const row = (h - 1 - (y * ss + j)) * w;
+        for (let i = 0; i < ss; i++) {
+          const o = (row + x * ss + i) * 4;
+          r += SRGB_TO_LIN[buf[o]];
+          g += SRGB_TO_LIN[buf[o + 1]];
+          b += SRGB_TO_LIN[buf[o + 2]];
+          a += buf[o + 3];
+        }
+      }
+      const q = (y * W + x) * 4;
+      if (a <= 0) continue;              // прозрачно — ImageData уже нули
+      const k = 255 / a;                 // обратно из «умноженного на покрытие»
+      d[q] = linToSrgb(r * k);
+      d[q + 1] = linToSrgb(g * k);
+      d[q + 2] = linToSrgb(b * k);
+      d[q + 3] = Math.round(a / n);
+    }
+  }
+  return out;
+}
+
+/** Скорость вращения: полный оборот на 500 пикселей протяжки. */
+export const ORBIT_SPEED = (2 * Math.PI) / 500;
+
+function patchSelection(material, u) {
+  material.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, u);
+    sh.fragmentShader = 'uniform sampler2D selMap;\nuniform float selOn;\nuniform float selTime;\n'
+      + sh.fragmentShader.replace('#include <dithering_fragment>', `#include <dithering_fragment>
+      if (selOn > 0.5) {
+        // Маска лежит строками сверху вниз, как холст покраски, но холст
+        // three.js переворачивает при заливке (flipY), а сырые данные — нет.
+        float s = texture2D(selMap, vec2(vMapUv.x, 1.0 - vMapUv.y)).r;
+        float w = clamp(fwidth(s), 1e-4, 0.24);
+        float edge = 1.0 - smoothstep(w, w * 2.0, abs(s - 0.5));
+        float dash = step(0.5, fract((gl_FragCoord.x + gl_FragCoord.y) / 12.0 - selTime));
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(dash), edge);
+      }`);
+  };
+  material.customProgramCacheKey = () => 'paint-sel';
+}
+
 export class Viewport {
   constructor(container) {
     this.container = container;
@@ -107,6 +187,14 @@ export class Viewport {
 
     this.raycaster = new THREE.Raycaster();
     this._ndc = new THREE.Vector2();
+
+    // Выделение показывается в самом материале меша бегущим пунктиром по
+    // краю. Затемнения снаружи нет: оно заставляло мигать всю модель в миг,
+    // когда выделение появлялось. Время у всех мешей общее — пунктир бежит
+    // в ногу. Пустышка стоит там, где выделения нет.
+    this._selTime = { value: 0 };
+    this._selDummy = new THREE.DataTexture(new Uint8Array([255]), 1, 1, THREE.RedFormat);
+    this._selDummy.needsUpdate = true;
 
     this._observer = new ResizeObserver(() => this.resize());
     this._observer.observe(container);
@@ -690,7 +778,7 @@ export class Viewport {
    * Крутим связку целиком: и камеру, и точку взгляда. Если вращать только
    * камеру, она перестанет смотреть туда же, и кадр поедет.
    */
-  orbitBy(dx, dy, speed = (2 * Math.PI) / 500) {
+  orbitBy(dx, dy, speed = ORBIT_SPEED) {
     const cam = this.camera;
     const P = this._pivotLock || this.pivotPoint();
     const target = this.controls.target;
@@ -760,6 +848,94 @@ export class Viewport {
   /** Вписать модель в кадр, не трогая выбранный ракурс. */
   centerCamera() { this.frameModel(true); }
 
+  /** Размер кадра вьюпорта в пикселях экрана — отправная точка для «Вида в PNG». */
+  viewSize() {
+    const c = this.renderer.domElement;
+    return { w: c.width, h: c.height };
+  }
+
+  /** Самая длинная сторона, которую видеокарта примет целью рендера. */
+  maxRenderSide() {
+    return Math.min(this.renderer.capabilities.maxTextureSize || 4096, 16384);
+  }
+
+  /**
+   * Снять текущий вид модели в картинку W×H на прозрачном фоне.
+   *
+   * Ракурс — ровно тот, что во вьюпорте; сетка пола, кольцо кисти, метка
+   * точки вращения, каркас вершин и пунктир выделения в снимок не попадают.
+   *
+   * 🔴 Холст вьюпорта создан без альфы, поэтому снимаем в отдельную цель
+   * рендера. Цель — sRGB: цвет кодирует видеокарта при записи, так же как
+   * при выводе на экран, и покраска в снимке совпадает с палитрой. В
+   * линейной цели на 8 бит тёмные тона ушли бы в ступеньки.
+   *
+   * @param {number} ss суперсэмплинг: снимаем в ss раз крупнее и усредняем
+   * @returns {ImageData}
+   */
+  renderView(W, H, ss = 1) {
+    const r = this.renderer;
+    const w = W * ss, h = H * ss;
+
+    // Своя камера с пропорциями снимка: если они отличаются от вьюпорта,
+    // кадр шире или выше, но центр и масштаб по высоте те же.
+    const cam = this.camera.clone();
+    if (cam.isPerspectiveCamera) {
+      cam.aspect = W / H;
+    } else {
+      const halfH = (cam.top - cam.bottom) / 2;
+      const cx = (cam.left + cam.right) / 2;
+      cam.left = cx - halfH * (W / H);
+      cam.right = cx + halfH * (W / H);
+    }
+    cam.updateProjectionMatrix();
+
+    const спрятано = [];
+    const спрятать = (o) => { if (o && o.visible) { o.visible = false; спрятано.push(o); } };
+    спрятать(this.grid);
+    спрятать(this.cursor);
+    спрятать(this.pivotMarker);
+    const безВыделения = [];
+    for (const { mesh } of this.paintables) {
+      спрятать(mesh.userData.meshOverlay);
+      const u = mesh.userData.selUniforms;
+      if (u && u.selOn.value) { u.selOn.value = 0; безВыделения.push(u); }
+    }
+    const фон = this.scene.background;
+    const цветОчистки = r.getClearColor(new THREE.Color());
+    const альфаОчистки = r.getClearAlpha();
+
+    const rt = new THREE.WebGLRenderTarget(w, h, {
+      samples: Math.min(4, r.capabilities.maxSamples || 4),
+    });
+    rt.texture.colorSpace = THREE.SRGBColorSpace;
+    const buf = new Uint8Array(w * h * 4);
+    try {
+      this.scene.background = null;
+      r.setRenderTarget(rt);
+      r.setClearColor(0x000000, 0);
+      r.clear();
+      r.render(this.scene, cam);
+      r.readRenderTargetPixels(rt, 0, 0, w, h, buf);
+    } finally {
+      r.setRenderTarget(null);
+      r.setClearColor(цветОчистки, альфаОчистки);
+      this.scene.background = фон;
+      спрятано.forEach((o) => { o.visible = true; });
+      безВыделения.forEach((u) => { u.selOn.value = 1; });
+      rt.dispose();
+    }
+    return shrinkPremultiplied(buf, w, h, ss);
+  }
+
+  /** Вернуть вид, с которым модель открылась: три четверти, модель в кадре. */
+  resetView() {
+    // После вида сверху или снизу «верх» камеры мог остаться по Z.
+    this.perspCamera.up.set(0, 1, 0);
+    this.orthoCamera.up.set(0, 1, 0);
+    this.frameModel(false);
+  }
+
   /**
    * Подменить материал меша на материал покраски.
    * Шероховатость и металл приходят картой: они красятся кистью по текселям,
@@ -778,12 +954,40 @@ export class Viewport {
       metalness: 1,
     });
     mesh.userData.flatMaterial = new THREE.MeshBasicMaterial({ map: texture });
+    const u = mesh.userData.selUniforms = {
+      selMap: { value: this._selDummy }, selOn: { value: 0 }, selTime: this._selTime,
+    };
+    patchSelection(mesh.userData.matMaterial, u);
+    patchSelection(mesh.userData.flatMaterial, u);
     mesh.material = this.displayMode === 'flat'
       ? mesh.userData.flatMaterial
       : mesh.userData.matMaterial;
     if (old && old !== mesh.material) {
       (Array.isArray(old) ? old : [old]).forEach((m) => m && m.dispose && m.dispose());
     }
+  }
+
+  /**
+   * Показать выделение на меше.
+   * @param {Uint8Array|null} sel маска текселей; null — выделения нет
+   */
+  setSelection(mesh, sel, size) {
+    const u = mesh.userData.selUniforms;
+    if (!u) return;
+    const old = u.selMap.value;
+    if (!sel) {
+      u.selOn.value = 0;
+      u.selMap.value = this._selDummy;
+    } else {
+      const tex = new THREE.DataTexture(sel, size, size, THREE.RedFormat);
+      // Мягкий край между текселями: по нему шейдер и находит контур.
+      tex.magFilter = THREE.LinearFilter;
+      tex.minFilter = THREE.LinearFilter;
+      tex.needsUpdate = true;
+      u.selMap.value = tex;
+      u.selOn.value = 1;
+    }
+    if (old && old !== this._selDummy && old !== u.selMap.value) old.dispose();
   }
 
   /**
@@ -915,6 +1119,7 @@ export class Viewport {
   }
 
   _tick() {
+    this._selTime.value = (performance.now() / 400) % 1000;
     this.controls.update();
     this._syncPivotMarker();
     this.renderer.render(this.scene, this.camera);

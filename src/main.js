@@ -4,7 +4,7 @@
  */
 
 import './style.css';
-import { Viewport } from './viewport.js';
+import { Viewport, ORBIT_SPEED } from './viewport.js';
 import { UVEditor } from './uveditor.js';
 import { ViewCube } from './viewcube.js';
 import { MenuBar } from './menubar.js';
@@ -14,13 +14,15 @@ import * as THREE from 'three';
 import { floodFaces } from './mesh-cache.js';
 import * as UI from './ui.js';
 import { createBrushModal, createMaterialModal, createHelpModal,
-         createSaveAsModal, createSettingsModal } from './modals.js';
+         createSaveAsModal, createSettingsModal, createViewPngModal } from './modals.js';
 import { drawMaterialBall } from './matball.js';
 import { t, setLang, getLang, onLangChange, applyDOM, LANGS } from './i18n.js';
 import { acceptAttribute, isSupported, isSidecar, extensionOf, exportGLTF, exportOBJ } from './formats.js';
 import { createWelcome } from './welcome.js';
 import { addRecent, recentId, setThumb } from './recent.js';
 import { withBusy, busyNote } from './busy.js';
+import { rasterPolygon, projectCover, combine, isEmpty, outline } from './selection.js';
+import { initTooltips } from './tooltip.js';
 
 // Сбор ошибок с самого начала загрузки: в консоли браузера вперемешку лежат
 // сообщения от прошлых версий модулей, и по ней не понять, живая ошибка или
@@ -62,6 +64,10 @@ const state = {
   brush: { hardness: 0.7, flow: 1, grain: 0, shape: 'round', spacing: 0.25, scatter: 0 },
   frontOnly: true,
   fillAngle: 40,
+  // Вращение шагами: включено ли и по сколько градусов.
+  orbitSnap: false,
+  orbitStep: 30,
+  selMode: 'new',    // как лассо складывается с выделенным: new | add | sub | and
   activeLayer: 0,
   texSize: 1024,
   showWire: true,
@@ -90,6 +96,15 @@ const uvEditor = new UVEditor($('uv-body'), {
   onFill: uvFill,
   onPick: uvPick,
   onShape: uvShape,
+  lassoMode,
+  onLasso: (pts, mode) => {
+    const target = activeTarget();
+    if (!target) return;
+    const S = target.size;
+    const fresh = new Map([[target, rasterPolygon(pts.map((p) => ({ x: p.tx, y: p.ty })), S, S)]]);
+    applySelection(fresh, mode);
+  },
+  onLassoClick: (mode) => { if (mode === 'new') clearSelection(); },
 });
 
 /* ── Настройки интерфейса переживают перезагрузку ──────────────── */
@@ -101,6 +116,32 @@ function loadPrefs() {
 function savePrefs(patch) {
   try { localStorage.setItem(PREFS, JSON.stringify({ ...loadPrefs(), ...patch })); } catch { /* приватный режим */ }
 }
+
+/* ── Масштаб интерфейса ────────────────────────────────────────── */
+
+/** Пределы ползунка: мельче 80% текст не читается, крупнее 200% панели
+    съедают вьюпорт даже на большом экране. */
+const UI_MIN = 0.8, UI_MAX = 2;
+
+function uiScale() {
+  const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ui'));
+  return v > 0 ? v : 1;
+}
+
+/** Применить масштаб. Панели меняют ширину — холсты подстраиваются сами
+    через ResizeObserver, покраска не теряется. */
+function setUiScale(v, save = true) {
+  const k = Math.min(UI_MAX, Math.max(UI_MIN, Math.round(v * 20) / 20));
+  document.documentElement.style.setProperty('--ui', String(k));
+  if (save) {
+    savePrefs({ uiScale: k });
+    // Превью развёртки рисуется под плотность — перерисовать по новой.
+    requestAnimationFrame(() => refreshUV());
+  }
+  return k;
+}
+// Сразу, до первой отрисовки: иначе программа мелькнула бы мелкой.
+setUiScale(loadPrefs().uiScale || 1, false);
 
 /* ── Слои: структура общая для всех мешей модели ───────────────── */
 
@@ -126,6 +167,8 @@ function buildTargets(paintables) {
 
   state.activeLayer = 0;
   activeMesh = paintables.length ? paintables[0].mesh : null;
+  // Выделение жило у прежних целей и ушло вместе с ними.
+  uvEditor.setSelectionOutline(null);
   history.clear();
   state.painted = false;
   return downgraded ? size : null;
@@ -238,12 +281,10 @@ let lastTexel = null;
 let pumpId = 0;
 let perfMs = 0;
 
-function strokeOpts(shift) {
-  const mask = state.tool === 'mask';
+function strokeOpts() {
   return {
-    channel: mask ? 'mask' : 'rgba',
-    mode: mask ? (shift ? 'mask-add' : 'mask-sub')
-        : state.tool === 'eraser' ? 'erase' : 'paint',
+    channel: 'rgba',
+    mode: state.tool === 'eraser' ? 'erase' : 'paint',
     color: state.color,
     // 🔴 Два разных понятия, и путать их нельзя:
     //   opacity — укрывистость мазка. Сила мазка живёт в кисти («Нажим»),
@@ -269,7 +310,7 @@ function strokeOpts(shift) {
  * чем выбранный язык, и переводится при каждой отрисовке списка.
  */
 function toolLabel() {
-  return { brush: 'act.brush', eraser: 'act.eraser', mask: 'act.mask',
+  return { brush: 'act.brush', eraser: 'act.eraser',
            'fill-faces': 'act.fillFaces', 'fill-island': 'act.fillIsland',
            'fill-layer': 'act.fillLayer',
            rect: 'act.rect', ellipse: 'act.ellipse', text: 'act.text' }[state.tool] || 'act.edit';
@@ -303,7 +344,7 @@ function startPump() { if (!pumpId) pumpId = requestAnimationFrame(pump); }
 
 function beginStroke(target, cache, mesh, shift) {
   target.activeIndex = state.activeLayer;
-  stroke = new Stroke(target, cache, strokeOpts(shift));
+  stroke = new Stroke(target, cache, strokeOpts());
   strokeMesh = mesh;
   lastScreen = null;
   lastTexel = null;
@@ -428,7 +469,7 @@ function uvShape(a, b, shift) {
     : { x0: Math.min(ax, bx) - пад, y0: Math.min(ay, by) - пад,
         x1: Math.max(ax, bx) + пад, y1: Math.max(ay, by) + пад };
 
-  const s = new Stroke(target, cache, strokeOpts(false));
+  const s = new Stroke(target, cache, strokeOpts());
   s.stampStencil2D(fn, box, state.brush);
 
   const entry = s.end(toolLabel());
@@ -460,7 +501,7 @@ function uvPick(tx, ty) {
 
 function runFill(target, cache, faceIndex) {
   target.activeIndex = state.activeLayer;
-  const s = new Stroke(target, cache, strokeOpts(false));
+  const s = new Stroke(target, cache, strokeOpts());
 
   if (state.tool === 'fill-layer') {
     s.fillAll();
@@ -562,7 +603,7 @@ function applyShape3D(mesh, a, b) {
   const st = shapeStencil(state.tool, a, b);
   const fn = st.fn || st;
 
-  const s = new Stroke(target, cache, strokeOpts(false));
+  const s = new Stroke(target, cache, strokeOpts());
   s.stampProjected(mvp.elements, canvas.clientWidth, canvas.clientHeight,
                    fn, viewDir, state.brush, state.frontOnly);
 
@@ -586,6 +627,290 @@ function showPreview(kind, a, b) {
 }
 function hidePreview() { preview.className = ''; }
 
+/* ── Вращение шагами ───────────────────────────────────────────── */
+
+/**
+ * Вращать только целыми шагами по state.orbitStep градусов.
+ *
+ * Протяжка копится в градусах отдельно по горизонтали и вертикали; как
+ * только набралось на шаг — вид доворачивается ровно на шаг, остаток ждёт
+ * следующего. Шаг считается от положения на начало жеста: «повернуть на 30°»
+ * значит на 30° от того, как стояло.
+ */
+function orbitSnapped(dx, dy) {
+  const градусНаПиксель = (ORBIT_SPEED * 180) / Math.PI;
+  const шаг = state.orbitStep;
+  navDrag.yaw += dx * градусНаПиксель;
+  navDrag.pitch += dy * градусНаПиксель;
+  const nYaw = Math.trunc(navDrag.yaw / шаг);
+  const nPitch = Math.trunc(navDrag.pitch / шаг);
+  if (!nYaw && !nPitch) return;
+  navDrag.yaw -= nYaw * шаг;
+  navDrag.pitch -= nPitch * шаг;
+  // Обратно в пиксели — так поворот идёт тем же путём, что и обычный, с
+  // той же точкой вращения и защитой от переваливания через полюс.
+  viewport.orbitBy((nYaw * шаг) / градусНаПиксель, (nPitch * шаг) / градусНаПиксель);
+  navDrag.turnedYaw += nYaw * шаг;
+  navDrag.turnedPitch += nPitch * шаг;
+  setStatusHint(t('status.orbitTurned', navDrag.turnedYaw, navDrag.turnedPitch));
+}
+
+function syncOrbitUI() {
+  $('orbit-snap').checked = state.orbitSnap;
+  $('orbit-step').value = state.orbitStep;
+  $('orbit-step-num').value = state.orbitStep;
+  $('orbit-snap').closest('.opt-group').classList.toggle('snap-off', !state.orbitSnap);
+}
+function setOrbitStep(v) {
+  const k = Math.round(+v);
+  if (!(k >= 1)) return;                       // пустое поле, пока печатают
+  state.orbitStep = Math.min(90, k);
+  savePrefs({ orbitStep: state.orbitStep });
+  syncOrbitUI();
+}
+$('orbit-snap').addEventListener('change', (e) => {
+  state.orbitSnap = e.target.checked;
+  savePrefs({ orbitSnap: state.orbitSnap });
+  syncOrbitUI();
+});
+$('orbit-step').addEventListener('input', (e) => setOrbitStep(e.target.value));
+$('orbit-step-num').addEventListener('change', (e) => setOrbitStep(e.target.value));
+$('orbit-step-num').addEventListener('input', (e) => {
+  // Число меняет шаг сразу, но недописанное поле не трогаем.
+  const v = +e.target.value;
+  if (v >= 1 && v <= 90) { state.orbitStep = Math.round(v); $('orbit-step').value = state.orbitStep; savePrefs({ orbitStep: state.orbitStep }); }
+});
+$('orbit-reset').addEventListener('click', () => { viewport.resetView(); syncViewUI(); });
+{
+  const p = loadPrefs();
+  if (typeof p.orbitSnap === 'boolean') state.orbitSnap = p.orbitSnap;
+  if (p.orbitStep >= 1 && p.orbitStep <= 90) state.orbitStep = p.orbitStep;
+  syncOrbitUI();
+}
+
+/* ── Выделение ─────────────────────────────────────────────────── */
+
+/**
+ * Режим сложения для нового контура. Модификаторы на первом нажатии — как в
+ * Photoshop: Shift добавляет, Alt вычитает, оба вместе — пересечение. Без них
+ * действует режим из полосы параметров.
+ */
+function lassoMode(e) {
+  if (e.shiftKey && e.altKey) return 'and';
+  if (e.shiftKey) return 'add';
+  if (e.altKey) return 'sub';
+  return state.selMode;
+}
+
+function hasSelection() {
+  for (const tg of targets.values()) if (tg.selection) return true;
+  return false;
+}
+
+/**
+ * Сложить новый контур с выделенным.
+ *
+ * Выделение одно на всю модель, но хранится по мешу. Пока оно есть, маска
+ * есть у КАЖДОГО меша, пусть и пустая: меш без маски красился бы целиком, а
+ * лассо, обведённое по другому объекту, его не задевало.
+ *
+ * @param {Map<PaintTarget, Uint8Array|null>} fresh новый контур по мешам;
+ *        меша нет в списке — контур его не задел
+ */
+function applySelection(fresh, mode) {
+  const had = hasSelection();
+  let any = false;
+  targets.forEach((tg) => {
+    tg.selection = combine(had ? tg.selection : null, fresh.get(tg) || null, mode);
+    if (tg.selection && isEmpty(tg.selection)) tg.selection = null;
+    if (tg.selection) any = true;
+  });
+  if (any) {
+    targets.forEach((tg) => { if (!tg.selection) tg.selection = new Uint8Array(tg.size * tg.size); });
+  }
+  selectionChanged();
+}
+
+function clearSelection() {
+  if (!hasSelection()) return;
+  targets.forEach((tg) => { tg.selection = null; });
+  selectionChanged();
+}
+
+function selectAll() {
+  targets.forEach((tg) => { tg.selection = new Uint8Array(tg.size * tg.size).fill(255); });
+  selectionChanged();
+}
+
+function invertSelection() {
+  if (!hasSelection()) return;
+  targets.forEach((tg) => {
+    const s = tg.selection;
+    for (let i = 0; i < s.length; i++) s[i] = 255 - s[i];
+  });
+  let any = false;
+  targets.forEach((tg) => { if (!isEmpty(tg.selection)) any = true; });
+  if (!any) targets.forEach((tg) => { tg.selection = null; });
+  selectionChanged();
+}
+
+/** Показать выделение везде, где оно видно: на модели, в развёртке, в строке. */
+function selectionChanged() {
+  for (const [mesh, tg] of targets) viewport.setSelection(mesh, tg.selection, tg.size);
+  syncSelectionOutline();
+  $('sel-clear').disabled = !hasSelection();
+  setStatusHint(t(hasSelection() ? 'status.selOn' : 'status.selOff'));
+}
+
+function syncSelectionOutline() {
+  const tg = activeTarget();
+  uvEditor.setSelectionOutline(tg && tg.selection ? outline(tg.selection, tg.size) : null);
+}
+
+/**
+ * Лассо на модели: контур лежит на экране, и каждый тексель каждого меша
+ * спрашивает, куда он проецируется. Тот же путь, что у фигур.
+ */
+function selectFromScreen(pts, mode) {
+  const canvas = viewport.renderer.domElement;
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  const дело = () => {
+    const cover = rasterPolygon(pts, W, H);
+    const cam = viewport.camera;
+    cam.updateMatrixWorld();
+    const fresh = new Map();
+    for (const { mesh } of viewport.paintables) {
+      const tg = targets.get(mesh);
+      const cache = mesh.userData.paintCache;
+      if (!tg || !cache) continue;
+      mesh.updateMatrixWorld();
+      const mvp = new THREE.Matrix4()
+        .multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)
+        .multiply(mesh.matrixWorld);
+      const inv = new THREE.Matrix3().setFromMatrix4(mesh.matrixWorld).invert();
+      const viewDir = new THREE.Vector3(0, 0, -1)
+        .applyQuaternion(cam.quaternion).applyMatrix3(inv).normalize();
+      const sel = projectCover(cache, tg.size, mvp.elements, W, H, cover, viewDir, state.frontOnly);
+      if (sel) fresh.set(tg, sel);
+    }
+    applySelection(fresh, mode);
+  };
+
+  // Работа — обход текселей всех мешей. На одной текстуре 1024 это около
+  // 60 мс: индикатор на такой срок только мигает тёмной пеленой на весь
+  // экран (замер: 58 мс работы против 260 мс пелены с ожиданием кадра и
+  // угасанием). Показываем его, лишь когда текселей вдвое больше и счёт
+  // пойдёт на сотни миллисекунд.
+  let текселей = 0;
+  targets.forEach((tg) => { текселей += tg.size * tg.size; });
+  if (текселей <= 2 * 1024 * 1024) { дело(); return; }
+  return withBusy('busy.select', дело);
+}
+
+/* Контур лассо поверх вьюпорта — SVG: линия не должна зависеть от сцены. */
+const lassoSvg = $('lasso-preview');
+let lasso = null;   // { pts, mode, poly, hover, at, far, sx, sy } — в пикселях холста
+
+function drawLassoPreview() {
+  if (!lasso) { lassoSvg.classList.remove('on'); return; }
+  const pts = lasso.poly && lasso.hover ? [...lasso.pts, lasso.hover] : lasso.pts;
+  const d = pts.map((p, i) => (i ? 'L' : 'M') + p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' ')
+          + (lasso.poly ? '' : ' Z');
+  lassoSvg.querySelectorAll('path').forEach((pth) => pth.setAttribute('d', d));
+  const f = lasso.pts[0];
+  const start = lassoSvg.querySelector('rect');
+  start.style.display = lasso.poly ? '' : 'none';
+  start.setAttribute('x', f.x - 3.5); start.setAttribute('y', f.y - 3.5);
+  lassoSvg.classList.add('on');
+}
+
+function closeLasso() {
+  const l = lasso;
+  lasso = null;
+  drawLassoPreview();
+  if (l && l.pts.length >= 3) selectFromScreen(l.pts, l.mode);
+}
+
+function cancelLasso() {
+  const had = !!lasso || uvEditor.cancelLasso();
+  lasso = null;
+  drawLassoPreview();
+  return had;
+}
+
+/** Точка лассо в координатах холста вьюпорта. */
+function lassoPoint(e) {
+  const r = viewport.renderer.domElement.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
+function lassoDown(e) {
+  const p = lassoPoint(e);
+  if (state.tool === 'lasso') {
+    lasso = { pts: [p], mode: lassoMode(e), poly: false, far: false, sx: p.x, sy: p.y };
+  } else if (!lasso) {
+    lasso = { pts: [p], mode: lassoMode(e), poly: true, hover: p, at: performance.now() };
+  } else {
+    // Щелчок по началу или двойной щелчок замыкают контур.
+    const now = performance.now();
+    const f = lasso.pts[0], last = lasso.pts[lasso.pts.length - 1];
+    const nearFirst = lasso.pts.length >= 3 && Math.hypot(p.x - f.x, p.y - f.y) <= 8;
+    const dbl = now - lasso.at < 350 && Math.hypot(p.x - last.x, p.y - last.y) <= 5;
+    if (nearFirst || dbl) { closeLasso(); return; }
+    lasso.pts.push(p);
+    lasso.at = now;
+  }
+  drawLassoPreview();
+}
+
+function lassoMove(e) {
+  const p = lassoPoint(e);
+  if (lasso.poly) {
+    lasso.hover = p;
+  } else {
+    const last = lasso.pts[lasso.pts.length - 1];
+    if (Math.hypot(p.x - last.x, p.y - last.y) >= 2) lasso.pts.push(p);
+    if (Math.hypot(p.x - lasso.sx, p.y - lasso.sy) > 3) lasso.far = true;
+  }
+  drawLassoPreview();
+}
+
+function lassoUp() {
+  if (!lasso || lasso.poly) return;
+  // Щелчок без протяжки снимает выделение, как в Photoshop.
+  if (!lasso.far || lasso.pts.length < 3) {
+    const mode = lasso.mode;
+    lasso = null;
+    drawLassoPreview();
+    if (mode === 'new') clearSelection();
+    return;
+  }
+  closeLasso();
+}
+
+/** Enter, Esc и Backspace для лассо по точкам — в той панели, где его ведут. */
+function lassoKey(key) {
+  if (uvEditor.lassoKey(key)) return true;
+  if (!lasso || !lasso.poly) return false;
+  if (key === 'Escape') return cancelLasso();
+  if (key === 'Enter') { closeLasso(); return true; }
+  if (key === 'Backspace') {
+    lasso.pts.pop();
+    if (!lasso.pts.length) lasso = null;
+    drawLassoPreview();
+    return true;
+  }
+  return false;
+}
+
+function syncSelModeUI() {
+  document.querySelectorAll('#sel-modes .btn').forEach((b) => b.classList.toggle('on', b.dataset.mode === state.selMode));
+}
+document.querySelectorAll('#sel-modes .btn').forEach((b) => {
+  b.addEventListener('click', () => { state.selMode = b.dataset.mode; syncSelModeUI(); });
+});
+$('sel-clear').addEventListener('click', clearSelection);
+
 /* ── Ввод во вьюпорте ──────────────────────────────────────────── */
 
 const el = $('viewport');
@@ -605,13 +930,21 @@ el.addEventListener('pointerdown', (e) => {
   if (VIEW_TOOLS.has(state.tool)) {
     e.preventDefault();
     try { el.setPointerCapture(e.pointerId); } catch { /* не беда */ }
-    navDrag = { kind: state.tool, x: e.clientX, y: e.clientY };
+    navDrag = { kind: state.tool, x: e.clientX, y: e.clientY, yaw: 0, pitch: 0, turnedYaw: 0, turnedPitch: 0 };
     if (state.tool === 'orbit') viewport.beginNav();
     return;
   }
   // Оверлей вида лежит внутри вьюпорта, а перехват у нас в фазе погружения:
   // без этой проверки щелчок по кнопке вида заодно ставил бы мазок.
   if (inside($('view-overlay'), e.target)) return;
+  // Лассо ведут и по пустому кадру: контур часто начинают мимо модели.
+  if (LASSO_TOOLS.has(state.tool)) {
+    e.stopPropagation();
+    e.preventDefault();
+    try { viewport.renderer.domElement.setPointerCapture(e.pointerId); } catch { /* не беда */ }
+    lassoDown(e);
+    return;
+  }
   const hit = viewport.pick(e.clientX, e.clientY);
   if (!hit) return;                // мимо модели — красить нечего
 
@@ -670,6 +1003,7 @@ window.addEventListener('pointermove', (e) => {
   const over = e.clientX >= r.left && e.clientX <= r.right
             && e.clientY >= r.top && e.clientY <= r.bottom
             && !inside($('view-overlay'), e.target);
+  if (lasso && (over || !lasso.poly)) { lassoMove(e); return; }
   if (!over && !stroke) { viewport.hideCursor(); return; }
 
   if (shapeDrag) {
@@ -690,7 +1024,8 @@ window.addEventListener('pointermove', (e) => {
     const dx = e.clientX - navDrag.x, dy = e.clientY - navDrag.y;
     navDrag.x = e.clientX; navDrag.y = e.clientY;
     if (navDrag.kind === 'orbit') {
-      viewport.orbitBy(dx, dy);
+      if (state.orbitSnap) orbitSnapped(dx, dy);
+      else viewport.orbitBy(dx, dy);
     } else {
       // Вверх — ближе, вниз — дальше, как в любом «зуме протяжкой».
       viewport.zoomBy(Math.pow(1.01, -dy));
@@ -705,7 +1040,7 @@ window.addEventListener('pointermove', (e) => {
   }
   // Кольцо кисти показывает, куда ляжет краска. У выбора объекта краски
   // нет, и кольцо только врало бы про размер мазка.
-  const безКисти = state.tool === 'select' || VIEW_TOOLS.has(state.tool);
+  const безКисти = state.tool === 'select' || VIEW_TOOLS.has(state.tool) || LASSO_TOOLS.has(state.tool);
   if (over && !безКисти) {
     viewport.showCursor(viewport.pick(e.clientX, e.clientY), brushRadiusWorld());
   } else if (безКисти) {
@@ -714,6 +1049,7 @@ window.addEventListener('pointermove', (e) => {
 });
 
 window.addEventListener('pointerup', () => {
+  if (lasso) lassoUp();
   if (navDrag) { navDrag = null; viewport.endNav(); }
   if (shapeDrag) {
     hidePreview();
@@ -746,17 +1082,33 @@ document.querySelectorAll('.section > h3').forEach((h) => {
  * второй кнопки нет (перо, трекпад).
  */
 const VIEW_TOOLS = new Set(['pan', 'orbit', 'zoom']);
+/** Лассо: вольное и по точкам. Выделяют, а не красят. */
+const LASSO_TOOLS = new Set(['lasso', 'lasso-poly']);
 
 function setTool(tool) {
+  // Незамкнутый контур другому инструменту ни к чему.
+  if (tool !== state.tool) cancelLasso();
   state.tool = tool;
   document.querySelectorAll('.tool').forEach((b) => b.classList.toggle('active', b.dataset.tool === tool));
   // Сдвиг уже умеет OrbitControls — тем же переключателем, что и пробел.
   // Вращение и приближение ведём сами: у них своя точка вращения.
   if (!spaceDown) viewport.setLeftButtonPan(tool === 'pan');
-  el.style.cursor = tool === 'orbit' ? 'grab' : tool === 'zoom' ? 'zoom-in' : '';
+  el.style.cursor = tool === 'orbit' ? 'grab' : tool === 'zoom' ? 'zoom-in'
+                  : LASSO_TOOLS.has(tool) ? 'crosshair' : '';
+  uvEditor.canvas.style.cursor = LASSO_TOOLS.has(tool) ? 'crosshair' : '';
   syncToolOptions();
   syncLayers();
 }
+/** Клавиши инструментов — для тултипа. Лассо по точкам — второе нажатие L. */
+const TOOL_HINTS = { select: 'V', pan: 'H', orbit: 'O', zoom: 'Z', lasso: 'L', 'lasso-poly': 'L L',
+  brush: 'B', rect: 'R', ellipse: 'C', text: 'T', 'fill-faces': 'F', 'fill-island': 'G',
+  eraser: 'E', eyedropper: 'I' };
+
+initTooltips((id) => {
+  const ключ = id.replace(/-(\w)/g, (_, c) => c.toUpperCase());   // fill-faces → fillFaces
+  return { title: t('tool.' + ключ), key: TOOL_HINTS[id], text: t('tip.' + ключ) };
+});
+
 document.querySelectorAll('.tool').forEach((b) => {
   b.addEventListener('click', () => setTool(b.dataset.tool));
 });
@@ -888,7 +1240,7 @@ UI.renderSwatches($('quick-mats'), (hex) => setMaterial({
 
 function syncLayers() {
   UI.renderLayers($('layer-list'), activeTarget(),
-    { activeIndex: state.activeLayer, maskEditing: state.tool === 'mask' },
+    { activeIndex: state.activeLayer },
     {
       onSelect: setActiveLayer,
       onToggleVisible: (i) => {
@@ -897,11 +1249,6 @@ function syncLayers() {
         syncLayers(); refreshUV();
       },
       onRename: (i, name) => { eachTarget((t) => { t.layers[i].name = name; t.layers[i].auto = null; }); syncLayers(); },
-      onToggleMaskEdit: (i) => {
-        setActiveLayer(i);
-        eachTarget((t) => t.layers[i].ensureMask(t.size));
-        setTool(state.tool === 'mask' ? 'brush' : 'mask');
-      },
     });
 
   const L = refLayers();
@@ -916,12 +1263,6 @@ function syncLayers() {
 
 $('btn-layer-add').addEventListener('click', addLayer);
 $('btn-layer-del').addEventListener('click', removeLayer);
-$('btn-layer-mask').addEventListener('click', () => {
-  if (!targets.size) return;
-  eachTarget((t) => t.layers[state.activeLayer].ensureMask(t.size));
-  setTool('mask');
-  syncLayers();
-});
 $('layer-opacity').addEventListener('input', (e) => {
   const v = +e.target.value / 100;
   $('layer-opacity-val').textContent = e.target.value + '%';
@@ -1067,6 +1408,9 @@ function syncUVList() {
     row.classList.toggle('on', mesh === activeMesh);
     row.classList.toggle('open', mesh === activeMesh && state.uvOpen);
   }
+  // Выгружается только выделенная (открытая) развёртка — нет её, нечего и
+  // выгружать.
+  $('btn-uv-png').disabled = !(state.uvOpen && activeMesh && targets.get(activeMesh));
   drawUVRow(activeMesh);
 }
 
@@ -1223,7 +1567,9 @@ $('side-splitter').addEventListener('pointerdown', (e) => {
   sp.classList.add('dragging');
 
   const onMove = (ev) => {
-    const w = Math.max(190, Math.min(560, window.innerWidth - ev.clientX));
+    // Указатель меряется в пикселях экрана, а ширина панели живёт под
+    // масштабом интерфейса — переводим.
+    const w = Math.max(190, Math.min(560, (window.innerWidth - ev.clientX) / uiScale()));
     document.documentElement.style.setProperty('--side-w', w + 'px');
     viewport.resize();
     if (state.uvOpen) uvEditor.resize();
@@ -1273,6 +1619,8 @@ const settingsModal = createSettingsModal({
   setLang,
   getTexSize: () => state.texSize,
   setTexSize: (v) => setTexSize(v),
+  getUiScale: uiScale,
+  setUiScale: (v) => setUiScale(v),
   getStartup: () => loadPrefs().showWelcome !== false,
   setStartup: (v) => savePrefs({ showWelcome: v }),
 });
@@ -1302,6 +1650,7 @@ $('mat-chip').addEventListener('click', () => materialModal.open());
 function setActiveMesh(mesh) {
   if (activeMesh === mesh) return;
   activeMesh = mesh;
+  syncSelectionOutline();
   syncLayers();
   refreshUV();
   syncUVList();
@@ -1644,11 +1993,55 @@ async function saveTextures() {
   setStatusHint(t(files > targets.size ? 'status.savedBoth' : 'status.savedColor', files));
   });
 }
-$('btn-save').addEventListener('click', () => { saveTextures(); });
+
+/** Имя файла для карт меша: у составной модели к имени модели — имя меша. */
+function имяКарты(mesh) {
+  const base = имяМодели().replace(/\.[^.]+$/, '') || 'model';
+  if (targets.size <= 1) return base;
+  const i = [...targets.keys()].indexOf(mesh);
+  return `${base}_${mesh.name || 'mesh' + i}`;
+}
+
+/**
+ * Сохранить выделенную развёртку: её цветовую карту, а если по ней красили
+ * поверхностью — и карту материала рядом, как и при полной выгрузке.
+ */
+function saveUVPng() {
+  const target = activeTarget();
+  if (!state.uvOpen || !target) return;
+  const stem = имяКарты(activeMesh);
+  download(target.canvas, `${stem}.png`);
+  const обе = hasMaterialPaint(target);
+  if (обе) download(target.ormCanvas, `${stem}_material.png`);
+  setStatusHint(t(обе ? 'status.savedBoth' : 'status.savedColor', обе ? 2 : 1));
+}
+$('btn-uv-png').addEventListener('click', saveUVPng);
+
+/* «Вид в PNG» — снимок модели в текущем ракурсе на прозрачном фоне. */
+const viewPngModal = createViewPngModal({
+  viewSize: () => viewport.viewSize(),
+  maxSide: () => viewport.maxRenderSide(),
+  save: ({ w, h, ss }) => withBusy('busy.view', () => new Promise((готово) => {
+    const картинка = viewport.renderView(w, h, ss);
+    const холст = document.createElement('canvas');
+    холст.width = w; холст.height = h;
+    холст.getContext('2d').putImageData(картинка, 0, 0);
+    холст.toBlob((blob) => {
+      const base = имяМодели().replace(/\.[^.]+$/, '') || 'model';
+      if (blob) downloadBlob(blob, `${base}_view.png`);
+      setStatusHint(t('status.viewSaved', w, h));
+      готово();
+    }, 'image/png');
+  }), w, h),
+});
+$('btn-view-png').addEventListener('click', () => {
+  if (!targets.size) { setStatusHint(t('status.noModel')); return; }
+  viewPngModal.open();
+});
 
 /* ── Клавиатура ────────────────────────────────────────────────── */
 
-const TOOL_KEYS = { v: 'select', h: 'pan', o: 'orbit', z: 'zoom', b: 'brush', e: 'eraser', i: 'eyedropper', f: 'fill-faces', g: 'fill-island', m: 'mask', r: 'rect', c: 'ellipse', t: 'text' };
+const TOOL_KEYS = { l: 'lasso', v: 'select', h: 'pan', o: 'orbit', z: 'zoom', b: 'brush', e: 'eraser', i: 'eyedropper', f: 'fill-faces', g: 'fill-island', r: 'rect', c: 'ellipse', t: 'text' };
 const VIEW_KEYS = { 1: 'front', 2: 'back', 3: 'left', 4: 'right', 6: 'top', 7: 'bottom', 0: 'user' };
 
 window.addEventListener('keydown', (e) => {
@@ -1660,6 +2053,15 @@ window.addEventListener('keydown', (e) => {
     if (!spaceDown) { spaceDown = true; uvEditor.spaceDown = true; viewport.setLeftButtonPan(true); }
     return;
   }
+
+  // Выделение — те же сочетания, что в Photoshop.
+  if (e.metaKey || e.ctrlKey) {
+    const kk = e.key.toLowerCase();
+    if (kk === 'a' && !e.shiftKey) { e.preventDefault(); selectAll(); return; }
+    if (kk === 'd' && !e.shiftKey) { e.preventDefault(); clearSelection(); return; }
+    if (kk === 'i' && e.shiftKey) { e.preventDefault(); invertSelection(); return; }
+  }
+  if (!e.metaKey && !e.ctrlKey && !e.altKey && lassoKey(e.key)) { e.preventDefault(); return; }
 
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
     e.preventDefault();
@@ -1673,6 +2075,8 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'F1') { e.preventDefault(); helpModal.open(); return; }
 
   const k = e.key.toLowerCase();
+  // L переключает вольное лассо и лассо по точкам — как Shift+L в Photoshop.
+  if (k === 'l' && state.tool === 'lasso') { setTool('lasso-poly'); return; }
   if (TOOL_KEYS[k]) { setTool(TOOL_KEYS[k]); return; }
   if (k === 'u') { setUVOpen(!state.uvOpen); return; }
   if (k === '5') { setProjection(viewport.projection === 'ortho' ? 'persp' : 'ortho'); return; }
@@ -1727,9 +2131,14 @@ const menuBar = new MenuBar($('menubar'), [
     { label: () => t('edit.toEnd'), disabled: () => !history.canRedo, action: () => history.goto(history.entries.length - 1) },
   ] },
 
+  { title: () => t('menu.select'), items: [
+    { label: () => t('select.all'), hint: MOD + 'A', disabled: () => !targets.size, action: selectAll },
+    { label: () => t('select.none'), hint: MOD + 'D', disabled: () => !hasSelection(), action: clearSelection },
+    { label: () => t('select.invert'), hint: '⇧' + MOD + 'I', disabled: () => !hasSelection(), action: invertSelection },
+  ] },
+
   { title: () => t('menu.layer'), items: [
     { label: () => t('layer.new'), action: addLayer },
-    { label: () => t('layer.mask'), action: () => $('btn-layer-mask').click() },
     { label: () => t('layer.remove'), disabled: () => (refLayers()?.length ?? 0) <= 1, action: removeLayer },
     '-',
     { label: () => t('layer.blend.normal'), radio: () => currentBlend() === 'normal', action: () => setBlend('normal') },
@@ -1775,7 +2184,8 @@ const menuBar = new MenuBar($('menubar'), [
     { label: () => t('tool.fillIsland'), hint: 'G', radio: () => state.tool === 'fill-island', action: () => setTool('fill-island') },
     { label: () => t('tool.fillLayer'), radio: () => state.tool === 'fill-layer', action: () => setTool('fill-layer') },
     '-',
-    { label: () => t('tool.mask'), hint: 'M', radio: () => state.tool === 'mask', action: () => setTool('mask') },
+    { label: () => t('tool.lasso'), hint: 'L', radio: () => state.tool === 'lasso', action: () => setTool('lasso') },
+    { label: () => t('tool.lassoPoly'), hint: 'L L', radio: () => state.tool === 'lasso-poly', action: () => setTool('lasso-poly') },
     '-',
     { label: () => t('tool.rect'), hint: 'R', radio: () => state.tool === 'rect', action: () => setTool('rect') },
     { label: () => t('tool.ellipse'), hint: 'C', radio: () => state.tool === 'ellipse', action: () => setTool('ellipse') },

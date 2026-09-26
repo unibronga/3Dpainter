@@ -60,6 +60,9 @@ export class PaintTarget {
 
     this.layers = [new Layer(size, null, 1)];
     this.activeIndex = 0;
+    // Выделение лассо: маска текселей, где разрешено красить, либо null —
+    // тогда красится всё. Живёт у цели, а не у слоя: смена слоя его не снимает.
+    this.selection = null;
 
     this.composite = new Uint8ClampedArray(size * size * 4);
     this.imageData = new ImageData(this.composite, size, size);

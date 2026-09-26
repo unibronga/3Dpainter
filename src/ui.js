@@ -44,8 +44,8 @@ const EYE_OFF = '<svg viewBox="0 0 24 24"><path d="M4 4l16 16"/><path d="M9.6 9.
 /**
  * @param {HTMLElement} el
  * @param {PaintTarget} target — эталон структуры слоёв
- * @param {object} state {activeIndex, maskEditing}
- * @param {object} handlers {onSelect, onToggleVisible, onToggleMaskEdit}
+ * @param {object} state {activeIndex}
+ * @param {object} handlers {onSelect, onToggleVisible, onRename}
  */
 export function renderLayers(el, target, state, handlers) {
   el.innerHTML = '';
@@ -71,14 +71,7 @@ export function renderLayers(el, target, state, handlers) {
       if (v) handlers.onRename(i, v.trim());
     });
 
-    const chip = document.createElement('div');
-    chip.className = 'mask-chip' + (L.mask ? ' on' : '')
-      + (i === state.activeIndex && state.maskEditing ? ' editing' : '');
-    chip.textContent = t('layers.maskChip');
-    chip.title = t(L.mask ? 'layers.maskHas' : 'layers.maskNone');
-    chip.addEventListener('click', (e) => { e.stopPropagation(); handlers.onToggleMaskEdit(i); });
-
-    row.append(eye, name, chip);
+    row.append(eye, name);
     row.addEventListener('click', () => handlers.onSelect(i));
     el.appendChild(row);
   });
@@ -92,7 +85,10 @@ export function renderLayers(el, target, state, handlers) {
 export function drawUVPreview(canvas, target, cache, showWire) {
   const box = canvas.parentElement;
   const w = Math.max(32, box.clientWidth);
-  const dpr = Math.min(devicePixelRatio || 1, 2);
+  // Под масштабом интерфейса картинку растягивает zoom — рисуем плотнее,
+  // иначе при 150–200% превью замылится.
+  const ui = parseFloat(getComputedStyle(document.body).zoom) || 1;
+  const dpr = Math.min((devicePixelRatio || 1) * ui, 4);
   if (canvas.width !== Math.round(w * dpr)) {
     canvas.width = canvas.height = Math.round(w * dpr);
     canvas.style.width = canvas.style.height = w + 'px';

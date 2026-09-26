@@ -12,6 +12,7 @@
   --accent-dim:#6b5233;
   --danger:    #d0674f;
   --uv-width:  46%;
+  --ui:        1;     /* масштаб интерфейса, задаётся в настройках */
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -27,6 +28,18 @@ html, body {
 }
 
 button, input, select { font: inherit; color: inherit; }
+
+/* Масштаб интерфейса. На большом экране 12 px текста — это мелко, и
+   увеличивать надо всё разом: текст, значки, панели, окна. Поэтому zoom на
+   body, а не шрифт в rem — вся вёрстка в пикселях, и растёт она целиком.
+
+   🔴 Холсты вьюпорта и развёртки из-под масштаба выведены обратным
+   множителем: им нужен обычный пиксель, иначе размер холста и координаты
+   указателя разошлись бы, и мазок ложился бы мимо курсора. Надписи и кнопки
+   поверх холстов масштабируются снова, сами по себе. */
+body { zoom: var(--ui); }
+#panes { zoom: calc(1 / var(--ui)); }
+#view-overlay, #uv-head, #drop-hint { zoom: var(--ui); }
 
 /* ── Каркас ───────────────────────────────────────────────────── */
 
@@ -139,6 +152,12 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
   background: var(--panel);
   border-right: 1px solid var(--line);
 }
+/* На крупном масштабе или в невысоком окне колонка не влезает по высоте:
+   прокручивается колесом. Полосы нет — в колонку шириной в значок она не
+   помещается. */
+#app #toolbar { overflow-x: hidden; overflow-y: auto; scrollbar-width: none; }
+#toolbar::-webkit-scrollbar { display: none; }
+#toolbar > * { flex: none; }
 
 .tool {
   width: 32px; height: 32px;
@@ -284,7 +303,7 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 .layer-list { display: flex; flex-direction: column-reverse; gap: 2px; margin: 4px 0 6px; }
 
 .layer {
-  display: grid; grid-template-columns: 20px 1fr 22px;
+  display: grid; grid-template-columns: 20px 1fr;
   align-items: center; gap: 4px;
   height: 28px; padding: 0 4px;
   background: var(--panel-2);
@@ -296,13 +315,6 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 .layer .eye.off { opacity: .28; }
 .layer .eye svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; }
 .layer .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.layer .mask-chip {
-  width: 18px; height: 18px; border-radius: 3px;
-  border: 1px solid var(--line); background: #1b1d21;
-  display: grid; place-items: center; font-size: 9px; color: var(--text-dim);
-}
-.layer .mask-chip.on { border-color: var(--accent); color: var(--accent); }
-.layer .mask-chip.editing { background: var(--accent); color: #1b1d21; border-color: var(--accent); }
 
 .btn-row { display: flex; gap: 4px; }
 .btn-row .btn { flex: 1; padding: 0 4px; height: 22px; }
@@ -502,6 +514,18 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 
 .check-row { display: flex; align-items: center; gap: 6px; margin-top: 7px; color: var(--text-dim); cursor: pointer; }
 
+/* Под списком развёрток: сетка слева, маленькая кнопка PNG справа. */
+.uv-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 7px; }
+.uv-foot .check-row { margin-top: 0; }
+.btn.uv-png {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 20px; padding: 0 7px;
+  font-size: 10.5px; font-weight: 600; letter-spacing: .03em;
+  color: var(--text-dim);
+}
+.btn.uv-png:not(:disabled):hover { color: var(--accent); border-color: var(--accent-dim); }
+.btn.uv-png svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
 /* ── Список развёрток в панели ────────────────────────────────── */
 
 /* По строке на меш. У составной модели развёрток столько же, сколько
@@ -566,8 +590,11 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 
 .modal {
   width: 560px;
-  max-width: calc(100vw - 32px);
-  max-height: calc(100vh - 64px);
+  /* 🔴 Под масштабом интерфейса (zoom на body) vw и vh не уменьшаются, и
+     предел выходил бы больше экрана: окно материала при 200% уезжало за
+     верх и низ на 283 px. Поэтому делим на масштаб. */
+  max-width: calc((100vw - 32px) / var(--ui));
+  max-height: calc((100vh - 64px) / var(--ui));
   display: flex; flex-direction: column;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -830,7 +857,10 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 
 /* ── Узоры материала ──────────────────────────────────────────── */
 
-.pat-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-bottom: 6px; }
+/* minmax(0, …), а не 1fr: у 1fr нижний предел — ширина содержимого, и холст
+   карточки не давал колонке ужаться — при крупном масштабе интерфейса под
+   узорами появлялась горизонтальная прокрутка. */
+.pat-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; margin-bottom: 6px; }
 .pat-card {
   display: flex; flex-direction: column; gap: 1px;
   padding: 3px 3px 2px;
@@ -910,6 +940,20 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 #shape-preview.on { display: block; }
 #shape-preview.ellipse { border-radius: 50%; }
 
+#lasso-preview {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  display: none;
+  pointer-events: none;
+  z-index: 15;
+  overflow: visible;
+}
+#lasso-preview.on { display: block; }
+#lasso-preview path { fill: none; stroke-width: 1; }
+#lasso-preview path.under { stroke: #000; }
+#lasso-preview path.over { stroke: #fff; stroke-dasharray: 4 4; }
+#lasso-preview rect { fill: #fff; stroke: #000; }
+
 .section .row.wide .seg { display: flex; gap: 4px; }
 .section .row.wide .seg .btn { flex: 1; height: 22px; padding: 0 4px; }
 
@@ -964,8 +1008,8 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 
 .welcome {
   width: 640px;
-  max-width: calc(100vw - 32px);
-  max-height: calc(100vh - 48px);
+  max-width: calc((100vw - 32px) / var(--ui));    /* см. .modal */
+  max-height: calc((100vh - 48px) / var(--ui));
   display: flex;
   flex-direction: column;
   background: var(--panel);
@@ -1141,6 +1185,14 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 }
 .save-row.on .save-dot { border-color: #ffd9a0; box-shadow: inset 0 0 0 3px #ffd9a0; }
 .save-text { flex: 1; }
+.save-meta { color: var(--text-dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+.save-row.on .save-meta { color: #ffd9a0; }
+
+/* Свой размер снимка — видно, только когда выбран. */
+.view-custom { display: none; align-items: center; gap: 6px; margin: 6px 0 2px 20px; }
+.view-custom.on { display: flex; }
+.view-custom .view-num { width: 70px; }
+.view-custom .opt-check { margin-left: 8px; }
 
 /* ── Окно настроек ─────────────────────────────────────────────── */
 
@@ -1148,6 +1200,9 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 .set-block:last-of-type { border-bottom: 0; }
 .set-row { display: flex; align-items: center; gap: 12px; }
 .set-label { flex: 1; }
+.set-scale { display: flex; align-items: center; gap: 8px; }
+.set-scale .set-range { width: 160px; }
+.set-scale .val { width: 38px; text-align: right; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .set-hint { color: var(--text-dim); font-size: 11px; margin-top: 4px; line-height: 1.45; }
 
 .set-select {
@@ -1214,6 +1269,24 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 }
 .opt-text:focus { outline: none; border-color: var(--accent); }
 
+.opt-check { display: flex; align-items: center; gap: 5px; color: var(--text-dim); font-size: 11px; white-space: nowrap; cursor: pointer; }
+.opt-check input { margin: 0; accent-color: var(--accent); }
+.opt-num {
+  width: 46px;
+  height: 24px;
+  padding: 0 4px 0 7px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.opt-num:focus { outline: none; border-color: var(--accent); }
+/* Шаг выключен — ползунок и поле притушены, но править их можно заранее. */
+.opt-group.snap-off #orbit-step, .opt-group.snap-off #orbit-step-num { opacity: .45; }
+.opt-group .btn { height: 24px; padding: 0 9px; }
+
 .opt-select {
   height: 24px;
   padding: 0 6px;
@@ -1277,3 +1350,34 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 @media (prefers-reduced-motion: reduce) {
   .busy-arc { animation: none; stroke-dasharray: 100 0; opacity: .5; }
 }
+
+/* ── Тултипы ──────────────────────────────────────────────────── */
+
+.tip-card {
+  position: fixed;
+  z-index: 1000;      /* выше окон (200) и индикатора: подсказки есть и в окнах */
+  max-width: 270px;
+  padding: 8px 10px 9px;
+  background: var(--panel-3);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .45);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .12s ease;
+}
+.tip-card.on { opacity: 1; visibility: visible; }
+.tip-head { display: flex; align-items: center; gap: 8px; }
+.tip-title { font-weight: 600; color: var(--text); }
+.tip-head kbd {
+  margin-left: auto;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--text-dim);
+  font: 600 10.5px/16px -apple-system, "SF Pro Text", system-ui, sans-serif;
+  white-space: nowrap;
+}
+.tip-text { margin-top: 4px; color: var(--text-dim); line-height: 1.45; }

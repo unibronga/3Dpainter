@@ -99,43 +99,58 @@ Other commands:
 | Pan | **Space + left button**, or middle button |
 | Zoom | **Wheel** |
 | Brush size | **[** and **]** |
-| Tools | **V** select object · **H** pan · **O** orbit · **Z** zoom · **B** brush · **E** eraser · **I** eyedropper · **F** fill faces · **G** fill UV island · **M** mask |
+| Tools | **V** select object · **H** pan · **O** orbit · **Z** zoom · **B** brush · **E** eraser · **I** eyedropper · **F** fill faces · **G** fill UV island · **L** lasso (again for polygonal) |
 | Views | **1**–**7** axis views · **0** three-quarter · **5** perspective ↔ orthographic |
 | Orbit pivot | three icons over the viewport: world, object, or **whatever is in the centre of the frame** |
 | Fit to frame | **Home** |
 | UV editor | **U** |
 | Hide all panels | **Tab** |
 | Undo / redo | **Cmd+Z** / **Cmd+Shift+Z** |
+| Select all / deselect / invert | **Cmd+A** / **Cmd+D** / **Cmd+Shift+I** |
 
 ## What it can do
 
 **Tools.** Brush with 16 presets (grain, spacing, scatter), eraser,
-eyedropper, three kinds of fill, mask brush, rectangle, ellipse and text.
+eyedropper, three kinds of fill, lasso, rectangle, ellipse and text.
 Shapes and text are printed by screen projection, so a rectangle stays a
 rectangle in frame no matter how the surface curves under it. Text comes with
 a choice of eight system fonts. The options for whichever tool is selected
-appear in a strip above the model, on the left.
+appear in a strip above the model, on the left. The orbit tool, for instance,
+has a rotation step there — tick it, set 30°, and the view turns in exact 30°
+steps — plus a button to reset the view.
+
+**Lasso selection**, freehand and polygonal, as in Photoshop. While a selection
+exists, every tool paints only inside it — brush, eraser, fills, shapes —
+so a stroke can run right over the edge. Shift adds, Alt subtracts, Shift+Alt
+intersects. On the model the outline is projected from the screen, across all
+objects at once; in the UV editor it is drawn straight onto the texture. The
+edge shows as marching ants.
 
 **Material, not just color.** A material here is color + pattern + roughness
 + metalness + transparency, and all of it is painted per texel. "Paint this
 with iron" makes the painted area metallic — not the whole model. Ten
 procedural patterns are included, or you can load your own image.
 
-**Layers and history.** Visibility, opacity, blend modes, per-layer masks.
+**Layers and history.** Visibility, opacity, blend modes.
 The history panel lets you click any step and land in it, not just step back
 one at a time.
 
 **A UV editor** on half the screen, where the whole toolset works directly on
-the unwrap — brush, fills, eyedropper, shapes and text. Handy when a face is
+the unwrap — brush, fills, eyedropper, shapes, text and lasso. Handy when a face is
 too small or hidden on the model itself.
 
 **Output.** A PNG of the color map, plus a second `<name>_material.png` when
 you actually painted with surface properties (roughness in green, metalness
-in blue — the packing three.js reads directly). Or the whole model with the
-paint baked in, via **File ▸ Save as…**.
+in blue — the packing three.js reads directly): the small **PNG** button under
+the UV list saves the map that is open, **File ▸ Save PNG** saves them all. Or
+the whole model with the paint baked in, via **File ▸ Save as…**. And
+**View to PNG** renders the model exactly as framed in the viewport, on a
+transparent background, at the size and edge smoothing you pick.
 
-**Settings** (File ▸ Settings…) hold the interface language, the default
-texture size and whether the start screen appears on launch.
+**Settings** (File ▸ Settings…) hold the interface language, the interface
+scale (80–200%: text, icons, panels and dialogs grow together — for large
+screens), the default texture size and whether the start screen appears on
+launch.
 
 **Long operations** — opening a model, saving, rebuilding textures — run
 under a busy indicator, so it is clear the program is working.
@@ -178,14 +193,17 @@ unwrap in Blender.
 
 ## Status and roadmap
 
-Working and usable, version 0.2.0. Not yet done:
+Working and usable, version 0.4.0. New in 0.4.0: freehand and polygonal lasso
+selection, an interface scale setting for large screens, tooltips on every
+control, a rotation step for the orbit tool, **View to PNG** and saving the
+open UV map on its own. Not yet done:
 
-- Saving a painting session (layers, masks) — right now only the final PNG
+- Saving a painting session (layers) — right now only the final PNG
   is baked, so you cannot pick the work up the next day.
 - Reading the texture that comes with a model: colours from an `.mtl` are
   picked up, a finished image inside a GLB is not yet.
-- Occlusion for shapes and text: back-facing polygons are skipped, but a
-  chimney does not cast a "shadow" onto the roof behind it.
+- Occlusion for shapes, text and the lasso: back-facing polygons are skipped,
+  but a chimney does not cast a "shadow" onto the roof behind it.
 - Layer reordering and duplication; symmetry, straight-line strokes, stroke
   stabilization.
 - Island selection and seam highlighting in the UV editor.

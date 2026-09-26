@@ -98,7 +98,15 @@ jobs:
       - name: Создать релиз и приложить файлы
         env:
           GH_TOKEN: ${{ github.token }}
+        # Описание релиза — из docs/releases/<тег>.md, если он есть: там
+        # список изменений версии. Нет файла — общий текст про сборки.
         run: |
+          NOTES="docs/releases/${GITHUB_REF_NAME}.md"
+          if [ -f "$NOTES" ]; then
+            gh release create "${GITHUB_REF_NAME}" artifacts/* \
+              --title "3DPainter ${GITHUB_REF_NAME}" --notes-file "$NOTES"
+            exit 0
+          fi
           gh release create "${GITHUB_REF_NAME}" artifacts/* \
             --title "3DPainter ${GITHUB_REF_NAME}" \
             --notes "Сборки для macOS (.dmg, Apple Silicon) и Windows (.exe).

@@ -14,6 +14,13 @@ import { findTriangleAtUV } from './mesh-cache.js';
 /** Инструменты, которые тянутся рамкой, а не мажут по пути. */
 const SHAPE_TOOLS = new Set(['rect', 'ellipse', 'text']);
 
+/**
+ * Инструменты, которые ведут мазок. Список разрешающий, а не запрещающий:
+ * раньше мазком было всё, что не пипетка, не заливка и не фигура, — и выбор
+ * объекта с инструментами вида красили кистью.
+ */
+const BRUSH_TOOLS = new Set(['brush', 'eraser']);
+
 export class UVEditor {
   /**
    * @param {HTMLElement} container
@@ -25,6 +32,9 @@ export class UVEditor {
    *   onPick(tx, ty)           — пипетка
    *   brushRadiusScreen()      — радиус кисти в пикселях экрана
    *   currentTool()
+   *   lassoMode(e)             — режим выделения с учётом модификаторов
+   *   onLasso(pts, mode)       — контур лассо замкнут, вершины в текселях
+   *   onLassoClick(mode)       — щелчок лассо без контура: снять выделение
    */
   constructor(container, hooks) {
     this.container = container;
@@ -43,6 +53,9 @@ export class UVEditor {
     this.painting = false;
     this.shaping = null;     // тянущаяся рамка фигуры или текста
     this.panning = false;
+    this.zooming = null;     // протяжка инструментом зума
+    this.lasso = null;       // контур лассо в работе: { pts, mode, poly, hover }
+    this.selSegs = null;     // контур выделения, отрезки в текселях
     this.spaceDown = false;
 
     this._bindEvents();
@@ -68,6 +81,48 @@ export class UVEditor {
   }
 
   setShowWire(v) { this.showWire = v; this.draw(); }
+
+  /** Контур выделения активного меша (см. selection.outline) или null. */
+  setSelectionOutline(segs) { this.selSegs = segs && segs.length ? segs : null; this.draw(); }
+
+  /** Бросить незамкнутое лассо — при смене инструмента или по Esc. */
+  cancelLasso() {
+    if (!this.lasso) return false;
+    this.lasso = null;
+    this.draw();
+    return true;
+  }
+
+  /**
+   * Клавиши лассо по точкам: Enter замыкает, Esc бросает, Backspace снимает
+   * последнюю точку. @returns {boolean} клавиша ушла в дело
+   */
+  lassoKey(key) {
+    const l = this.lasso;
+    if (!l || !l.poly) return false;
+    if (key === 'Escape') return this.cancelLasso();
+    if (key === 'Enter') { this._closeLasso(); return true; }
+    if (key === 'Backspace') {
+      l.pts.pop();
+      if (!l.pts.length) this.lasso = null;
+      this.draw();
+      return true;
+    }
+    return false;
+  }
+
+  _closeLasso() {
+    const l = this.lasso;
+    this.lasso = null;
+    if (l && l.pts.length >= 3) this.hooks.onLasso(l.pts, l.mode);
+    this.draw();
+  }
+
+  /** Тексели → пиксели панели. */
+  _toScreen(tx, ty) {
+    const S = this.target.size;
+    return { x: this.view.ox + (tx / S) * this.view.scale, y: this.view.oy + (ty / S) * this.view.scale };
+  }
 
   /* ── Преобразования ──────────────────────────────────────────── */
 
@@ -140,9 +195,13 @@ export class UVEditor {
 
     if (this.showWire && this.cache) this._wire(ox, oy, scale);
 
+    this._ants(ox, oy, scale);
+
     ctx.strokeStyle = 'rgba(224,163,85,0.75)';
     ctx.lineWidth = 1;
     ctx.strokeRect(ox + 0.5, oy + 0.5, scale, scale);
+
+    if (this.lasso) this._lassoPath();
 
     // Рамка тянущейся фигуры: показывает, куда она ляжет, до того как легла.
     if (this.shaping) {
@@ -164,8 +223,9 @@ export class UVEditor {
         ctx.strokeRect(Math.min(x0, x1) + 0.5, Math.min(y0, y1) + 0.5, Math.abs(x1 - x0), Math.abs(y1 - y0));
       }
       ctx.restore();
-    } else if (this.cursor && !SHAPE_TOOLS.has(this.hooks.currentTool())) {
-      // Круг курсора — про кисть; у фигур свой размер задаётся протяжкой.
+    } else if (this.cursor && BRUSH_TOOLS.has(this.hooks.currentTool())) {
+      // Круг курсора — про кисть; у фигур свой размер задаётся протяжкой,
+      // а у выбора и инструментов вида краски нет вовсе.
       const r = Math.max(2, this.hooks.brushRadiusScreen());
       ctx.beginPath();
       ctx.arc(this.cursor.x, this.cursor.y, r, 0, Math.PI * 2);
@@ -189,7 +249,7 @@ export class UVEditor {
     if (!this.target || !rect) { this.draw(); return; }
     // Пока тянется рамка или курсор, поверх куска рисовать нечего — там
     // нужна полная отрисовка, иначе останется след от прошлого кадра.
-    if (this.shaping) { this.draw(); return; }
+    if (this.shaping || this.lasso) { this.draw(); return; }
 
     const { ox, oy, scale } = this.view;
     const S = this.target.size;
@@ -230,6 +290,62 @@ export class UVEditor {
       (вx - ox) / k, (вy - oy) / k, вw / k, вh / k,
       вx, вy, вw, вh);
     if (this.showWire && this.cache) this._wire(ox, oy, scale);
+    this._ants(ox, oy, scale);
+    ctx.restore();
+  }
+
+  /**
+   * «Бегущие муравьи» — контур выделения чёрно-белым пунктиром: виден на
+   * любом цвете. Здесь пунктир стоит: панель перерисовывается по делу, а не
+   * каждый кадр, и гонять её ради анимации незачем.
+   */
+  _ants(ox, oy, scale) {
+    const segs = this.selSegs;
+    if (!segs) return;
+    const k = scale / this.target.size;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.beginPath();
+    for (let i = 0; i < segs.length; i += 4) {
+      ctx.moveTo(ox + segs[i] * k, oy + segs[i + 1] * k);
+      ctx.lineTo(ox + segs[i + 2] * k, oy + segs[i + 3] * k);
+    }
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = '#fff';
+    ctx.stroke();
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = '#000';
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** Контур лассо, пока его ведут: линия до курсора у лассо по точкам. */
+  _lassoPath() {
+    const l = this.lasso;
+    const ctx = this.ctx;
+    const pts = l.poly && l.hover ? [...l.pts, l.hover] : l.pts;
+    if (!pts.length) return;
+    ctx.save();
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      const q = this._toScreen(p.tx, p.ty);
+      if (i) ctx.lineTo(q.x, q.y); else ctx.moveTo(q.x, q.y);
+    });
+    if (!l.poly) ctx.closePath();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = '#000';
+    ctx.stroke();
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = '#fff';
+    ctx.stroke();
+    // Первая точка лассо по точкам — сюда щёлкают, чтобы замкнуть.
+    if (l.poly) {
+      const f = this._toScreen(l.pts[0].tx, l.pts[0].ty);
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(f.x - 3, f.y - 3, 6, 6);
+      ctx.strokeRect(f.x - 3.5, f.y - 3.5, 7, 7);
+    }
     ctx.restore();
   }
 
@@ -373,6 +489,39 @@ export class UVEditor {
   }
 
 
+  /**
+   * Щелчок лассо по точкам. Первый ставит начало; щелчок по началу или
+   * двойной щелчок замыкают контур.
+   */
+  _polyClick(e, p) {
+    const now = performance.now();
+    const l = this.lasso;
+    if (!l) {
+      this.lasso = { pts: [p], mode: this.hooks.lassoMode(e), poly: true, hover: p, at: now };
+      this.draw();
+      return;
+    }
+    const q = this._toScreen(p.tx, p.ty);
+    const first = this._toScreen(l.pts[0].tx, l.pts[0].ty);
+    const last = this._toScreen(l.pts[l.pts.length - 1].tx, l.pts[l.pts.length - 1].ty);
+    const nearFirst = l.pts.length >= 3 && Math.hypot(q.x - first.x, q.y - first.y) <= 8;
+    const dbl = now - l.at < 350 && Math.hypot(q.x - last.x, q.y - last.y) <= 5;
+    if (nearFirst || dbl) { this._closeLasso(); return; }
+    l.pts.push(p);
+    l.at = now;
+    this.draw();
+  }
+
+  /** Масштаб вокруг точки панели, а не вокруг её угла. */
+  zoomAround(mx, my, k) {
+    const next = Math.max(24, Math.min(40000, this.view.scale * k));
+    const f = next / this.view.scale;
+    this.view.ox = mx - (mx - this.view.ox) * f;
+    this.view.oy = my - (my - this.view.oy) * f;
+    this.view.scale = next;
+    this.draw();
+  }
+
   /* ── Ввод ────────────────────────────────────────────────────── */
 
   _bindEvents() {
@@ -383,15 +532,7 @@ export class UVEditor {
     cv.addEventListener('wheel', (e) => {
       e.preventDefault();
       const r = cv.getBoundingClientRect();
-      const mx = e.clientX - r.left, my = e.clientY - r.top;
-      const k = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-      const next = Math.max(24, Math.min(40000, this.view.scale * k));
-      const f = next / this.view.scale;
-      // Масштабируем вокруг курсора, а не вокруг угла панели.
-      this.view.ox = mx - (mx - this.view.ox) * f;
-      this.view.oy = my - (my - this.view.oy) * f;
-      this.view.scale = next;
-      this.draw();
+      this.zoomAround(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.12 : 1 / 1.12);
     }, { passive: false });
 
     cv.addEventListener('pointerdown', (e) => {
@@ -423,6 +564,31 @@ export class UVEditor {
         this.draw();
         return;
       }
+      // Сдвиг и вращение в плоскости развёртки — одно и то же: крутить
+      // плоскую карту незачем, её двигают. Зум — протяжкой вверх и вниз
+      // вокруг точки нажатия, как во вьюпорте.
+      // Лассо: вольное ведётся, пока кнопка нажата; по точкам — щелчками.
+      if (tool === 'lasso') {
+        const r = cv.getBoundingClientRect();
+        this.lasso = { pts: [p], mode: this.hooks.lassoMode(e), poly: false,
+                       sx: e.clientX - r.left, sy: e.clientY - r.top, far: false };
+        this.draw();
+        return;
+      }
+      if (tool === 'lasso-poly') {
+        this._polyClick(e, p);
+        return;
+      }
+      if (tool === 'pan' || tool === 'orbit') {
+        this.panning = { x: e.clientX, y: e.clientY };
+        return;
+      }
+      if (tool === 'zoom') {
+        const r = cv.getBoundingClientRect();
+        this.zooming = { y: e.clientY, mx: e.clientX - r.left, my: e.clientY - r.top };
+        return;
+      }
+      if (!BRUSH_TOOLS.has(tool)) return;   // выбор объекта здесь ничего не делает
       this.painting = true;
       this.hooks.onBegin(p.tx, p.ty, e.shiftKey);
     });
@@ -436,6 +602,26 @@ export class UVEditor {
         this.view.oy += e.clientY - this.panning.y;
         this.panning = { x: e.clientX, y: e.clientY };
         this.draw();
+        return;
+      }
+      if (this.lasso) {
+        const p = this.toTexel(e.clientX, e.clientY);
+        const l = this.lasso;
+        if (l.poly) {
+          l.hover = p;
+        } else {
+          const last = this._toScreen(l.pts[l.pts.length - 1].tx, l.pts[l.pts.length - 1].ty);
+          // Точка на каждый пиксель — лишнее: контур мельче не станет.
+          if (Math.hypot(this.cursor.x - last.x, this.cursor.y - last.y) >= 2) l.pts.push(p);
+          if (Math.hypot(this.cursor.x - l.sx, this.cursor.y - l.sy) > 3) l.far = true;
+        }
+        this.draw();
+        return;
+      }
+      if (this.zooming) {
+        const z = this.zooming;
+        this.zoomAround(z.mx, z.my, Math.pow(1.01, z.y - e.clientY));
+        z.y = e.clientY;
         return;
       }
       if (this.shaping) {
@@ -456,6 +642,14 @@ export class UVEditor {
     });
 
     const stop = () => {
+      if (this.lasso && !this.lasso.poly) {
+        const l = this.lasso;
+        this.lasso = null;
+        // Щелчок без протяжки — снять выделение, как в Photoshop.
+        if (!l.far || l.pts.length < 3) this.hooks.onLassoClick(l.mode);
+        else this.hooks.onLasso(l.pts, l.mode);
+        this.draw();
+      }
       if (this.painting) { this.painting = false; this.hooks.onEnd(); }
       if (this.shaping) {
         const { a, b, shift } = this.shaping;
@@ -464,6 +658,7 @@ export class UVEditor {
         this.draw();
       }
       this.panning = false;
+      this.zooming = null;
     };
     cv.addEventListener('pointerup', stop);
     cv.addEventListener('pointercancel', stop);
