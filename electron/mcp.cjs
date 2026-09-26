@@ -29,10 +29,11 @@ const DEFAULT_PORT = 5290;
 const MAX_BODY = 1 << 20;
 
 const INSTRUCTIONS =
-  '3DPainter is a tool for hand-painting low-poly 3D models. Use describe_model first to ' +
-  'learn the parts of the open model, paint with fill (ideally on your own layer from ' +
-  'new_layer), and check the result with render_view. Every fill is an undo step the user ' +
-  'can revert with Cmd+Z.';
+  '3DPainter is a tool for hand-painting low-poly 3D models. Start with describe_model and a ' +
+  'render_view, then paint on your own layer (new_layer). Paint large areas with fill ' +
+  '(height, facing, box), details with fill_at: point at pixels of a render_view image ' +
+  '(same view/width/height; grid:true helps), dry_run first if unsure. Check with ' +
+  'render_view from several sides and fix mistakes with undo rather than painting over them.';
 
 class McpServer {
   /**

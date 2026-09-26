@@ -920,12 +920,13 @@ export class Viewport {
    * @param {number} ss суперсэмплинг: снимаем в ss раз крупнее и усредняем
    * @returns {ImageData}
    */
-  renderView(W, H, ss = 1) {
-    const r = this.renderer;
-    const w = W * ss, h = H * ss;
-
-    // Своя камера с пропорциями снимка: если они отличаются от вьюпорта,
-    // кадр шире или выше, но центр и масштаб по высоте те же.
+  /**
+   * Камера снимка: копия текущей с пропорциями W × H. Если они отличаются
+   * от вьюпорта, кадр шире или выше, но центр и масштаб по высоте те же.
+   * Одна на снимок и на «точку на снимке» у ИИ — иначе пиксель, который он
+   * видел, указывал бы мимо.
+   */
+  snapshotCamera(W, H) {
     const cam = this.camera.clone();
     if (cam.isPerspectiveCamera) {
       cam.aspect = W / H;
@@ -936,6 +937,15 @@ export class Viewport {
       cam.right = cx + halfH * (W / H);
     }
     cam.updateProjectionMatrix();
+    cam.updateMatrixWorld(true);
+    return cam;
+  }
+
+  renderView(W, H, ss = 1) {
+    const r = this.renderer;
+    const w = W * ss, h = H * ss;
+
+    const cam = this.snapshotCamera(W, H);
 
     const спрятано = [];
     const спрятать = (o) => { if (o && o.visible) { o.visible = false; спрятано.push(o); } };

@@ -17,6 +17,17 @@
  * Заливка идёт тем же путём, что у человека: `Stroke.fillTriangles`, шаг в
  * истории, отмена ⌘Z. Снимок вида — чтобы ИИ проверил, что получилось.
  *
+ * Вторая волна — по живому прогону на персонаже (6953 треугольника, один
+ * меш, без имён материалов, 1254 области). Высоты и стороны не хватило:
+ * кисти рук висят на высоте джинсов, пряжки и глаз нет среди крупных
+ * областей, а промах ИИ «откатывал» перекраской и оставлял мусор. Отсюда:
+ *   - рамка `box` по X/Y/Z в отборе;
+ *   - `fill_at` — заливка по точке на снимке: ИИ видит деталь на картинке,
+ *     указывает пиксель, программа сама находит под ним поверхность. Камера
+ *     та же, что у `render_view` с теми же видом и размером;
+ *   - описание с отбором (рамка, сторона, размер) и постранично;
+ *   - `undo` — только своих шагов, чужую работу ИИ не откатывает.
+ *
  * Описания инструментов — по-английски: их читает модель, а не человек.
  */
 
@@ -47,11 +58,26 @@ export const TOOLS = [
       'center and average normal, the direction it faces (up/down/front/back/left/right), ' +
       'the source material name when the file had one, and its current average color. ' +
       'World axes: Y is up, +Z is the front of the model as it stands, +X is its right; ' +
-      'units are meters. Ids are stable until another model is opened.',
+      'units are meters. Each part also has a size [dx, dy, dz]. Ids are stable until ' +
+      'another model is opened. Big models have hundreds of parts: filter with box, ' +
+      'facing and min_triangles, page with offset — or skip ids entirely and use fill_at.',
     inputSchema: {
       type: 'object',
       properties: {
         mesh: { description: 'Only this mesh: index or name. Omit for all meshes.', type: ['integer', 'string'] },
+        box: {
+          type: 'object',
+          description: 'Axis-aligned box in world meters. min/max are [x, y, z]; use null for an open side, e.g. {"min":[0.2,null,null]} is everything right of x=0.2.',
+          properties: {
+            min: { type: 'array', items: { type: ['number', 'null'] }, minItems: 3, maxItems: 3 },
+            max: { type: 'array', items: { type: ['number', 'null'] }, minItems: 3, maxItems: 3 },
+          },
+          additionalProperties: false,
+        },
+        facing: { type: 'string', enum: ['up', 'down', 'front', 'back', 'right', 'left'], description: 'Only parts facing this way.' },
+        min_triangles: { type: 'integer', minimum: 1, description: 'Skip parts smaller than this.' },
+        limit: { type: 'integer', minimum: 1, maximum: 500, description: 'How many parts to list per mesh, largest first. Default 120.' },
+        offset: { type: 'integer', minimum: 0, description: 'Skip this many of the largest matching parts (paging).' },
       },
       additionalProperties: false,
     },
@@ -67,6 +93,7 @@ export const TOOLS = [
         view: { type: 'string', enum: VIEWS, description: 'Camera direction. "current" is what the user sees. Default "three-quarter".' },
         width: { type: 'integer', minimum: 64, maximum: 2048, description: 'Default 768.' },
         height: { type: 'integer', minimum: 64, maximum: 2048, description: 'Default 576.' },
+        grid: { type: 'boolean', description: 'Draw a labelled pixel grid every 10% to help pick points for fill_at.' },
       },
       additionalProperties: false,
     },
@@ -92,6 +119,15 @@ export const TOOLS = [
             facing: { type: 'string', enum: FACING.map(([n]) => n), description: 'Triangles whose normal is within 45 degrees of this direction.' },
             above: { type: 'number', description: 'Triangle center Y (meters) must be at least this.' },
             below: { type: 'number', description: 'Triangle center Y (meters) must be at most this.' },
+            box: {
+              type: 'object',
+              description: 'Axis-aligned box in world meters. min/max are [x, y, z]; use null for an open side, e.g. {"min":[0.2,null,null]} is everything right of x=0.2.',
+              properties: {
+                min: { type: 'array', items: { type: ['number', 'null'] }, minItems: 3, maxItems: 3 },
+                max: { type: 'array', items: { type: ['number', 'null'] }, minItems: 3, maxItems: 3 },
+              },
+              additionalProperties: false,
+            },
           },
           additionalProperties: false,
         },
@@ -102,6 +138,56 @@ export const TOOLS = [
         layer: { type: 'integer', minimum: 0, description: 'Layer index; default is the active layer.' },
       },
       required: ['target', 'color'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'fill_at',
+    description:
+      'Fill whatever is under given pixels of a render_view image. Pass the same view, width ' +
+      'and height as the render you looked at, and pixel points (x right, y down from the ' +
+      'top-left corner). Under each point the surface patch is found and filled: a patch ' +
+      'grows from the hit triangle across folds up to `angle` degrees (0 = just that flat ' +
+      'face, 30 = default, like a region; 180 = the whole connected piece). An optional box ' +
+      'clips the fill. Use dry_run to see what would be hit without painting. Points that ' +
+      'hit nothing are reported.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        view: { type: 'string', enum: VIEWS, description: 'Same as in render_view. Default "three-quarter".' },
+        width: { type: 'integer', minimum: 64, maximum: 2048, description: 'Same as in render_view. Default 768.' },
+        height: { type: 'integer', minimum: 64, maximum: 2048, description: 'Same as in render_view. Default 576.' },
+        points: {
+          type: 'array', minItems: 1, maxItems: 64,
+          items: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'], additionalProperties: false },
+        },
+        angle: { type: 'number', minimum: 0, maximum: 180, description: 'How far the patch spreads across folds. Default 30.' },
+        box: {
+          type: 'object',
+          description: 'Axis-aligned box in world meters. min/max are [x, y, z]; use null for an open side, e.g. {"min":[0.2,null,null]} is everything right of x=0.2.',
+          properties: {
+            min: { type: 'array', items: { type: ['number', 'null'] }, minItems: 3, maxItems: 3 },
+            max: { type: 'array', items: { type: ['number', 'null'] }, minItems: 3, maxItems: 3 },
+          },
+          additionalProperties: false,
+        },
+        color: { type: 'string', pattern: '^#?[0-9a-fA-F]{6}$' },
+        roughness: { type: 'number', minimum: 0, maximum: 1 },
+        metalness: { type: 'number', minimum: 0, maximum: 1 },
+        opacity: { type: 'number', minimum: 0, maximum: 1 },
+        layer: { type: 'integer', minimum: 0 },
+        dry_run: { type: 'boolean', description: 'Only report what the points hit.' },
+      },
+      required: ['points'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'undo',
+    description: 'Undo your own last fills (AI steps only — the user\'s own work is never undone). Use it instead of painting over a mistake.',
+    inputSchema: {
+      type: 'object',
+      properties: { steps: { type: 'integer', minimum: 1, maximum: 20, description: 'Default 1.' } },
       additionalProperties: false,
     },
   },
@@ -194,6 +280,18 @@ function facingOf(nx, ny, nz) {
 }
 
 const r3 = (v) => Math.round(v * 1000) / 1000;
+
+/** Точка внутри рамки; null на стороне рамки — сторона открыта. */
+function inBox(x, y, z, box) {
+  if (!box) return true;
+  const lo = box.min || [], hi = box.max || [];
+  const v = [x, y, z];
+  for (let i = 0; i < 3; i++) {
+    if (typeof lo[i] === 'number' && v[i] < lo[i]) return false;
+    if (typeof hi[i] === 'number' && v[i] > hi[i]) return false;
+  }
+  return true;
+}
 const hex = (r, g, b) => '#' + [r, g, b].map((v) => Math.round(v).toString(16).padStart(2, '0')).join('');
 
 /** Имя материала из файла у треугольника: группы геометрии с именами. */
@@ -259,7 +357,13 @@ export function createMcpTools(api) {
   function describePart(list, i, geo, total, names, target, cache) {
     const tris = list[i];
     let area = 0, cx = 0, cy = 0, cz = 0, nx = 0, ny = 0, nz = 0;
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
     for (const t of tris) {
+      for (let i = 0; i < 3; i++) {
+        const v = geo.center[t * 3 + i];
+        if (v < lo[i]) lo[i] = v;
+        if (v > hi[i]) hi[i] = v;
+      }
       const a = geo.area[t];
       area += a;
       cx += geo.center[t * 3] * a; cy += geo.center[t * 3 + 1] * a; cz += geo.center[t * 3 + 2] * a;
@@ -275,6 +379,8 @@ export function createMcpTools(api) {
       center: [r3(cx / k), r3(cy / k), r3(cz / k)],
       normal: [r3(nx / nl), r3(ny / nl), r3(nz / nl)],
       facing: facingOf(nx / nl, ny / nl, nz / nl),
+      // Разброс центров треугольников: у одной грани он ноль, это нормально.
+      size: [r3(hi[0] - lo[0]), r3(hi[1] - lo[1]), r3(hi[2] - lo[2])],
       color: averageColor(target, cache, tris),
     };
     if (mats.size === 1) out.material = [...mats][0];
@@ -285,20 +391,46 @@ export function createMcpTools(api) {
     return out;
   }
 
-  function listParts(list, geo, total, names, target, cache) {
-    const order = list.map((_, i) => i);
-    const areaOf = (i) => list[i].reduce((s, t) => s + geo.area[t], 0);
-    const areas = order.map(areaOf);
-    order.sort((a, b) => areas[b] - areas[a]);
-    const shown = order.slice(0, MAX_LISTED).sort((a, b) => a - b);
-    return {
-      count: list.length,
-      ...(list.length > MAX_LISTED ? { note: `Only the ${MAX_LISTED} largest are listed.` } : {}),
-      items: shown.map((i) => describePart(list, i, geo, total, names, target, cache)),
-    };
+  /**
+   * Части по убыванию площади, с отбором и постранично. Отбор по рамке и
+   * стороне — по центру и средней нормали части.
+   */
+  function listParts(list, geo, total, names, target, cache, f = {}) {
+    const limit = Math.min(500, Math.max(1, f.limit || MAX_LISTED));
+    const offset = Math.max(0, f.offset || 0);
+    const dir = f.facing ? FACING.find(([n]) => n === f.facing)?.[1] : null;
+    const matched = [];
+    for (let i = 0; i < list.length; i++) {
+      const tris = list[i];
+      if (f.min_triangles && tris.length < f.min_triangles) continue;
+      if (f.box || dir) {
+        let a = 0, cx = 0, cy = 0, cz = 0, nx = 0, ny = 0, nz = 0;
+        for (const t of tris) {
+          const w = geo.area[t];
+          a += w;
+          cx += geo.center[t * 3] * w; cy += geo.center[t * 3 + 1] * w; cz += geo.center[t * 3 + 2] * w;
+          nx += geo.normal[t * 3] * w; ny += geo.normal[t * 3 + 1] * w; nz += geo.normal[t * 3 + 2] * w;
+        }
+        a = a || 1;
+        if (!inBox(cx / a, cy / a, cz / a, f.box)) continue;
+        if (dir) {
+          const nl = Math.hypot(nx, ny, nz) || 1;
+          if ((nx * dir[0] + ny * dir[1] + nz * dir[2]) / nl < Math.SQRT1_2) continue;
+        }
+      }
+      matched.push(i);
+    }
+    const areas = new Map(matched.map((i) => [i, list[i].reduce((s, t) => s + geo.area[t], 0)]));
+    matched.sort((a, b) => areas.get(b) - areas.get(a));
+    const page = matched.slice(offset, offset + limit).sort((a, b) => a - b);
+    const out = { count: list.length, matched: matched.length };
+    if (matched.length > offset + limit) out.note = `Listed ${page.length} of ${matched.length} matching, largest first; use offset ${offset + limit} for more.`;
+    out.items = page.map((i) => describePart(list, i, geo, total, names, target, cache));
+    return out;
   }
 
-  function describe_model({ mesh } = {}) {
+  function describe_model({ mesh, box, facing, min_triangles, limit, offset } = {}) {
+    const filter = { box, facing, min_triangles, limit, offset };
     requireModel();
     const meshes = meshesFor(mesh).map(({ mesh: m, cache, index }) => {
       const target = api.targets.get(m);
@@ -315,12 +447,12 @@ export function createMcpTools(api) {
         triangles: cache.triCount,
         bounds: { min: box.min.toArray().map(r3), max: box.max.toArray().map(r3) },
         materials: Object.entries(matCount).map(([name, triangles]) => ({ name, triangles })),
-        regions: listParts(parts.regions.list, geo, total, names, target, cache),
+        regions: listParts(parts.regions.list, geo, total, names, target, cache, filter),
         // Остров на каждый треугольник — развёртка без общих рёбер (у демо
         // так): список был бы шумом, по смыслу части дают области.
         islands: parts.islands.list.length >= cache.triCount * 0.8
           ? { count: parts.islands.list.length, note: 'Every triangle is its own UV island here; use regions instead.' }
-          : listParts(parts.islands.list, geo, total, names, target, cache),
+          : listParts(parts.islands.list, geo, total, names, target, cache, filter),
       };
     });
     return {
@@ -354,6 +486,7 @@ export function createMcpTools(api) {
           if (d < Math.SQRT1_2) continue;
         }
         const y = geo.center[t * 3 + 1];
+        if (target.box && !inBox(geo.center[t * 3], y, geo.center[t * 3 + 2], target.box)) continue;
         if (typeof target.above === 'number' && y < target.above) continue;
         if (typeof target.below === 'number' && y > target.below) continue;
         set.add(t);
@@ -363,8 +496,8 @@ export function createMcpTools(api) {
     return out;
   }
 
-  function fill({ target, color, roughness = 0.9, metalness = 0, opacity = 1, layer }) {
-    requireModel();
+  /** Проверить цвет и слой и залить наборы треугольников. */
+  function paint(hits, { color, roughness = 0.9, metalness = 0, opacity = 1, layer }) {
     const m = /^#?([0-9a-f]{6})$/i.exec(String(color || ''));
     if (!m) throw new Error('color must be #RRGGBB.');
     const n = parseInt(m[1], 16);
@@ -373,8 +506,6 @@ export function createMcpTools(api) {
     if (layer !== undefined && (layer < 0 || layer >= layers.length)) {
       throw new Error(`No layer ${layer}. Layers: ${layers.map((l) => `${l.index} "${l.name}"`).join(', ')}.`);
     }
-    const hits = select(target);
-    if (!hits.length) throw new Error('The target matched no triangles. Check the ids with describe_model.');
     let total = 0;
     for (const { mesh, set } of hits) {
       api.fillTriangles(mesh, set, {
@@ -386,6 +517,15 @@ export function createMcpTools(api) {
       total += set.size;
     }
     api.notify('fill', total);
+    return total;
+  }
+
+  function fill({ target, ...how }) {
+    requireModel();
+    const hits = select(target);
+    if (!hits.length) throw new Error('The target matched no triangles. Check the ids with describe_model.');
+    paint(hits, how);
+    const { layer } = how;
     return {
       filled: hits.map(({ mesh, set }) => ({ mesh: mesh.name, triangles: set.size })),
       layer: layer ?? api.activeLayer(),
@@ -393,30 +533,31 @@ export function createMcpTools(api) {
     };
   }
 
-  function new_layer({ name } = {}) {
-    requireModel();
-    const index = api.addLayer(name ? String(name).slice(0, 60) : null);
-    return { layer: index, layers: api.layers() };
-  }
-
-  async function render_view({ view = 'three-quarter', width = 768, height = 576 } = {}) {
-    requireModel();
+  /**
+   * Поставить ракурс снимка, отдать его камеру и вернуть вид человека тем
+   * же кадром — на экране он не мелькнёт. Одна функция на снимок и на
+   * точки `fill_at`: иначе пиксель указывал бы мимо того, что ИИ видел.
+   */
+  function withView(view, W, H, fn) {
     if (!VIEWS.includes(view)) throw new Error(`view must be one of ${VIEWS.join(', ')}.`);
-    const W = Math.min(2048, Math.max(64, width | 0));
-    const H = Math.min(2048, Math.max(64, height | 0));
-    // Вид человека не трогаем: ставим свой ракурс на время снимка и
-    // возвращаем прежний тем же кадром — на экране он не мелькнёт.
     const было = viewport.viewState();
-    let img;
     try {
       if (view !== 'current') {
         viewport.setView(view === 'three-quarter' ? 'user' : view);
         viewport.centerCamera?.();
       }
-      img = viewport.renderView(W, H, 2);
+      return fn(viewport.snapshotCamera(W, H));
     } finally {
       viewport.setViewState(было);
     }
+  }
+
+  const size = (v, def) => Math.min(2048, Math.max(64, (v | 0) || def));
+
+  async function render_view({ view = 'three-quarter', width, height, grid = false } = {}) {
+    requireModel();
+    const W = size(width, 768), H = size(height, 576);
+    const img = withView(view, W, H, () => viewport.renderView(W, H, 2));
     // Снимок прозрачный; ИИ смотрит на него на неизвестном фоне. Кладём на
     // нейтральный серый — цвета читаются как есть.
     const c = document.createElement('canvas');
@@ -428,11 +569,91 @@ export function createMcpTools(api) {
     tmp.width = W; tmp.height = H;
     tmp.getContext('2d').putImageData(img, 0, 0);
     g.drawImage(tmp, 0, 0);
+    if (grid) {
+      // Сетка с подписями в пикселях — чтобы указывать точки для fill_at.
+      g.strokeStyle = 'rgba(0,255,255,0.35)';
+      g.fillStyle = 'rgba(0,255,255,0.9)';
+      g.font = `${Math.max(10, Math.round(W / 70))}px sans-serif`;
+      g.lineWidth = 1;
+      for (let k = 1; k < 10; k++) {
+        const x = Math.round((W * k) / 10) + 0.5, y = Math.round((H * k) / 10) + 0.5;
+        g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.moveTo(0, y); g.lineTo(W, y); g.stroke();
+        g.fillText(String(Math.round((W * k) / 10)), x + 2, 12);
+        g.fillText(String(Math.round((H * k) / 10)), 2, y - 2);
+      }
+    }
     const data = c.toDataURL('image/png').split(',')[1];
     return { image: data, mimeType: 'image/png', view, width: W, height: H };
   }
 
-  const handlers = { describe_model, render_view, fill, new_layer };
+  const ray = new THREE.Raycaster();
+
+  function fill_at({ view = 'three-quarter', width, height, points, angle = 30, box, dry_run = false, ...how }) {
+    requireModel();
+    const W = size(width, 768), H = size(height, 576);
+    const a = Math.min(180, Math.max(0, +angle || 0));
+    const meshes = viewport.paintables.map((p) => p.mesh);
+    const hitsAt = withView(view, W, H, (cam) => points.map(({ x, y }) => {
+      ray.setFromCamera(new THREE.Vector2((x / W) * 2 - 1, -(y / H) * 2 + 1), cam);
+      const h = ray.intersectObjects(meshes, false)[0];
+      return h ? { mesh: h.object, tri: h.faceIndex } : null;
+    }));
+
+    const sets = new Map();        // меш → набор треугольников
+    const report = [];
+    hitsAt.forEach((h, k) => {
+      const p = points[k];
+      if (!h || h.tri == null) { report.push({ x: p.x, y: p.y, hit: false }); return; }
+      const cache = h.mesh.userData.paintCache;
+      const parts = partsOf(h.mesh, cache);
+      let set = floodFaces(cache, h.tri, a, 'geom');
+      if (box) {
+        const geo = triGeometry(h.mesh, cache);
+        set = new Set([...set].filter((t) => inBox(geo.center[t * 3], geo.center[t * 3 + 1], geo.center[t * 3 + 2], box)));
+      }
+      if (!sets.has(h.mesh)) sets.set(h.mesh, new Set());
+      for (const t of set) sets.get(h.mesh).add(t);
+      const geo = triGeometry(h.mesh, cache);
+      const tr = api.targets.get(h.mesh);
+      report.push({
+        x: p.x, y: p.y, hit: true, mesh: h.mesh.name,
+        region: parts.regions.id[h.tri],
+        triangles: set.size,
+        point: [r3(geo.center[h.tri * 3]), r3(geo.center[h.tri * 3 + 1]), r3(geo.center[h.tri * 3 + 2])],
+        color: averageColor(tr, cache, [h.tri]),
+      });
+    });
+
+    const hits = [...sets].map(([mesh, set]) => ({ mesh, set })).filter((x) => x.set.size);
+    if (!dry_run) {
+      if (!hits.length) throw new Error('No point hit the model. Check the pixels against the same render_view (view, width, height).');
+      if (!how.color) throw new Error('color is required unless dry_run is true.');
+      paint(hits, how);
+    }
+    return { dry_run, points: report, filled: dry_run ? 0 : hits.reduce((n, x) => n + x.set.size, 0) };
+  }
+
+  function undo({ steps = 1 } = {}) {
+    requireModel();
+    const h = api.history;
+    let done = 0;
+    for (let k = 0; k < Math.min(20, Math.max(1, steps | 0)); k++) {
+      const e = h.entries[h.index];
+      if (!e || e.label !== 'act.aiFill') break;   // чужую работу не трогаем
+      h.undo();
+      done++;
+    }
+    if (!done) throw new Error('Nothing to undo: the last step is not yours (or there are no steps).');
+    return { undone: done };
+  }
+
+  function new_layer({ name } = {}) {
+    requireModel();
+    const index = api.addLayer(name ? String(name).slice(0, 60) : null);
+    return { layer: index, layers: api.layers() };
+  }
+
+  const handlers = { describe_model, render_view, fill, fill_at, undo, new_layer };
 
   return {
     list: () => TOOLS,
