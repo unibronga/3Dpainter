@@ -30,28 +30,37 @@ const MAX_BODY = 1 << 20;
 
 const INSTRUCTIONS =
   '3DPainter is a tool for hand-painting low-poly 3D models. Work like a careful artist: ' +
-  'small details matter as much as big areas.\n' +
+  'small details matter as much as big areas, and every view of the reference counts.\n' +
+  '0. INVENTORY FIRST. Before painting, study the reference view by view (front, side, back) ' +
+  'and write a numbered list of every visible element with its color and the views where it ' +
+  'shows — big parts and small ones alike: hair, skin, eye whites, iris, pupils, highlights, ' +
+  'brows, mouth; collar, sleeves, cuffs, shirt and its hem (a hem showing below a jacket at ' +
+  'the sides and back too), holes and tears, pendants; belt, belt loops, buckle; trousers, ' +
+  'their holes; wristbands; boots, straps, soles. Keep this list and work through it.\n' +
   '1. Learn the model: describe_model lists its separate geometry pieces (a boot, a wristband, ' +
   'a belt loop, an eye, the rim and center of a gem). Name each piece by its bounds and by ' +
-  'close-ups: render_view {focus:{piece:id}}.\n' +
+  'close-ups: render_view {focus:{piece:id}}. Map every inventory item to pieces or regions.\n' +
   '2. Paint on your own layer (new_layer). Paint whole pieces with fill {target:{pieces:[...]}}.\n' +
   '3. A piece that carries several colors (a torso with a jacket and a shirt, a face with eye ' +
   'whites and brows, a boot with a sole) is split by its regions — describe_model {piece:id} — ' +
   'or by fill_at points on a close-up. Never split a piece with a height band (above/below): ' +
   'it cuts across faces and leaves saw-teeth, and catches the edges and inner sides of nearby ' +
-  'surfaces (a jacket hem, the underside of a collar). Before painting a split, check it with ' +
-  'fill {dry_run:true, preview:<view>, focus:{...}} from at least two sides, including from ' +
-  'below or behind: the selection comes back tinted magenta.\n' +
-  '4. Look at the reference closely, part by part, not only as a whole: eye whites, iris, ' +
-  'brows; belt, loops and buckle (loops are usually the trousers\' fabric); cuffs and ' +
-  'wristbands; soles; hems. Decide the color of every small piece from the reference.\n' +
-  '5. Review with close-ups: render_view {focus, flat:true} of the face, hands, belt area and ' +
-  'feet from front, back and sides; compare each with the same place on the reference and fix ' +
-  'with undo, not by painting over. Surfaces covered by other parts (the bottom edge and inner ' +
-  'side of a jacket behind the trousers) are seen and pointed at with isolate:{pieces:[...]} — ' +
-  'only those pieces are drawn — e.g. render_view {view:"bottom", isolate, focus}.\n' +
-  '6. Finally call find_patches: fix only leftovers (paintedBy "broad" or "none"); keep ' +
-  'patches with paintedBy "detail".';
+  'surfaces. Before painting a split, check it with fill {dry_run:true, preview:<view>, ' +
+  'focus:{...}} from at least two sides, including from below or behind: the selection comes ' +
+  'back tinted magenta.\n' +
+  '4. Never conclude that a detail "has no geometry" or "cannot be painted" until you have ' +
+  'looked for it on a close-up from the view where the reference shows it and tried fill_at ' +
+  'with dry_run there; if something covers it, use isolate:{pieces:[...]} (only those pieces ' +
+  'are drawn). Earlier runs wrongly gave up on jeans holes and on a shirt hem that were there.\n' +
+  '5. Review: compare render_view {view:"turnaround", flat:true} (front, side, back side by ' +
+  'side) with the reference sheet as a whole, then close-ups (focus, flat:true) of the face, ' +
+  'hands, belt area, hems and feet from front, back and sides. Fix with undo, not by painting ' +
+  'over.\n' +
+  '6. INVENTORY PASS. Go through your list item by item; for each, make a close-up from the ' +
+  'view where the reference shows it and confirm the color. Mark each item done or not done ' +
+  'with the reason, and fix what is not done.\n' +
+  '7. Finally call find_patches: fix only leftovers (paintedBy "broad" or "none"); keep ' +
+  'patches with paintedBy "detail". In your final reply include the inventory with its marks.';
 
 class McpServer {
   /**

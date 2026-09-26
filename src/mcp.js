@@ -67,6 +67,12 @@
  * закрывают джинсы и ремень, ни снять, ни указать точкой. Отсюда `isolate`:
  * снимок, точки и примерка только по выбранным деталям.
  *
+ * Седьмая волна — инструментов хватает, но ИИ всё ещё пропускает мелочи
+ * (подол рубашки сбоку и сзади, дыры, белки). Это внимательность, а не
+ * инструменты: в инструкции — опись по референсу и проход по ней, а здесь —
+ * разворот `turnaround` (перёд, бок, спина одной картинкой, как на листе
+ * референса), чтобы сверять весь лист разом.
+ *
  * Описания инструментов — по-английски: их читает модель, а не человек.
  */
 
@@ -137,7 +143,7 @@ export const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        view: { type: 'string', enum: VIEWS, description: 'Camera direction. "current" is what the user sees. Default "three-quarter".' },
+        view: { type: 'string', enum: [...VIEWS, 'turnaround'], description: 'Camera direction. "current" is what the user sees. "turnaround" puts front, side (right) and back side by side in one image, like a character reference sheet — compare it with the reference as a whole. Default "three-quarter".' },
         width: { type: 'integer', minimum: 64, maximum: 2048, description: 'Default 768.' },
         height: { type: 'integer', minimum: 64, maximum: 2048, description: 'Default 576.' },
         grid: { type: 'boolean', description: 'Draw a labelled pixel grid every 10% to help pick points for fill_at.' },
@@ -968,6 +974,23 @@ export function createMcpTools(api) {
 
   async function render_view({ view = 'three-quarter', width, height, grid = false, wire = false, flat = false, patches = false, focus, isolate } = {}) {
     requireModel();
+    if (view === 'turnaround') {
+      // Лист как у референса: перёд, бок, спина. Каждый вид — обычным снимком.
+      const W3 = size(width, 1536), H3 = size(height, 768);
+      const w1 = Math.floor(W3 / 3);
+      const c = document.createElement('canvas');
+      c.width = w1 * 3; c.height = H3;
+      const g = c.getContext('2d');
+      const виды = ['front', 'right', 'back'];
+      for (let i = 0; i < 3; i++) {
+        const r = await render_view({ view: виды[i], width: w1, height: H3, flat, wire, focus, isolate });
+        const im = new Image();
+        im.src = 'data:image/png;base64,' + r.image;
+        await im.decode();
+        g.drawImage(im, i * w1, 0);
+      }
+      return { image: c.toDataURL('image/png').split(',')[1], mimeType: 'image/png', view: 'turnaround', order: виды, width: c.width, height: H3 };
+    }
     const W = size(width, 768), H = size(height, 576);
     let метки = [];
     const img = withView(view, W, H, (cam) => {
