@@ -941,7 +941,12 @@ export class Viewport {
     return cam;
   }
 
-  renderView(W, H, ss = 1) {
+  /**
+   * @param {object} [opts]
+   * @param {boolean} [opts.overlay] оставить каркас меша (рёбра и вершины) —
+   *   ИИ смотрит на снимок по треугольникам; человеку в «Виде в PNG» он не нужен
+   */
+  renderView(W, H, ss = 1, opts = {}) {
     const r = this.renderer;
     const w = W * ss, h = H * ss;
 
@@ -954,7 +959,7 @@ export class Viewport {
     спрятать(this.pivotMarker);
     const безВыделения = [];
     for (const { mesh } of this.paintables) {
-      спрятать(mesh.userData.meshOverlay);
+      if (!opts.overlay) спрятать(mesh.userData.meshOverlay);
       const u = mesh.userData.selUniforms;
       if (u && u.selOn.value) { u.selOn.value = 0; безВыделения.push(u); }
     }

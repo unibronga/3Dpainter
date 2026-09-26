@@ -167,7 +167,9 @@ client paint the open model from a prompt ("red tiled roof, beige walls, blue
 door"). Turn it on in **Settings**, run the one-line `claude mcp add …` command
 it shows, and the AI can describe the model's parts, fill them with colours and
 surfaces on its own layer — by part, height, box or by pointing at pixels of
-a rendered view — undo its own steps, and render views to check its work. The server
+a rendered view — find small leftover patches and see them numbered on a wireframe render
+or on the whole UV layout, undo its own steps, and render views to check its
+work. The server
 listens on `127.0.0.1` only, requires a key and is off by default; every AI
 fill is an ordinary undo step.
 

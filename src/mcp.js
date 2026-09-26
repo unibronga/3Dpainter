@@ -28,6 +28,16 @@
  *   - описание с отбором (рамка, сторона, размер) и постранично;
  *   - `undo` — только своих шагов, чужую работу ИИ не откатывает.
  *
+ * Третья волна — владелец показал, что осталось: мелкие треугольники у
+ * воротника, у края джинсов над ботинками, у брови. На сплошном снимке ИИ их
+ * не видит. Поэтому:
+ *   - `find_patches` — программа сама делит поверхность на куски одного
+ *     цвета и называет маленькие: где, какого цвета, что вокруг;
+ *   - `render_view` рисует каркас (рёбра и вершины), номера пятен и умеет
+ *     «плоско», без света, — сверять цвет с референсом;
+ *   - `render_uv` — вся развёртка картинкой: покраска, рёбра, пятна;
+ *   - заливка по номерам пятен — исправлять точно.
+ *
  * Описания инструментов — по-английски: их читает модель, а не человек.
  */
 
@@ -94,6 +104,9 @@ export const TOOLS = [
         width: { type: 'integer', minimum: 64, maximum: 2048, description: 'Default 768.' },
         height: { type: 'integer', minimum: 64, maximum: 2048, description: 'Default 576.' },
         grid: { type: 'boolean', description: 'Draw a labelled pixel grid every 10% to help pick points for fill_at.' },
+        wire: { type: 'boolean', description: 'Draw the mesh wireframe (every triangle edge and vertex) so small polygons are visible.' },
+        flat: { type: 'boolean', description: 'Unlit colors, exactly as painted — compare colors with a reference this way.' },
+        patches: { type: 'boolean', description: 'Mark the patches from the last find_patches with numbered magenta rings (visible ones only).' },
       },
       additionalProperties: false,
     },
@@ -119,6 +132,7 @@ export const TOOLS = [
             facing: { type: 'string', enum: FACING.map(([n]) => n), description: 'Triangles whose normal is within 45 degrees of this direction.' },
             above: { type: 'number', description: 'Triangle center Y (meters) must be at least this.' },
             below: { type: 'number', description: 'Triangle center Y (meters) must be at most this.' },
+            patches: { type: 'array', items: { type: 'integer' }, description: 'Patch ids from the last find_patches.' },
             box: {
               type: 'object',
               description: 'Axis-aligned box in world meters. min/max are [x, y, z]; use null for an open side, e.g. {"min":[0.2,null,null]} is everything right of x=0.2.',
@@ -179,6 +193,50 @@ export const TOOLS = [
         dry_run: { type: 'boolean', description: 'Only report what the points hit.' },
       },
       required: ['points'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'find_patches',
+    description:
+      'Find small leftover patches: the surface is split into connected pieces of one color ' +
+      '(across UV seams), and pieces up to max_triangles are reported with where they are, ' +
+      'their color, the dominant color around them and how much of their border it covers. ' +
+      'Typical finds: a few triangles at a collar or a boot top left in the old color, a ' +
+      'missed tip of an eyebrow. Legit small details (eyes, a buckle) show up too — decide ' +
+      'with the reference. Then look at them with render_view {patches:true, wire:true} or ' +
+      'render_uv, and fix with fill {target:{patches:[...]}}. Ids live until the next call.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        mesh: { type: ['integer', 'string'] },
+        max_triangles: { type: 'integer', minimum: 1, maximum: 200, description: 'Largest piece to report. Default 12.' },
+        box: {
+          type: 'object',
+          properties: {
+            min: { type: 'array', items: { type: ['number', 'null'] }, minItems: 3, maxItems: 3 },
+            max: { type: 'array', items: { type: ['number', 'null'] }, minItems: 3, maxItems: 3 },
+          },
+          additionalProperties: false,
+        },
+        limit: { type: 'integer', minimum: 1, maximum: 400, description: 'Default 150.' },
+        include_isolated: { type: 'boolean', description: 'Also report whole separate pieces with no painted neighbours (a separate button, a wristband). Default false.' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'render_uv',
+    description:
+      'Render the whole UV unwrap of a mesh as a PNG: the current paint, every triangle edge, ' +
+      'and the patches from the last find_patches outlined in magenta with their ids. Shows ' +
+      'at once what each polygon is painted with.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        mesh: { type: ['integer', 'string'] },
+        size: { type: 'integer', minimum: 256, maximum: 2048, description: 'Default 1024.' },
+      },
       additionalProperties: false,
     },
   },
@@ -327,6 +385,55 @@ function averageColor(target, cache, tris) {
   return n ? hex(r / n, g / n, b / n) : null;
 }
 
+/* ── Пятна одного цвета ─────────────────────────────────────────── */
+
+/** Цвет каждого треугольника — тексель итоговой карты под его центром в развёртке. */
+function triColors(target, cache) {
+  const S = target.size, px = target.composite;
+  const { uv, idx, triCount } = cache;
+  const out = new Uint8Array(triCount * 3);
+  for (let t = 0; t < triCount; t++) {
+    const a = idx[t * 3], b = idx[t * 3 + 1], c = idx[t * 3 + 2];
+    const u = (uv[a * 2] + uv[b * 2] + uv[c * 2]) / 3;
+    const v = (uv[a * 2 + 1] + uv[b * 2 + 1] + uv[c * 2 + 1]) / 3;
+    const x = Math.min(S - 1, Math.max(0, Math.floor(u * S)));
+    const y = Math.min(S - 1, Math.max(0, Math.floor((1 - v) * S)));
+    const o = (y * S + x) * 4;
+    out[t * 3] = px[o]; out[t * 3 + 1] = px[o + 1]; out[t * 3 + 2] = px[o + 2];
+  }
+  return out;
+}
+
+/** Похожи ли цвета: заливки ровные, а тени в карте нет — порог небольшой. */
+const SAME = 36;
+const близко = (c, i, j) => Math.abs(c[i * 3] - c[j * 3]) + Math.abs(c[i * 3 + 1] - c[j * 3 + 1]) + Math.abs(c[i * 3 + 2] - c[j * 3 + 2]) <= SAME;
+
+/**
+ * Разбить меш на связные куски одного цвета — по смежности через сварку,
+ * то есть поперёк швов развёртки: на модели это один кусок.
+ */
+function colorPieces(cache, col) {
+  const n = cache.triCount, adj = cache.adjGeom;
+  const piece = new Int32Array(n).fill(-1);
+  const list = [];
+  for (let s = 0; s < n; s++) {
+    if (piece[s] >= 0) continue;
+    const id = list.length, tris = [s];
+    piece[s] = id;
+    for (let k = 0; k < tris.length; k++) {
+      const t = tris[k];
+      for (let e = 0; e < 3; e++) {
+        const m = adj[t * 3 + e];
+        if (m < 0 || piece[m] >= 0 || !близко(col, t, m)) continue;
+        piece[m] = id;
+        tris.push(m);
+      }
+    }
+    list.push(tris);
+  }
+  return { piece, list };
+}
+
 /* ── Инструменты ───────────────────────────────────────────────── */
 
 /**
@@ -337,6 +444,8 @@ function averageColor(target, cache, tris) {
  */
 export function createMcpTools(api) {
   const { viewport } = api;
+  /** Пятна последнего find_patches: номер → { mesh, tris, center }. */
+  let lastPatches = new Map();
 
   function requireModel() {
     if (!viewport.model || !viewport.paintables.length) {
@@ -470,7 +579,19 @@ export function createMcpTools(api) {
     const dir = target.facing ? FACING.find(([n]) => n === target.facing)?.[1] : null;
     if (target.facing && !dir) throw new Error(`Unknown facing "${target.facing}".`);
     const wantMat = target.material ? String(target.material).toLowerCase() : null;
+    // Пятна — готовые наборы треугольников из последнего find_patches.
+    const byPatch = new Map();
+    if (target.patches) {
+      for (const id of target.patches) {
+        const p = lastPatches.get(id);
+        if (!p) throw new Error(`No patch ${id}. Call find_patches first (ids live until the next call).`);
+        if (!byPatch.has(p.mesh)) byPatch.set(p.mesh, new Set());
+        for (const t of p.tris) byPatch.get(p.mesh).add(t);
+      }
+    }
     for (const { mesh, cache } of meshes) {
+      if (target.patches && !byPatch.has(mesh)) continue;
+      const inPatch = byPatch.get(mesh);
       const parts = partsOf(mesh, cache);
       const geo = triGeometry(mesh, cache);
       const names = wantMat ? materialNames(mesh, cache.triCount) : null;
@@ -478,6 +599,7 @@ export function createMcpTools(api) {
       const islands = target.islands ? new Set(target.islands) : null;
       const set = new Set();
       for (let t = 0; t < cache.triCount; t++) {
+        if (inPatch && !inPatch.has(t)) continue;
         if (regions && !regions.has(parts.regions.id[t])) continue;
         if (islands && !islands.has(parts.islands.id[t])) continue;
         if (wantMat && (names[t] || '').toLowerCase() !== wantMat) continue;
@@ -554,10 +676,23 @@ export function createMcpTools(api) {
 
   const size = (v, def) => Math.min(2048, Math.max(64, (v | 0) || def));
 
-  async function render_view({ view = 'three-quarter', width, height, grid = false } = {}) {
+  async function render_view({ view = 'three-quarter', width, height, grid = false, wire = false, flat = false, patches = false } = {}) {
     requireModel();
     const W = size(width, 768), H = size(height, 576);
-    const img = withView(view, W, H, () => viewport.renderView(W, H, 2));
+    let метки = [];
+    const img = withView(view, W, H, (cam) => {
+      // Каркас и «плоско» — только на время снимка: у человека на экране ничего не меняется.
+      const былКаркас = viewport.verticesVisible, былРежим = viewport.displayMode;
+      try {
+        if (wire) viewport.setVerticesVisible(true);
+        if (flat) viewport.setDisplayMode('flat');
+        if (patches) метки = visiblePatches(cam, W, H);
+        return viewport.renderView(W, H, 2, { overlay: wire });
+      } finally {
+        if (wire && !былКаркас) viewport.setVerticesVisible(false);
+        if (flat && былРежим !== 'flat') viewport.setDisplayMode(былРежим);
+      }
+    });
     // Снимок прозрачный; ИИ смотрит на него на неизвестном фоне. Кладём на
     // нейтральный серый — цвета читаются как есть.
     const c = document.createElement('canvas');
@@ -582,8 +717,153 @@ export function createMcpTools(api) {
         g.fillText(String(Math.round((H * k) / 10)), 2, y - 2);
       }
     }
+    if (метки.length) {
+      g.lineWidth = 2;
+      g.font = `bold ${Math.max(11, Math.round(W / 64))}px sans-serif`;
+      for (const { id, x, y } of метки) {
+        g.strokeStyle = '#ff2bd6';
+        g.beginPath(); g.arc(x, y, 7, 0, Math.PI * 2); g.stroke();
+        g.fillStyle = '#000';
+        g.fillText(String(id), x + 9, y - 5);
+        g.fillStyle = '#ff2bd6';
+        g.fillText(String(id), x + 8, y - 6);
+      }
+    }
     const data = c.toDataURL('image/png').split(',')[1];
-    return { image: data, mimeType: 'image/png', view, width: W, height: H };
+    return { image: data, mimeType: 'image/png', view, width: W, height: H,
+      ...(patches ? { marked: метки.map((m) => m.id), hidden: [...lastPatches.keys()].filter((id) => !метки.some((m) => m.id === id)).length } : {}) };
+  }
+
+  /**
+   * Пятна, которые видны с этой камеры: центр пятна в кадре и первый луч
+   * к нему упирается в само пятно, а не в то, что перед ним.
+   */
+  function visiblePatches(cam, W, H) {
+    const meshes = viewport.paintables.map((p) => p.mesh);
+    const out = [];
+    const v = new THREE.Vector3();
+    for (const [id, p] of lastPatches) {
+      v.fromArray(p.center).project(cam);
+      if (v.z > 1 || Math.abs(v.x) > 1 || Math.abs(v.y) > 1) continue;
+      ray.setFromCamera(new THREE.Vector2(v.x, v.y), cam);
+      const h = ray.intersectObjects(meshes, false)[0];
+      if (!h || h.object !== p.mesh || !p.set.has(h.faceIndex)) continue;
+      out.push({ id, x: (v.x + 1) / 2 * W, y: (1 - v.y) / 2 * H });
+    }
+    return out;
+  }
+
+  function find_patches({ mesh, max_triangles = 12, box, limit = 150, include_isolated = false } = {}) {
+    requireModel();
+    lastPatches = new Map();
+    const report = [];
+    let found = 0;
+    for (const { mesh: m, cache } of meshesFor(mesh)) {
+      const target = api.targets.get(m);
+      const col = triColors(target, cache);
+      const { piece, list } = colorPieces(cache, col);
+      const geo = triGeometry(m, cache);
+      const adj = cache.adjGeom;
+      for (let id = 0; id < list.length; id++) {
+        const tris = list[id];
+        if (tris.length > max_triangles) continue;
+        let a = 0, cx = 0, cy = 0, cz = 0;
+        for (const t of tris) {
+          const w = geo.area[t] || 1e-9;
+          a += w; cx += geo.center[t * 3] * w; cy += geo.center[t * 3 + 1] * w; cz += geo.center[t * 3 + 2] * w;
+        }
+        const center = [cx / a, cy / a, cz / a];
+        if (!inBox(center[0], center[1], center[2], box)) continue;
+        // Что вокруг: соседние куски по числу общих рёбер.
+        const вокруг = new Map();
+        let рёбер = 0;
+        for (const t of tris) {
+          for (let e = 0; e < 3; e++) {
+            const n = adj[t * 3 + e];
+            if (n < 0 || piece[n] === id) continue;
+            рёбер++;
+            вокруг.set(piece[n], (вокруг.get(piece[n]) || 0) + 1);
+          }
+        }
+        // Отдельная деталь без соседей (пуговица, напульсник) — не пятно, а
+        // целая часть: её видно и в describe_model. Без просьбы не шумим.
+        if (!рёбер && !include_isolated) continue;
+        let главный = -1, сколько = 0;
+        for (const [k, c] of вокруг) if (c > сколько) { главный = k; сколько = c; }
+        const t0 = tris[0];
+        const pid = lastPatches.size;
+        lastPatches.set(pid, { mesh: m, tris, set: new Set(tris), center });
+        found++;
+        if (report.length < limit) {
+          const g = главный >= 0 ? list[главный][0] : -1;
+          report.push({
+            id: pid,
+            mesh: m.name,
+            triangles: tris.length,
+            center: center.map(r3),
+            facing: facingOf(geo.normal[t0 * 3], geo.normal[t0 * 3 + 1], geo.normal[t0 * 3 + 2]),
+            color: hex(col[t0 * 3], col[t0 * 3 + 1], col[t0 * 3 + 2]),
+            around: g >= 0 ? hex(col[g * 3], col[g * 3 + 1], col[g * 3 + 2]) : null,
+            // Какую долю границы держит главный сосед: 1 — пятно целиком
+            // внутри одного цвета, почти наверняка недокрас.
+            aroundShare: рёбер ? Math.round((сколько / рёбер) * 100) / 100 : 0,
+            enclosed: рёбер > 0 && сколько === рёбер,
+          });
+        }
+      }
+    }
+    report.sort((a, b) => b.aroundShare - a.aroundShare || a.triangles - b.triangles);
+    return {
+      found,
+      ...(found > report.length ? { note: `Listed ${report.length} of ${found}; narrow with box or max_triangles.` } : {}),
+      patches: report,
+      hint: 'See them with render_view {patches:true, wire:true} from a few sides; fix with fill {target:{patches:[ids]}, color: <around>}.',
+    };
+  }
+
+  function render_uv({ mesh, size: S0 = 1024 } = {}) {
+    requireModel();
+    const [{ mesh: m, cache }] = meshesFor(mesh ?? 0);
+    const target = api.targets.get(m);
+    const S = Math.min(2048, Math.max(256, S0 | 0));
+    const c = document.createElement('canvas');
+    c.width = c.height = S;
+    const g = c.getContext('2d');
+    g.fillStyle = '#222';
+    g.fillRect(0, 0, S, S);
+    g.imageSmoothingEnabled = false;
+    g.drawImage(target.canvas, 0, 0, S, S);
+    const { uv, idx, triCount } = cache;
+    const P = (vi) => [uv[vi * 2] * S, (1 - uv[vi * 2 + 1]) * S];
+    // Рёбра всех треугольников — тонко: на больших моделях их тысячи.
+    g.strokeStyle = 'rgba(0,0,0,0.35)';
+    g.lineWidth = triCount > 3000 ? 0.5 : 1;
+    g.beginPath();
+    for (let t = 0; t < triCount; t++) {
+      const [a, b, d] = [P(idx[t * 3]), P(idx[t * 3 + 1]), P(idx[t * 3 + 2])];
+      g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.lineTo(d[0], d[1]); g.closePath();
+    }
+    g.stroke();
+    // Пятна последнего find_patches — обводка и номер.
+    g.strokeStyle = '#ff2bd6';
+    g.lineWidth = 2;
+    g.font = `bold ${Math.round(S / 70)}px sans-serif`;
+    let помечено = 0;
+    for (const [id, p] of lastPatches) {
+      if (p.mesh !== m) continue;
+      let sx = 0, sy = 0;
+      g.beginPath();
+      for (const t of p.tris) {
+        const [a, b, d] = [P(idx[t * 3]), P(idx[t * 3 + 1]), P(idx[t * 3 + 2])];
+        g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.lineTo(d[0], d[1]); g.closePath();
+        sx += (a[0] + b[0] + d[0]) / 3; sy += (a[1] + b[1] + d[1]) / 3;
+      }
+      g.stroke();
+      g.fillStyle = '#ff2bd6';
+      g.fillText(String(id), sx / p.tris.length + 4, sy / p.tris.length - 4);
+      помечено++;
+    }
+    return { image: c.toDataURL('image/png').split(',')[1], mimeType: 'image/png', mesh: m.name, size: S, patches: помечено };
   }
 
   const ray = new THREE.Raycaster();
@@ -653,7 +933,7 @@ export function createMcpTools(api) {
     return { layer: index, layers: api.layers() };
   }
 
-  const handlers = { describe_model, render_view, fill, fill_at, undo, new_layer };
+  const handlers = { describe_model, render_view, find_patches, render_uv, fill, fill_at, undo, new_layer };
 
   return {
     list: () => TOOLS,
@@ -677,7 +957,7 @@ export function createMcpTools(api) {
         if (res && res.image) {
           return { content: [
             { type: 'image', data: res.image, mimeType: res.mimeType },
-            { type: 'text', text: JSON.stringify({ view: res.view, width: res.width, height: res.height }) },
+            { type: 'text', text: JSON.stringify(Object.fromEntries(Object.entries(res).filter(([k]) => k !== 'image' && k !== 'mimeType'))) },
           ] };
         }
         return { content: [{ type: 'text', text: JSON.stringify(res, null, 1) }] };

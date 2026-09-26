@@ -33,7 +33,10 @@ const INSTRUCTIONS =
   'render_view, then paint on your own layer (new_layer). Paint large areas with fill ' +
   '(height, facing, box), details with fill_at: point at pixels of a render_view image ' +
   '(same view/width/height; grid:true helps), dry_run first if unsure. Check with ' +
-  'render_view from several sides and fix mistakes with undo rather than painting over them.';
+  'render_view from several sides (flat:true to compare colors) and fix mistakes with undo ' +
+  'rather than painting over them. Before finishing, call find_patches to catch small ' +
+  'leftover polygons (collars, boot tops, eyebrow tips), look at them with render_view ' +
+  '{patches:true, wire:true} or render_uv, and fill the leftovers by patch id.';
 
 class McpServer {
   /**
