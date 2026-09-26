@@ -49,7 +49,9 @@ function sourceGroups(mesh, triCount) {
     if (!rgb) continue;
     const from = Math.max(0, Math.floor(g.start / 3));
     const to = Math.min(triCount, Math.floor((g.start + g.count) / 3));
-    if (to > from) out.push({ from, to, rgb });
+    // Имя материала — для ИИ: у моделей из Blender части часто уже названы.
+    const имя = (mats[g.materialIndex ?? 0] || mats[0])?.name || null;
+    if (to > from) out.push({ from, to, rgb, name: имя });
   }
   return out;
 }

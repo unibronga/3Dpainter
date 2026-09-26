@@ -162,6 +162,14 @@ roughness, metalness and transparency maps, layer settings, model orientation,
 camera, material and brush. It is a plain zip inside. Undo history is not
 stored.
 
+**AI painting (MCP).** In the desktop app you can let Claude or any other MCP
+client paint the open model from a prompt ("red tiled roof, beige walls, blue
+door"). Turn it on in **Settings**, run the one-line `claude mcp add …` command
+it shows, and the AI can describe the model's parts, fill them with colours and
+surfaces on its own layer, and render views to check its work. The server
+listens on `127.0.0.1` only, requires a key and is off by default; every AI
+fill is an ordinary undo step.
+
 **Round trip.** A model saved with its paint opens with it again — GLB, or
 OBJ together with its `.mtl` and `.png` — and you keep painting where you
 left off. Multi-file saves go into one folder, chosen once.
@@ -219,10 +227,13 @@ unwrap in Blender.
 
 ## Status and roadmap
 
-Working and usable, version 0.4.0. New in 0.4.0: freehand and polygonal lasso
-selection, an interface scale setting for large screens, tooltips on every
-control, a rotation step for the orbit tool, **View to PNG** and saving the
-open UV map on its own. Not yet done:
+Working and usable, version 0.6.0. New in 0.6.0: the **Effects** menu with
+pixel art and anime (cel shading) views, and **AI painting over MCP** — Claude
+or another MCP client can describe, fill and render the open model. Not yet
+done:
+
+- AI painting, second wave: brush strokes along surface points, undo, brush
+  and material presets.
 
 - Occlusion for shapes, text and the lasso: back-facing polygons are skipped,
   but a chimney does not cast a "shadow" onto the roof behind it.

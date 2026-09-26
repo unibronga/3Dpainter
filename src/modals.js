@@ -1127,12 +1127,55 @@ export function createSettingsModal(api) {
   const подписьСтарта = elT('div', 'set-hint', 'settings.startupShow');
   m.body.appendChild(подписьСтарта);
 
+  // ИИ (MCP) — только в приложении: сервер живёт в оболочке Electron.
+  const хост = window.painterHost?.mcp;
+  let синхрИИ = () => {};
+  if (хост) {
+    const галкаИИ = el('input');
+    галкаИИ.type = 'checkbox';
+    галкаИИ.className = 'set-check';
+    ряды.push(ряд(m.body, 'settings.mcp', 'settings.mcpHint', галкаИИ));
+    const блокИИ = el('div', 'set-mcp');
+    const состояние = el('div', 'set-hint');
+    const команда = el('code', 'set-mcp-cmd');
+    const кнопки = el('div', 'set-mcp-btns');
+    const копировать = elT('button', 'btn', 'settings.mcpCopy');
+    const новыйКлюч = elT('button', 'btn', 'settings.mcpNewKey');
+    кнопки.append(копировать, новыйКлюч);
+    блокИИ.append(elT('div', 'set-hint', 'settings.mcpCommand'), команда, кнопки, состояние);
+    m.body.appendChild(блокИИ);
+
+    let st = null;
+    const строка = (s) => `claude mcp add --transport http 3dpainter ${s.url} --header "Authorization: Bearer ${s.token}"`;
+    const показать = (s) => {
+      st = s;
+      галкаИИ.checked = s.enabled;
+      блокИИ.style.display = s.enabled ? '' : 'none';
+      команда.textContent = строка(s);
+      состояние.textContent = s.error ? t('settings.mcpError', s.error)
+        : s.running ? t('settings.mcpRunning', s.url) : '';
+      состояние.classList.toggle('bad', !!s.error);
+    };
+    галкаИИ.addEventListener('change', async () => показать(await хост.setEnabled(галкаИИ.checked)));
+    новыйКлюч.addEventListener('click', async () => показать(await хост.newKey()));
+    копировать.addEventListener('click', async () => {
+      if (!st) return;
+      try {
+        await navigator.clipboard.writeText(строка(st));
+        копировать.textContent = t('settings.mcpCopied');
+        setTimeout(() => { копировать.textContent = t('settings.mcpCopy'); }, 1500);
+      } catch { /* буфер недоступен — строку можно выделить руками */ }
+    });
+    синхрИИ = async () => показать(await хост.state());
+  }
+
   const готово = elT('button', 'btn accent', 'settings.close');
   готово.addEventListener('click', () => m.close());
   m.foot.append(готово);
 
   // Надписи переводит applyDOM(); здесь — только значения управления.
   function синхронизировать() {
+    синхрИИ();
     выборЯзыка.value = api.getLang();
     показатьМасштаб(api.getUiScale());
     выборТекстуры.value = api.getTexSize();

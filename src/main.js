@@ -17,6 +17,7 @@ import { createBrushModal, createMaterialModal, createHelpModal,
          createSaveAsModal, createSettingsModal, createViewPngModal, createAboutModal,
          createEffectModal } from './modals.js';
 import { LEVELS_OFF } from './effects.js';
+import { createMcpTools } from './mcp.js';
 import значокПрограммы from './app-icon.png';
 import { drawMaterialBall } from './matball.js';
 import { t, setLang, getLang, onLangChange, applyDOM, LANGS } from './i18n.js';
@@ -284,8 +285,10 @@ function пикселиКарты(карта, S) {
   }
 }
 
-function addLayer() {
-  eachTarget((t) => { t.activeIndex = state.activeLayer; t.addLayer(); });
+/** @param {string} [name] своё имя; без него — номером. Кнопка передаёт событие — его не берём. */
+function addLayer(name) {
+  const имя = typeof name === 'string' && name.trim() ? name.trim() : null;
+  eachTarget((t) => { t.activeIndex = state.activeLayer; t.addLayer(имя); });
   state.activeLayer += 1;
   syncLayers();
 }
@@ -1784,6 +1787,47 @@ const settingsModal = createSettingsModal({
   setUiScale: (v) => setUiScale(v),
   getStartup: () => loadPrefs().showWelcome !== false,
   setStartup: (v) => savePrefs({ showWelcome: v }),
+});
+
+/* ── ИИ: инструменты для MCP ───────────────────────────────────── */
+
+/**
+ * Что страница даёт ИИ. Сервер живёт в оболочке Electron и зовёт
+ * `window.__mcp.call(…)`; в браузере объект есть, но звать его некому.
+ * Заливка ИИ — тот же `Stroke`, что у человека: шаг в истории, ⌘Z отменяет.
+ */
+function aiFill(mesh, set, { color, roughness, metalness, alpha }, layer) {
+  const target = targets.get(mesh);
+  const cache = mesh.userData.paintCache;
+  if (!target || !cache) return;
+  target.activeIndex = layer ?? state.activeLayer;
+  const s = new Stroke(target, cache, {
+    channel: 'rgba', mode: 'paint', color, color2: color,
+    opacity: 1, alpha, roughness, metalness, pattern: { id: 'none' },
+  });
+  s.fillTriangles(set);
+  const entry = s.end('act.aiFill');
+  if (entry) history.push(entry);
+  target.activeIndex = state.activeLayer;
+  state.painted = true;
+  viewport.syncTransparency();
+  refreshUV();
+  drawUVRow(mesh);
+}
+
+window.__mcp = createMcpTools({
+  viewport,
+  targets,
+  history,
+  modelName: () => имяМодели(),
+  activeLayer: () => state.activeLayer,
+  layers: () => (refLayers() || []).map((L, i) => ({
+    index: i, name: L.auto ? t('layers.name', L.auto) : L.name, visible: L.visible !== false,
+  })),
+  addLayer: (name) => { addLayer(name); return state.activeLayer; },
+  fillTriangles: aiFill,
+  projectBytes: () => собратьПроект(),
+  notify: (what, n) => setStatusHint(t('mcp.filled', n)),
 });
 
 /* ── Эффекты вида ──────────────────────────────────────────────── */

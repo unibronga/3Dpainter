@@ -1441,3 +1441,21 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 .modal-back.fx-float .modal { pointer-events: auto; width: 320px; box-shadow: 0 10px 40px #000a; }
 .fx-modal .set-scale .val { width: 44px; }
 .fx-modal .set-scale .set-range { width: 130px; }
+
+/* ── ИИ (MCP) в настройках ─────────────────────────────────────── */
+
+.set-mcp { padding: 0 0 11px; }
+.set-mcp-cmd {
+  display: block;
+  margin: 6px 0;
+  padding: 7px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+  word-break: break-all;
+  user-select: all;
+}
+.set-mcp-btns { display: flex; gap: 6px; margin-bottom: 4px; }
+.set-hint.bad { color: #e06c5a; }
