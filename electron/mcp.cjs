@@ -29,18 +29,27 @@ const DEFAULT_PORT = 5290;
 const MAX_BODY = 1 << 20;
 
 const INSTRUCTIONS =
-  '3DPainter is a tool for hand-painting low-poly 3D models. Start with describe_model and a ' +
-  'render_view, then paint on your own layer (new_layer). The model is usually built from ' +
-  'separate pieces (a boot, a sleeve, a wristband, a belt loop, the rim and center of a gem): ' +
-  'name them from describe_model.pieces and paint whole parts with fill {target:{pieces:[...]}} ' +
-  'first — it follows each part\'s own border. A piece that holds several colors (a torso with ' +
-  'a jacket and a shirt hem showing below it, front and back) is split by its regions: ' +
-  'describe_model {piece: id} lists them. Before painting a split, check it with fill ' +
-  '{dry_run:true, preview:"back"} (and other views): the selection comes back tinted magenta. ' +
-  'fill_at on render_view pixels (same view/width/height; grid:true) is for small details. Check with render_view from several sides (flat:true to compare colors) ' +
-  'and fix mistakes with undo, not by painting over them. Finally call find_patches: fix only ' +
-  'leftovers (paintedBy "broad" or "none"); patches with paintedBy "detail" are details you ' +
-  'painted on purpose (holes, eyes, gem parts) — keep them.';
+  '3DPainter is a tool for hand-painting low-poly 3D models. Work like a careful artist: ' +
+  'small details matter as much as big areas.\n' +
+  '1. Learn the model: describe_model lists its separate geometry pieces (a boot, a wristband, ' +
+  'a belt loop, an eye, the rim and center of a gem). Name each piece by its bounds and by ' +
+  'close-ups: render_view {focus:{piece:id}}.\n' +
+  '2. Paint on your own layer (new_layer). Paint whole pieces with fill {target:{pieces:[...]}}.\n' +
+  '3. A piece that carries several colors (a torso with a jacket and a shirt, a face with eye ' +
+  'whites and brows, a boot with a sole) is split by its regions — describe_model {piece:id} — ' +
+  'or by fill_at points on a close-up. Never split a piece with a height band (above/below): ' +
+  'it cuts across faces and leaves saw-teeth, and catches the edges and inner sides of nearby ' +
+  'surfaces (a jacket hem, the underside of a collar). Before painting a split, check it with ' +
+  'fill {dry_run:true, preview:<view>, focus:{...}} from at least two sides, including from ' +
+  'below or behind: the selection comes back tinted magenta.\n' +
+  '4. Look at the reference closely, part by part, not only as a whole: eye whites, iris, ' +
+  'brows; belt, loops and buckle (loops are usually the trousers\' fabric); cuffs and ' +
+  'wristbands; soles; hems. Decide the color of every small piece from the reference.\n' +
+  '5. Review with close-ups: render_view {focus, flat:true} of the face, hands, belt area and ' +
+  'feet from front, back and sides; compare each with the same place on the reference and fix ' +
+  'with undo, not by painting over.\n' +
+  '6. Finally call find_patches: fix only leftovers (paintedBy "broad" or "none"); keep ' +
+  'patches with paintedBy "detail".';
 
 class McpServer {
   /**

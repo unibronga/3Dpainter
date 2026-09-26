@@ -56,6 +56,12 @@
  *   - пробная заливка с картинкой: `dry_run` + `preview` — выбранное
  *     подсвечено на снимке, ИИ видит, что заденет, до того как красить.
  *
+ * Шестая волна — владелец: «модель плохо видит оригинал». Белки глаз не
+ * покрашены, шлёвки не того цвета, подошва зубцами. На снимке всей фигуры
+ * глаз — несколько десятков пикселей, шлёвка — пару. Отсюда `focus`: крупный
+ * план детали или рамки в снимке, в точках fill_at и в примерке заливки, и
+ * обход крупных планов в инструкции.
+ *
  * Описания инструментов — по-английски: их читает модель, а не человек.
  */
 
@@ -133,6 +139,20 @@ export const TOOLS = [
         wire: { type: 'boolean', description: 'Draw the mesh wireframe (every triangle edge and vertex) so small polygons are visible.' },
         flat: { type: 'boolean', description: 'Unlit colors, exactly as painted — compare colors with a reference this way.' },
         patches: { type: 'boolean', description: 'Mark the patches from the last find_patches with numbered magenta rings (visible ones only).' },
+        focus: {
+          type: 'object',
+          description: 'Close-up: frame the camera on one piece or a box (keeping the view direction) so small details — eyes, belt loops, soles — are large in the image.',
+          properties: {
+            piece: { type: 'integer', minimum: 0, description: 'Piece id from describe_model.' },
+            mesh: { type: ['integer', 'string'], description: 'Mesh of the piece; default the first.' },
+            box: { type: 'object', properties: {
+              min: { type: 'array', items: { type: ['number', 'null'] }, minItems: 3, maxItems: 3 },
+              max: { type: 'array', items: { type: ['number', 'null'] }, minItems: 3, maxItems: 3 },
+            }, additionalProperties: false },
+            margin: { type: 'number', minimum: 1, maximum: 4, description: 'Extra room around it. Default 1.15.' },
+          },
+          additionalProperties: false,
+        },
       },
       additionalProperties: false,
     },
@@ -179,6 +199,20 @@ export const TOOLS = [
         layer: { type: 'integer', minimum: 0, description: 'Layer index; default is the active layer.' },
         dry_run: { type: 'boolean', description: 'Paint nothing; report how many triangles the target selects.' },
         preview: { type: 'string', enum: VIEWS, description: 'With dry_run: also return a render from this view with the selection tinted magenta — see what would be hit before painting.' },
+        focus: {
+          type: 'object',
+          description: 'Close-up: frame the camera on one piece or a box (keeping the view direction) so small details — eyes, belt loops, soles — are large in the image.',
+          properties: {
+            piece: { type: 'integer', minimum: 0, description: 'Piece id from describe_model.' },
+            mesh: { type: ['integer', 'string'], description: 'Mesh of the piece; default the first.' },
+            box: { type: 'object', properties: {
+              min: { type: 'array', items: { type: ['number', 'null'] }, minItems: 3, maxItems: 3 },
+              max: { type: 'array', items: { type: ['number', 'null'] }, minItems: 3, maxItems: 3 },
+            }, additionalProperties: false },
+            margin: { type: 'number', minimum: 1, maximum: 4, description: 'Extra room around it. Default 1.15.' },
+          },
+          additionalProperties: false,
+        },
       },
       required: ['target'],
       additionalProperties: false,
@@ -198,7 +232,7 @@ export const TOOLS = [
       type: 'object',
       properties: {
         view: { type: 'string', enum: VIEWS, description: 'Same as in render_view. Default "three-quarter".' },
-        width: { type: 'integer', minimum: 64, maximum: 2048, description: 'Same as in render_view. Default 768.' },
+        width: { type: 'integer', minimum: 64, maximum: 2048, description: 'Same as in render_view (and pass the same focus). Default 768.' },
         height: { type: 'integer', minimum: 64, maximum: 2048, description: 'Same as in render_view. Default 576.' },
         points: {
           type: 'array', minItems: 1, maxItems: 64,
@@ -221,6 +255,20 @@ export const TOOLS = [
         layer: { type: 'integer', minimum: 0 },
         dry_run: { type: 'boolean', description: 'Only report what the points hit.' },
         preview: { type: 'string', enum: VIEWS, description: 'With dry_run: also return a render from this view with the would-be fill tinted magenta.' },
+        focus: {
+          type: 'object',
+          description: 'Close-up: frame the camera on one piece or a box (keeping the view direction) so small details — eyes, belt loops, soles — are large in the image.',
+          properties: {
+            piece: { type: 'integer', minimum: 0, description: 'Piece id from describe_model.' },
+            mesh: { type: ['integer', 'string'], description: 'Mesh of the piece; default the first.' },
+            box: { type: 'object', properties: {
+              min: { type: 'array', items: { type: ['number', 'null'] }, minItems: 3, maxItems: 3 },
+              max: { type: 'array', items: { type: ['number', 'null'] }, minItems: 3, maxItems: 3 },
+            }, additionalProperties: false },
+            margin: { type: 'number', minimum: 1, maximum: 4, description: 'Extra room around it. Default 1.15.' },
+          },
+          additionalProperties: false,
+        },
       },
       required: ['points'],
       additionalProperties: false,
@@ -711,7 +759,7 @@ export function createMcpTools(api) {
    * Снимок с подсвеченным выбором: временный слой поверх всех, пурпурная
    * заливка, снимок, слой убран. В историю не идёт, покраску не трогает.
    */
-  async function previewOf(hits, view) {
+  async function previewOf(hits, view, focus) {
     const добавлено = [];
     try {
       for (const { mesh, set } of hits) {
@@ -728,7 +776,7 @@ export function createMcpTools(api) {
         tg.compositeRect(null);
         добавлено.push({ tg, index: tg.activeIndex, былАктивный });
       }
-      return await render_view({ view, width: 768, height: 1024, flat: true });
+      return await render_view({ view, width: focus ? 1024 : 768, height: 1024, flat: true, focus });
     } finally {
       for (const { tg, index, былАктивный } of добавлено.reverse()) {
         tg.removeLayer(index);
@@ -738,13 +786,13 @@ export function createMcpTools(api) {
     }
   }
 
-  async function fill({ target, dry_run = false, preview, ...how }) {
+  async function fill({ target, dry_run = false, preview, focus, ...how }) {
     requireModel();
     const hits = select(target);
     if (!hits.length) throw new Error('The target matched no triangles. Check the ids with describe_model.');
     if (dry_run) {
       const res = { dry_run: true, selected: hits.map(({ mesh, set }) => ({ mesh: mesh.name, triangles: set.size })) };
-      if (preview) return { ...(await previewOf(hits, preview)), ...res };
+      if (preview) return { ...(await previewOf(hits, preview, focus)), ...res };
       return res;
     }
     // Прицельно — когда названа сама часть; широко — когда отбор по признакам.
@@ -763,23 +811,74 @@ export function createMcpTools(api) {
    * же кадром — на экране он не мелькнёт. Одна функция на снимок и на
    * точки `fill_at`: иначе пиксель указывал бы мимо того, что ИИ видел.
    */
-  function withView(view, W, H, fn) {
+  /** Рамка крупного плана в мире: деталь целиком или заданная рамка. */
+  function focusBox(focus) {
+    const b = new THREE.Box3();
+    if (typeof focus.piece === 'number') {
+      const [{ mesh, cache }] = meshesFor(focus.mesh ?? 0);
+      const parts = partsOf(mesh, cache);
+      const tris = parts.pieces.list[focus.piece];
+      if (!tris) throw new Error(`No piece ${focus.piece}.`);
+      mesh.updateWorldMatrix(true, false);
+      const v = new THREE.Vector3();
+      for (const t of tris) for (let k = 0; k < 3; k++) b.expandByPoint(v.fromArray(cache.pos, cache.idx[t * 3 + k] * 3).applyMatrix4(mesh.matrixWorld));
+    } else if (focus.box) {
+      const всё = new THREE.Box3().setFromObject(viewport.model);
+      const lo = focus.box.min || [], hi = focus.box.max || [];
+      b.min.set(...[0, 1, 2].map((i) => (typeof lo[i] === 'number' ? lo[i] : всё.min.getComponent(i))));
+      b.max.set(...[0, 1, 2].map((i) => (typeof hi[i] === 'number' ? hi[i] : всё.max.getComponent(i))));
+    } else {
+      throw new Error('focus needs piece or box.');
+    }
+    return b;
+  }
+
+  /**
+   * Навести камеру на рамку, не меняя направления взгляда: центр — в рамку,
+   * расстояние — чтобы описанная сфера рамки влезла в кадр с полями.
+   */
+  function aimAt(box, margin = 1.15) {
+    const c = box.getCenter(new THREE.Vector3());
+    const r = Math.max(1e-3, box.getSize(new THREE.Vector3()).length() / 2) * margin;
+    const cam = viewport.camera;
+    const dir = cam.position.clone().sub(viewport.controls.target).normalize();
+    viewport.controls.target.copy(c);
+    if (cam.isPerspectiveCamera) {
+      const dist = r / Math.sin((cam.fov * Math.PI) / 360);
+      cam.position.copy(c).addScaledVector(dir, dist);
+      cam.near = Math.max(1e-4, dist / 200);
+      cam.far = dist + r * 4;
+    } else {
+      cam.position.copy(c).addScaledVector(dir, r * 4);
+      viewport._updateOrthoFrustum(r * 2);
+    }
+    cam.zoom = 1;
+    cam.lookAt(c);
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld(true);
+  }
+
+  function withView(view, W, H, fn, focus) {
     if (!VIEWS.includes(view)) throw new Error(`view must be one of ${VIEWS.join(', ')}.`);
     const было = viewport.viewState();
+    const cam = viewport.camera;
+    const ближняя = cam.near, дальняя = cam.far;
     try {
       if (view !== 'current') {
         viewport.setView(view === 'three-quarter' ? 'user' : view);
         viewport.centerCamera?.();
       }
+      if (focus) aimAt(focusBox(focus), focus.margin);
       return fn(viewport.snapshotCamera(W, H));
     } finally {
+      if (focus && cam.isPerspectiveCamera) { cam.near = ближняя; cam.far = дальняя; cam.updateProjectionMatrix(); }
       viewport.setViewState(было);
     }
   }
 
   const size = (v, def) => Math.min(2048, Math.max(64, (v | 0) || def));
 
-  async function render_view({ view = 'three-quarter', width, height, grid = false, wire = false, flat = false, patches = false } = {}) {
+  async function render_view({ view = 'three-quarter', width, height, grid = false, wire = false, flat = false, patches = false, focus } = {}) {
     requireModel();
     const W = size(width, 768), H = size(height, 576);
     let метки = [];
@@ -795,7 +894,7 @@ export function createMcpTools(api) {
         if (wire && !былКаркас) viewport.setVerticesVisible(false);
         if (flat && былРежим !== 'flat') viewport.setDisplayMode(былРежим);
       }
-    });
+    }, focus);
     // Снимок прозрачный; ИИ смотрит на него на неизвестном фоне. Кладём на
     // нейтральный серый — цвета читаются как есть.
     const c = document.createElement('canvas');
@@ -984,7 +1083,7 @@ export function createMcpTools(api) {
 
   const ray = new THREE.Raycaster();
 
-  async function fill_at({ view = 'three-quarter', width, height, points, angle = 30, box, dry_run = false, preview, ...how }) {
+  async function fill_at({ view = 'three-quarter', width, height, points, angle = 30, box, dry_run = false, preview, focus, ...how }) {
     requireModel();
     const W = size(width, 768), H = size(height, 576);
     const a = Math.min(180, Math.max(0, +angle || 0));
@@ -993,7 +1092,7 @@ export function createMcpTools(api) {
       ray.setFromCamera(new THREE.Vector2((x / W) * 2 - 1, -(y / H) * 2 + 1), cam);
       const h = ray.intersectObjects(meshes, false)[0];
       return h ? { mesh: h.object, tri: h.faceIndex } : null;
-    }));
+    }), focus);
 
     const sets = new Map();        // меш → набор треугольников
     const report = [];
@@ -1023,7 +1122,7 @@ export function createMcpTools(api) {
 
     const hits = [...sets].map(([mesh, set]) => ({ mesh, set })).filter((x) => x.set.size);
     if (dry_run && preview && hits.length) {
-      return { ...(await previewOf(hits, preview)), dry_run: true, points: report };
+      return { ...(await previewOf(hits, preview, focus)), dry_run: true, points: report };
     }
     if (!dry_run) {
       if (!hits.length) throw new Error('No point hit the model. Check the pixels against the same render_view (view, width, height).');
