@@ -81,9 +81,11 @@ const state = {
   // поднять или урезать программа, а следующая модель считается отсюда.
   texSizeBase: 1024,
   showWire: true,
-  display: 'material',
+  viewMode: 'material',   // показ модели: material | clay | wire | normals
+  unlit: false,            // «Без света»: цвета ровно как в текстуре
+  facets: false,           // «Грани»: плоские грани, как в low-poly
+  light: { power: 1, angle: 0 },
   grid: true,
-  vertices: false,
   uvOpen: false,
   painted: false,
 };
@@ -1592,16 +1594,44 @@ function applyView(name) { viewport.setView(name); syncViewUI(); }
 
 function setProjection(kind) { viewport.setProjection(kind); syncViewUI(); }
 
-function setDisplayMode(mode) {
-  state.display = mode;
-  viewport.setDisplayMode(mode);
+/**
+ * Показ модели — как строка вида в 3DModelist. Глина и нормали подменяют
+ * материал покраски целиком; сетка кладёт рёбра поверх покраски; «Без
+ * света» — та же покраска без светотени.
+ */
+function applyShading() {
+  const m = state.viewMode;
+  viewport.setDisplayMode(m === 'clay' || m === 'normals' ? m : state.unlit ? 'flat' : 'material');
+  viewport.setVerticesVisible(m === 'wire');
+  viewport.setFacets(state.facets);
   syncViewUI();
+}
+function setViewMode(mode) { state.viewMode = mode; applyShading(); }
+function setUnlit(on) { state.unlit = on; applyShading(); }
+function setFacets(on) { state.facets = on; savePrefs({ facets: on }); applyShading(); }
+
+function setLight(patch) {
+  Object.assign(state.light, patch);
+  viewport.setLight(state.light);
+  savePrefs({ light: state.light });
+  syncLightUI();
+}
+function setSpin(on) { viewport.setSpin(on); syncLightUI(); }
+
+function syncLightUI() {
+  const L = state.light;
+  $('light-power').value = L.power;
+  $('light-power-val').textContent = Math.round(L.power * 100) + '%';
+  $('light-angle').value = L.angle;
+  $('light-angle-val').textContent = L.angle + '°';
+  $('light-spin').checked = viewport.spin;
+  $('light-unlit').checked = state.unlit;
 }
 
 function setGrid(on) { state.grid = on; viewport.setGridVisible(on); syncViewUI(); }
 
-function setVertices(on) { state.vertices = on; viewport.setVerticesVisible(on); syncViewUI(); }
 
+const lightPop = $('light-pop');
 function syncViewUI() {
   const cur = viewport.currentViewName();
   document.querySelectorAll('#view-flyout button').forEach((b) => {
@@ -1610,9 +1640,11 @@ function syncViewUI() {
     b.classList.toggle('on', cur !== 'user' && b.dataset.view === cur);
   });
   $('ov-proj').classList.toggle('on', viewport.projection === 'ortho');
-  $('ov-display').classList.toggle('on', state.display === 'flat');
   $('ov-grid').classList.toggle('on', state.grid);
-  $('ov-verts').classList.toggle('on', state.vertices);
+  document.querySelectorAll('#view-mode button').forEach((b) => b.classList.toggle('on', b.dataset.mode === state.viewMode));
+  $('vm-facets').classList.toggle('on', state.facets);
+  $('ov-light').classList.toggle('on', lightPop.classList.contains('open'));
+  syncLightUI();
 }
 
 const flyout = $('view-flyout');
@@ -1620,6 +1652,7 @@ function closeFlyout() { flyout.classList.remove('open'); $('ov-views').classLis
 
 $('ov-views').addEventListener('click', () => {
   closePoseFlyout();
+  closeLightPop();
   const open = flyout.classList.toggle('open');
   $('ov-views').classList.toggle('on', open);
 });
@@ -1670,6 +1703,7 @@ function applyPose(что) {
   viewport.frameModel(true);
   syncViewUI();
   syncPoseUI();
+  syncModelInfo();
   setStatusHint(t(что === 'reset' ? 'status.poseReset' : 'status.poseSet'));
 }
 
@@ -1715,6 +1749,7 @@ const poseFlyout = $('pose-flyout');
 function closePoseFlyout() { poseFlyout.classList.remove('open'); $('ov-pose').classList.remove('on'); }
 $('ov-pose').addEventListener('click', () => {
   closeFlyout();
+  closeLightPop();
   спрятатьПодсказкуПоложения();
   const open = poseFlyout.classList.toggle('open');
   $('ov-pose').classList.toggle('on', open);
@@ -1730,9 +1765,31 @@ poseFlyout.querySelectorAll('button').forEach((b) => {
 
 $('ov-center').addEventListener('click', () => viewport.centerCamera());
 $('ov-proj').addEventListener('click', () => setProjection(viewport.projection === 'ortho' ? 'persp' : 'ortho'));
-$('ov-display').addEventListener('click', () => setDisplayMode(state.display === 'flat' ? 'material' : 'flat'));
 $('ov-grid').addEventListener('click', () => setGrid(!state.grid));
-$('ov-verts').addEventListener('click', () => setVertices(!state.vertices));
+document.querySelectorAll('#view-mode button').forEach((b) => {
+  b.addEventListener('click', () => setViewMode(b.dataset.mode));
+});
+$('vm-facets').addEventListener('click', () => setFacets(!state.facets));
+
+/* ── Свет: окошко у кнопки колонки ─────────────────────────────── */
+
+function closeLightPop() { lightPop.classList.remove('open'); $('ov-light').classList.remove('on'); }
+$('ov-light').addEventListener('click', () => {
+  closeFlyout();
+  closePoseFlyout();
+  const open = lightPop.classList.toggle('open');
+  $('ov-light').classList.toggle('on', open);
+});
+document.addEventListener('pointerdown', (e) => {
+  if (!lightPop.classList.contains('open')) return;
+  if (inside(lightPop, e.target) || inside($('ov-light'), e.target)) return;
+  closeLightPop();
+});
+$('light-power').addEventListener('input', (e) => setLight({ power: Number(e.target.value) }));
+$('light-angle').addEventListener('input', (e) => setLight({ angle: Number(e.target.value) }));
+$('light-spin').addEventListener('change', (e) => setSpin(e.target.checked));
+$('light-unlit').addEventListener('change', (e) => setUnlit(e.target.checked));
+$('light-reset').addEventListener('click', () => setLight({ power: 1, angle: 0 }));
 
 /* ── Панели ────────────────────────────────────────────────────── */
 
@@ -2004,6 +2061,7 @@ function afterModelLoaded(report, key) {
 
   syncStatusCounts();
   syncModelNotes();
+  syncModelInfo();
 
   state.texSize = собрано.size;
 }
@@ -2041,6 +2099,25 @@ function syncModelNotes() {
   }
   uvEl.textContent = notes.join(' · ');
   uvEl.style.color = report.overlapping?.length ? 'var(--danger)' : '';
+}
+
+/**
+ * Строка над моделью, как в 3DModelist: ширина × глубина × высота в метрах,
+ * треугольники, формат файла. Пишется кодом и переписывается сменой языка.
+ */
+function syncModelInfo() {
+  const box = $('model-info');
+  if (!viewport.model) { box.textContent = ''; return; }
+  const b = new THREE.Box3().setFromObject(viewport.stand);
+  const d = b.getSize(new THREE.Vector3());
+  const tris = viewport.paintables.reduce((n, p) => n + p.cache.triCount, 0);
+  const i = modelKey.lastIndexOf(':');
+  const ext = modelKey === 'demo' ? t('info.demo') : (modelKey.slice(0, i > 0 ? i : undefined).split('.').pop() || '').toUpperCase();
+  box.textContent = [
+    t('info.size', d.x.toFixed(2), d.z.toFixed(2), d.y.toFixed(2)),
+    t('info.tris', tris.toLocaleString(getLang())),
+    ext,
+  ].filter(Boolean).join(' · ');
 }
 
 /** Счётчик треугольников: разделитель разрядов зависит от языка. */
@@ -2364,7 +2441,7 @@ async function собратьПроект() {
     activeLayer: state.activeLayer,
     pose: viewport.pose(),
     view: viewport.viewState(),
-    display: state.display,
+    display: state.unlit ? 'flat' : 'material',
     material: {
       color: state.color, color2: state.color2, roughness: state.roughness,
       metalness: state.metalness, opacity: state.opacity, pattern: state.pattern,
@@ -2461,7 +2538,7 @@ async function openProject(buffer, fileName) {
 
       if (meta.pose) { viewport.setPose(meta.pose); savePose(meta.pose); }
       viewport.setViewState(meta.view);
-      if (meta.display) setDisplayMode(meta.display);
+      if (meta.display) setUnlit(meta.display === 'flat');
       if (meta.material) {
         const { name, ...остальное } = meta.material;
         setMaterial({ ...остальное, name: name || (() => t('mat.paint')) });
@@ -2679,10 +2756,15 @@ const menuBar = new MenuBar($('menubar'), [
     { label: () => t('view.pivot.local'), radio: () => state.pivot === 'local', action: () => setPivot('local') },
     { label: () => t('view.pivot.camera'), radio: () => state.pivot === 'camera', action: () => setPivot('camera') },
     '-',
-    { label: () => t('view.flat'), checked: () => state.display === 'flat',
-      action: () => setDisplayMode(state.display === 'flat' ? 'material' : 'flat') },
+    { label: () => t('vm.material'), radio: () => state.viewMode === 'material', action: () => setViewMode('material') },
+    { label: () => t('vm.clay'), radio: () => state.viewMode === 'clay', action: () => setViewMode('clay') },
+    { label: () => t('vm.wire'), radio: () => state.viewMode === 'wire', action: () => setViewMode('wire') },
+    { label: () => t('vm.normals'), radio: () => state.viewMode === 'normals', action: () => setViewMode('normals') },
+    '-',
+    { label: () => t('vm.facets'), checked: () => state.facets, action: () => setFacets(!state.facets) },
+    { label: () => t('light.unlit'), checked: () => state.unlit, action: () => setUnlit(!state.unlit) },
+    { label: () => t('light.spin'), checked: () => viewport.spin, action: () => setSpin(!viewport.spin) },
     { label: () => t('view.grid'), checked: () => state.grid, action: () => setGrid(!state.grid) },
-    { label: () => t('view.wire'), checked: () => state.vertices, action: () => setVertices(!state.vertices) },
   ] },
 
   { title: () => t('menu.tool'), items: [
@@ -2758,6 +2840,7 @@ onLangChange(() => {
   syncShapeUI();
   syncStatusCounts();
   syncModelNotes();
+  syncModelInfo();
   // Список развёрток строится кодом: «N трис» на вчерашнем языке остался бы
   // висеть, пока не откроют другую модель.
   renderUVList();
@@ -2788,7 +2871,13 @@ syncShapeUI();
 setTool('brush');
 setProjection('persp');
 setGrid(true);
-setVertices(false);
+{
+  const p = loadPrefs();
+  state.facets = !!p.facets;
+  if (p.light) Object.assign(state.light, p.light);
+  viewport.setLight(state.light);
+}
+applyShading();
 afterModelLoaded(viewport.loadDemo());
 setPivot(loadPrefs().pivot || 'local');
 syncViewUI();

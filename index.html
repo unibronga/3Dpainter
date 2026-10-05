@@ -10,7 +10,7 @@
        белый лист, кнопки браузера, Times. Показывает страницу сам style.css
        — значит, ровно в тот миг, когда он применился. -->
   <style>
-    html { background: #1b1d21; }
+    html { background: #191f25; }
     body { visibility: hidden; }
   </style>
 </head>
@@ -81,9 +81,6 @@
 
     <div class="spacer"></div>
 
-    <button class="btn" id="btn-undo" data-i18n="ui.undo" data-i18n-title="tip.undo" title="Отменить (Cmd/Ctrl+Z)">Отменить</button>
-    <button class="btn" id="btn-redo" data-i18n="ui.redo" data-i18n-title="tip.redo" title="Вернуть (Cmd/Ctrl+Shift+Z)">Вернуть</button>
-    <div class="sep"></div>
     <button class="btn icon" id="btn-tools-toggle" data-i18n-title="tip.tools" title="Колонка инструментов">
       <svg viewBox="0 0 24 24"><rect x="3" y="3" width="6" height="18" rx="1.5"/><rect x="11" y="3" width="10" height="18" rx="1.5" opacity=".35"/></svg>
     </button>
@@ -161,71 +158,96 @@
            видна на любом фоне. -->
       <svg id="lasso-preview"><path class="under"/><path class="over"/><rect width="7" height="7"/></svg>
 
-      <!-- Управление видом поверх вьюпорта: там же, где смотришь. -->
+      <!-- Строка вида — как в 3DModelist: отмена, режим показа, грани, кадр. -->
+      <div id="view-bar">
+        <div class="vseg">
+          <button id="btn-undo" data-i18n-title="tip.undo" title="Отменить (Cmd/Ctrl+Z)"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
+          <button id="btn-redo" data-i18n-title="tip.redo" title="Вернуть (Cmd/Ctrl+Shift+Z)"><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
+        </div>
+        <div class="vseg" id="view-mode">
+          <button data-mode="material" class="on" data-i18n="vm.material" data-i18n-title="tip.vm.material">Материалы</button>
+          <button data-mode="clay" data-i18n="vm.clay" data-i18n-title="tip.vm.clay">Глина</button>
+          <button data-mode="wire" data-i18n="vm.wire" data-i18n-title="tip.vm.wire">Сетка</button>
+          <button data-mode="normals" data-i18n="vm.normals" data-i18n-title="tip.vm.normals">Нормали</button>
+        </div>
+        <button class="vchip" id="vm-facets" data-i18n="vm.facets" data-i18n-title="tip.vm.facets">Грани</button>
+        <button class="vchip" id="ov-center" data-i18n="vm.fit" data-i18n-title="tip.center">Кадр</button>
+      </div>
+      <!-- Размеры и треугольники — пишет код, ключа в разметке нет. -->
+      <div id="model-info"></div>
+
+      <!-- Куб ориентации и под ним колонка вида: точка вращения, виды,
+           положение, проекция, пол, свет. Окошки открываются слева от кнопки. -->
       <div id="view-overlay">
-        <div class="overlay-row">
-          <div class="pivot-seg" id="pivot-seg" data-i18n-title="tip.pivot" title="Точка, вокруг которой вращается и приближается вид">
-            <button data-pivot="world" data-i18n-title="tip.pivotWorld" title="Вокруг начала координат мира (0, 0, 0)">
+        <div id="viewcube-host"></div>
+        <div class="rail" id="view-rail">
+          <div class="rail-group" id="pivot-seg">
+            <button class="rail-btn" data-pivot="world" data-i18n-title="tip.pivotWorld" title="Вокруг начала координат мира (0, 0, 0)">
               <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><ellipse cx="12" cy="12" rx="8.5" ry="3.6"/><path d="M12 3.5v17"/></svg>
             </button>
-            <button data-pivot="local" data-i18n-title="tip.pivotLocal" title="Вокруг центра объекта">
+            <button class="rail-btn" data-pivot="local" data-i18n-title="tip.pivotLocal" title="Вокруг центра объекта">
               <svg viewBox="0 0 24 24"><path d="M12 3.5 19.5 8v8L12 20.5 4.5 16V8z"/><path d="M4.5 8 12 12.2 19.5 8"/><path d="M12 12.2v8.3" opacity=".45"/><circle cx="12" cy="12.2" r="2" fill="currentColor" stroke="none"/></svg>
             </button>
-            <button data-pivot="camera" data-i18n-title="tip.pivotCamera" title="Вокруг точки, на которую смотрим">
+            <button class="rail-btn" data-pivot="camera" data-i18n-title="tip.pivotCamera" title="Вокруг точки, на которую смотрим">
               <svg viewBox="0 0 24 24"><path d="M3 8.5a2 2 0 0 1 2-2h3l1.4-2h5.2L16 6.5h3a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="12.5" r="3.2"/></svg>
             </button>
           </div>
-        <div class="overlay-strip">
-          <button class="obtn" id="ov-views" data-i18n-title="tip.views" title="Виды: спереди, сзади, слева, справа, сверху, снизу (1–4, 6, 7, 0)">
-            <svg viewBox="0 0 24 24"><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5 12 12l8-4.5"/><path d="M12 12v9"/></svg>
-          </button>
-          <button class="obtn" id="ov-pose" data-i18n-title="tip.pose" title="Положение модели: где у неё перед и верх">
-            <svg viewBox="0 0 24 24"><circle cx="12" cy="5.5" r="2.2"/><path d="M12 8v7"/><path d="M8 11h8"/><path d="m9 20 3-5 3 5"/><path d="M4.5 16.5a8.5 3 0 0 0 15 0" opacity=".55"/><path d="m18.2 15 1.3 1.5-1.8.6" opacity=".55"/></svg>
-          </button>
-          <button class="obtn" id="ov-center" data-i18n-title="tip.center" title="Вписать модель в кадр (Home)">
-            <svg viewBox="0 0 24 24"><path d="M4 9V5a1 1 0 0 1 1-1h4"/><path d="M15 4h4a1 1 0 0 1 1 1v4"/><path d="M20 15v4a1 1 0 0 1-1 1h-4"/><path d="M9 20H5a1 1 0 0 1-1-1v-4"/><circle cx="12" cy="12" r="2.6"/></svg>
-          </button>
-          <button class="obtn" id="ov-proj" data-i18n-title="tip.proj" title="Перспектива / ортография (5)">
+          <div class="rail-sep"></div>
+          <div class="rail-item">
+            <button class="rail-btn" id="ov-views" data-i18n-title="tip.views" title="Виды: спереди, сзади, слева, справа, сверху, снизу (1–4, 6, 7, 0)">
+              <svg viewBox="0 0 24 24"><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5 12 12l8-4.5"/><path d="M12 12v9"/></svg>
+            </button>
+            <div class="view-flyout rail-pop" id="view-flyout">
+              <div class="pop-title" data-i18n="views.title">Виды</div>
+              <button data-view="front"><span data-i18n="view.short.front">спереди</span><i>1</i></button>
+              <button data-view="back"><span data-i18n="view.short.back">сзади</span><i>2</i></button>
+              <button data-view="left"><span data-i18n="view.short.left">слева</span><i>3</i></button>
+              <button data-view="right"><span data-i18n="view.short.right">справа</span><i>4</i></button>
+              <button data-view="top"><span data-i18n="view.short.top">сверху</span><i>6</i></button>
+              <button data-view="bottom"><span data-i18n="view.short.bottom">снизу</span><i>7</i></button>
+              <button data-view="user">3/4<i>0</i></button>
+            </div>
+          </div>
+          <div class="rail-item">
+            <button class="rail-btn" id="ov-pose" data-i18n-title="tip.pose" title="Положение модели: где у неё перед и верх">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="5.5" r="2.2"/><path d="M12 8v7"/><path d="M8 11h8"/><path d="m9 20 3-5 3 5"/><path d="M4.5 16.5a8.5 3 0 0 0 15 0" opacity=".55"/><path d="m18.2 15 1.3 1.5-1.8.6" opacity=".55"/></svg>
+            </button>
+            <!-- Подсказка после открытия: где у модели перед, в файле не записано. -->
+            <button class="pose-callout rail-pop" id="pose-callout">
+              <b data-i18n="pose.calloutTitle">Модель стоит не лицом?</b>
+              <span data-i18n="pose.calloutText">Поверните вид к её лицу и нажмите здесь «Это перед» — положение запомнится.</span>
+            </button>
+            <!-- Положение модели: перед и верх задаёт человек, камерой. -->
+            <div class="view-flyout pose-flyout rail-pop" id="pose-flyout">
+              <div class="pop-title" data-i18n="pose.title">Положение модели</div>
+              <button data-pose="front" data-i18n-title="tip.poseFront" title="Поверните вид так, чтобы модель смотрела на вас, и нажмите"><span data-i18n="pose.front">Это перед</span></button>
+              <button data-pose="up" data-i18n-title="tip.poseUp" title="Для моделей, лежащих на боку: смотрите на то, что должно быть верхом, и нажмите"><span data-i18n="pose.up">Это верх</span></button>
+              <button data-pose="left"><span data-i18n="pose.left">Повернуть на 90° влево</span></button>
+              <button data-pose="right"><span data-i18n="pose.right">Повернуть на 90° вправо</span></button>
+              <button data-pose="reset"><span data-i18n="pose.reset">Как в файле</span></button>
+            </div>
+          </div>
+          <button class="rail-btn" id="ov-proj" data-i18n-title="tip.proj" title="Перспектива / ортография (5)">
             <svg viewBox="0 0 24 24"><path d="M3 6.5 12 4l9 2.5v11L12 20l-9-2.5z"/><path d="M8 8.2v7.6"/><path d="M16 8.2v7.6"/></svg>
           </button>
-          <button class="obtn" id="ov-display" data-i18n-title="tip.display" title="Показ: материал / плоско">
-            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none"/></svg>
+          <div class="rail-sep"></div>
+          <button class="rail-btn" id="ov-grid" data-i18n-title="tip.grid" title="Сетка пола">
+            <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
           </button>
-          <button class="obtn" id="ov-verts" data-i18n-title="tip.verts" title="Сетка модели: рёбра и вершины">
-            <svg viewBox="0 0 24 24"><path d="M12 4 19 8v8l-7 4-7-4V8z"/><circle cx="12" cy="4" r="1.7" fill="currentColor"/><circle cx="19" cy="8" r="1.7" fill="currentColor"/><circle cx="19" cy="16" r="1.7" fill="currentColor"/><circle cx="12" cy="20" r="1.7" fill="currentColor"/><circle cx="5" cy="16" r="1.7" fill="currentColor"/><circle cx="5" cy="8" r="1.7" fill="currentColor"/></svg>
-          </button>
-          <button class="obtn" id="ov-grid" data-i18n-title="tip.grid" title="Сетка пола">
-            <svg viewBox="0 0 24 24"><path d="M3 3h18v18H3z"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
-          </button>
+          <div class="rail-item">
+            <button class="rail-btn" id="ov-light" data-i18n-title="tip.light" title="Свет: сила и поворот, вращение модели">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+            </button>
+            <div class="rail-pop light-pop" id="light-pop">
+              <div class="pop-title" data-i18n="light.title">Свет</div>
+              <label class="pop-row"><span data-i18n="light.power">Сила</span><input type="range" id="light-power" min="0.3" max="2" step="0.05" value="1"><span class="val" id="light-power-val">100%</span></label>
+              <label class="pop-row"><span data-i18n="light.angle">Поворот</span><input type="range" id="light-angle" min="0" max="360" step="5" value="0"><span class="val" id="light-angle-val">0°</span></label>
+              <label class="pop-check"><input type="checkbox" id="light-spin"><span data-i18n="light.spin">Вращать модель</span></label>
+              <label class="pop-check" data-i18n-title="tip.unlit" title="Цвета ровно как в текстуре — без светотени"><input type="checkbox" id="light-unlit"><span data-i18n="light.unlit">Без света</span></label>
+              <button class="btn ghost" id="light-reset" data-i18n="light.reset" data-i18n-title="tip.lightReset" title="Свет как по умолчанию">Сбросить</button>
+            </div>
+          </div>
         </div>
-        </div>
-
-        <div class="view-flyout" id="view-flyout">
-          <button data-view="front"><span data-i18n="view.short.front">спереди</span><i>1</i></button>
-          <button data-view="back"><span data-i18n="view.short.back">сзади</span><i>2</i></button>
-          <button data-view="left"><span data-i18n="view.short.left">слева</span><i>3</i></button>
-          <button data-view="right"><span data-i18n="view.short.right">справа</span><i>4</i></button>
-          <button data-view="top"><span data-i18n="view.short.top">сверху</span><i>6</i></button>
-          <button data-view="bottom"><span data-i18n="view.short.bottom">снизу</span><i>7</i></button>
-          <button data-view="user">3/4<i>0</i></button>
-        </div>
-
-        <!-- Подсказка после открытия: где у модели перед, в файле не записано. -->
-        <button class="pose-callout" id="pose-callout">
-          <b data-i18n="pose.calloutTitle">Модель стоит не лицом?</b>
-          <span data-i18n="pose.calloutText">Поверните вид к её лицу и нажмите здесь «Это перед» — положение запомнится.</span>
-        </button>
-
-        <!-- Положение модели: перед и верх задаёт человек, камерой. -->
-        <div class="view-flyout pose-flyout" id="pose-flyout">
-          <button data-pose="front" data-i18n-title="tip.poseFront" title="Поверните вид так, чтобы модель смотрела на вас, и нажмите"><span data-i18n="pose.front">Это перед</span></button>
-          <button data-pose="up" data-i18n-title="tip.poseUp" title="Для моделей, лежащих на боку: смотрите на то, что должно быть верхом, и нажмите"><span data-i18n="pose.up">Это верх</span></button>
-          <button data-pose="left"><span data-i18n="pose.left">Повернуть на 90° влево</span></button>
-          <button data-pose="right"><span data-i18n="pose.right">Повернуть на 90° вправо</span></button>
-          <button data-pose="reset"><span data-i18n="pose.reset">Как в файле</span></button>
-        </div>
-
-        <div id="viewcube-host"></div>
       </div>
     </div>
     <div id="splitter" data-i18n-title="tip.splitter" title="Потянуть — ширина развёртки"></div>

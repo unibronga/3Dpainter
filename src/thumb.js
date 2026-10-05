@@ -33,7 +33,7 @@ export function снятьСВьюпорта(холстВьюпорта) {
     const к = document.createElement('canvas');
     к.width = к.height = СТОРОНА;
     const ctx = к.getContext('2d');
-    ctx.fillStyle = '#1b1d21';
+    ctx.fillStyle = '#191f25';
     ctx.fillRect(0, 0, СТОРОНА, СТОРОНА);
 
     // Берём из кадра центральный квадрат: модель скадрирована по центру,
@@ -71,7 +71,7 @@ export async function нарисоватьПревью(буфер, имя, со�
 
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
     renderer.setSize(СТОРОНА, СТОРОНА, false);
-    renderer.setClearColor(0x1b1d21, 1);
+    renderer.setClearColor(0x191f25, 1);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
 

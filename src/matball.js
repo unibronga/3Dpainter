@@ -25,9 +25,9 @@ const HALF_FILL = norm([FILL[0], FILL[1], FILL[2] + 1]);
 /** Шахматка под шаром: без неё прозрачность материала ничем себя не выдаёт. */
 function drawChecker(ctx, w, h) {
   const step = Math.max(6, Math.round(w / 12));
-  ctx.fillStyle = '#2a2d32';
+  ctx.fillStyle = '#28303a';
   ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = '#34383e';
+  ctx.fillStyle = '#323b46';
   for (let y = 0; y < h; y += step) {
     for (let x = ((y / step) | 0) % 2 ? step : 0; x < w; x += step * 2) {
       ctx.fillRect(x, y, step, step);

@@ -151,6 +151,8 @@ export class Viewport {
     // Тональной компрессии нет намеренно: в инструменте покраски цвет на
     // экране должен совпадать с цветом в палитре, а не «киношно» гаситься.
     this.renderer.toneMapping = THREE.NoToneMapping;
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     // Полотно вьюпорта кладём ПЕРВЫМ и помечаем классом: внутри #viewport
     // лежит ещё и полотно куба ориентации, и без явного различия под общий
@@ -159,7 +161,7 @@ export class Viewport {
     container.insertBefore(this.renderer.domElement, container.firstChild);
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x15171a);
+    this.scene.background = stageBackground();
 
     // Две камеры живут одновременно, переключение — подмена активной: так
     // ортография не теряет положение, набранное в перспективе.
@@ -191,6 +193,11 @@ export class Viewport {
     };
     this.controls.enableZoom = false;
     this._bindNavigation();
+    // Пока кнопка зажата (мазок, вращение, сдвиг), модель не уезжает из-под руки.
+    const el = this.renderer.domElement;
+    el.addEventListener('pointerdown', () => { this._held = true; });
+    window.addEventListener('pointerup', () => { this._held = false; });
+    window.addEventListener('pointercancel', () => { this._held = false; });
 
     this._buildEnvironment();
     this._buildLights();
@@ -207,7 +214,14 @@ export class Viewport {
 
     this.model = null;
     this.paintables = [];   // [{mesh, cache}]
-    this.displayMode = 'material';
+    this.displayMode = 'material';   // material | flat | clay | normals
+    this.facets = false;             // плоские грани (flatShading)
+    this.spin = false;               // модель вращается сама, как на подиуме
+    this._held = false;              // кнопка мыши зажата во вьюпорте — вращение ждёт
+    this._lastTick = performance.now();
+    // Глина и нормали — общие на все меши: в них нет карты покраски.
+    this._clayMat = new THREE.MeshLambertMaterial({ color: 0xc9cdd3, side: THREE.DoubleSide });
+    this._normalsMat = facingMaterial();
     this.gridVisible = true;
     this.verticesVisible = false;
     // Вокруг чего вращаем и приближаем: мир, центр объекта или точка взгляда.
@@ -238,30 +252,97 @@ export class Viewport {
    * покрашенное железо выходит чёрным пятном.
    *
    * Яркость держим умеренной — инструмент про цвет, и подмешивать в него
-   * много отражённого света нельзя.
+   * много отражённого света нельзя. И ещё потому, что окружение светит со
+   * всех сторон: при 0.6 оно высветляло теневую сторону почти до освещённой
+   * (замер: 188 против 184), и поворот солнца не читался. Оно поворачивается
+   * вместе с солнцем (_placeLights).
    */
   _buildEnvironment() {
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    this.scene.environmentIntensity = 0.6;
+    this.scene.environmentIntensity = 0.3;
     pmrem.dispose();
   }
 
   _buildLights() {
-    // Свет ровный и нейтральный: кисть должна ложиться тем цветом, который
-    // выбран, а не тем, который вылепила подсветка.
-    this.scene.add(new THREE.AmbientLight(0xffffff, 1.05));
+    // Один главный источник — «солнце»: у модели ясная светлая и теневая
+    // сторона, на полу тень. Поворот обходит модель по кругу, и это видно.
+    // Рассеянный свет снизу держит теневую сторону читаемой: краска там
+    // темнее, но не уходит в черноту. Цвет без светотени — «Без света».
+    const ambient = new THREE.AmbientLight(0xffffff, 0.25);
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x60646c, 0.55);
+    const key = new THREE.DirectionalLight(0xffffff, 3.2);
+    key.castShadow = true;
+    key.shadow.mapSize.set(2048, 2048);
+    key.shadow.bias = -0.0004;
+    // Подсветка с обратной стороны — слабая, без тени: только чтобы теневая
+    // сторона не была плоской.
+    const fill = new THREE.DirectionalLight(0xffffff, 0.3);
+    this.scene.add(ambient, hemi, key, fill, key.target, fill.target);
+    this._key = key;
+    this._fill = fill;
+    this._lights = [ambient, hemi, key, fill].map((l) => ({ l, base: l.intensity }));
+    this._envBase = this.scene.environmentIntensity;
+    this.light = { power: 1, angle: 0 };
+    // Слева спереди, ~38° над горизонтом: в начальном ракурсе (камера справа
+    // спереди) одна видимая стена в свету, другая в тени, тень на полу — на
+    // виду справа сзади. Свет из-за камеры делал обе стены одинаково белыми.
+    this._sunDir = new THREE.Vector3(-4, 6, 6).normalize();
 
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x60646c, 0.8);
-    this.scene.add(hemi);
+    // Пол, на который ложится тень. Сам пол прозрачный — видна только тень.
+    this.shadowFloor = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
+      new THREE.ShadowMaterial({ opacity: 0.32 }),
+    );
+    this.shadowFloor.receiveShadow = true;
+    служебное(this.shadowFloor);
+    this.scene.add(this.shadowFloor);
+  }
 
-    const key = new THREE.DirectionalLight(0xffffff, 1.4);
-    key.position.set(5, 9, 6);
-    this.scene.add(key);
+  /**
+   * Сила (доля от обычного) и поворот солнца вокруг модели — как окошко
+   * «Свет» в 3DModelist. Окружение (отражения металла) — в ту же силу.
+   */
+  setLight({ power = this.light.power, angle = this.light.angle } = {}) {
+    this.light = { power, angle };
+    for (const { l, base } of this._lights) l.intensity = base * power;
+    this.scene.environmentIntensity = this._envBase * power;
+    this._placeLights();
+  }
 
-    const fill = new THREE.DirectionalLight(0xffffff, 0.5);
-    fill.position.set(-6, 3, -5);
-    this.scene.add(fill);
+  /**
+   * Солнце ставится вокруг модели: направление — поворот вокруг вертикали
+   * через её центр, тень считается в рамке по её размеру. Зовётся каждый
+   * кадр — модель могли открыть, повернуть подставкой или сменить.
+   */
+  _placeLights() {
+    const box = new THREE.Box3().setFromObject(this.stand);
+    const c = box.isEmpty() ? new THREE.Vector3() : box.getCenter(new THREE.Vector3());
+    const size = box.isEmpty() ? new THREE.Vector3(1, 1, 1) : box.getSize(new THREE.Vector3());
+    const span = Math.max(size.x, size.y, size.z) || 1;
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), THREE.MathUtils.degToRad(this.light.angle));
+    const dir = this._sunDir.clone().applyQuaternion(q);
+    this.scene.environmentRotation.set(0, THREE.MathUtils.degToRad(this.light.angle), 0);
+
+    const key = this._key;
+    key.target.position.copy(c);
+    key.position.copy(c).addScaledVector(dir, span * 2);
+    key.target.updateMatrixWorld();
+    const sc = key.shadow.camera;
+    sc.left = sc.bottom = -span;
+    sc.right = sc.top = span;
+    sc.near = span * 0.5;
+    sc.far = span * 4;
+    sc.updateProjectionMatrix();
+
+    const back = new THREE.Vector3(-dir.x, 0.35, -dir.z).normalize();
+    this._fill.target.position.copy(c);
+    this._fill.position.copy(c).addScaledVector(back, span * 2);
+    this._fill.target.updateMatrixWorld();
+
+    const floorY = box.isEmpty() ? 0 : box.min.y;
+    this.shadowFloor.position.set(c.x, floorY - span * 0.001, c.z);
+    this.shadowFloor.scale.setScalar(span * 8);
   }
 
   _buildHelpers() {
@@ -469,6 +550,7 @@ export class Viewport {
       if (object3D.userData.materialsFromFile) {
         o.userData.sourceGroups = sourceGroups(o, cache.triCount);
       }
+      o.castShadow = true;   // тень на пол; на саму модель тень не ложится — краска не темнеет пятнами
       this.paintables.push({ mesh: o, cache });
       report.meshes += 1;
       report.tris += cache.triCount;
@@ -957,6 +1039,7 @@ export class Viewport {
     спрятать(this.grid);
     спрятать(this.cursor);
     спрятать(this.pivotMarker);
+    спрятать(this.shadowFloor);
     const безВыделения = [];
     for (const { mesh } of this.paintables) {
       if (!opts.overlay) спрятать(mesh.userData.meshOverlay);
@@ -1156,10 +1239,9 @@ export class Viewport {
     // прореха в пустоту. С изнанкой дыра читается как дыра в ткани. Изнанка
     // того же цвета, что и лицо: тексели у треугольника одни на обе стороны.
     for (const m of [mesh.userData.matMaterial, mesh.userData.flatMaterial, toon]) m.side = THREE.DoubleSide;
-    mesh.material = this.displayMode === 'flat'
-      ? mesh.userData.flatMaterial
-      : mesh.userData.matMaterial;
-    if (old && old !== mesh.material) {
+    mesh.userData.matMaterial.flatShading = this.facets;
+    mesh.material = this._materialFor(mesh);
+    if (old && old !== mesh.material && old !== this._clayMat && old !== this._normalsMat) {
       (Array.isArray(old) ? old : [old]).forEach((m) => m && m.dispose && m.dispose());
     }
   }
@@ -1235,12 +1317,46 @@ export class Viewport {
     }
   }
 
+  /** @param {'material'|'flat'|'clay'|'normals'} mode */
   setDisplayMode(mode) {
     this.displayMode = mode;
     for (const { mesh } of this.paintables) {
-      const m = mode === 'flat' ? mesh.userData.flatMaterial : mesh.userData.matMaterial;
+      const m = this._materialFor(mesh);
       if (m) mesh.material = m;
     }
+  }
+
+  _materialFor(mesh) {
+    const mode = this.displayMode;
+    if (mode === 'clay') return this._clayMat;
+    if (mode === 'normals') return this._normalsMat;
+    return mode === 'flat' ? mesh.userData.flatMaterial : mesh.userData.matMaterial;
+  }
+
+  /** Плоские грани, как в low-poly; выключено — нормали из файла. */
+  setFacets(on) {
+    this.facets = on;
+    const mats = [this._clayMat, this._normalsMat, ...this.paintables.map((p) => p.mesh.userData.matMaterial)];
+    for (const m of mats) {
+      if (!m || m.flatShading === on) continue;
+      m.flatShading = on;
+      m.needsUpdate = true;
+    }
+  }
+
+  /** Модель вращается сама вокруг вертикали — пока не взялись за мышь. */
+  setSpin(on) { this.spin = on; }
+
+  _spinStep(dt) {
+    if (!this.model || this._held) return;
+    const box = new THREE.Box3().setFromObject(this.stand);
+    if (box.isEmpty()) return;
+    const c = box.getCenter(new THREE.Vector3());
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), SPIN_SPEED * dt);
+    const rot = (v) => { v.x -= c.x; v.z -= c.z; v.applyQuaternion(q); v.x += c.x; v.z += c.z; };
+    rot(this.camera.position);
+    rot(this.controls.target);
+    this.camera.lookAt(this.controls.target);
   }
 
   /* ── Попадание луча ──────────────────────────────────────────── */
@@ -1314,6 +1430,11 @@ export class Viewport {
   }
 
   _tick() {
+    const now = performance.now();
+    const dt = Math.min(0.1, (now - this._lastTick) / 1000);
+    this._lastTick = now;
+    if (this.spin) this._spinStep(dt);
+    this._placeLights();
     this._selTime.value = (performance.now() / 400) % 1000;
     this.controls.update();
     this._syncPivotMarker();
@@ -1335,4 +1456,38 @@ export class Viewport {
     }
     if (this.afterRender) this.afterRender();
   }
+}
+
+/** Скорость вращения «на подиуме», радиан в секунду: оборот за ~30 с. */
+const SPIN_SPEED = (2 * Math.PI) / 30;
+
+/**
+ * Фон сцены — пятно света сверху к тёмным краям, как сцена 3DModelist
+ * (#2f3841 → #1a2027). Текстура фона растягивается на кадр целиком.
+ */
+function stageBackground() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 512;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(256, 205, 0, 256, 205, 400);
+  grad.addColorStop(0, '#2f3841');
+  grad.addColorStop(1, '#1a2027');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 512, 512);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/**
+ * Нормали: лицевые грани синие, вывернутые — красные (Face Orientation в
+ * Blender), поверх светотени глины.
+ */
+function facingMaterial() {
+  const m = new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+  m.onBeforeCompile = (sh) => {
+    sh.fragmentShader = sh.fragmentShader.replace('#include <dithering_fragment>',
+      '#include <dithering_fragment>\n  gl_FragColor.rgb *= gl_FrontFacing ? vec3(0.42, 0.58, 1.0) : vec3(1.0, 0.36, 0.36);');
+  };
+  return m;
 }

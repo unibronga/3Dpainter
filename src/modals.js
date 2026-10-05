@@ -557,9 +557,9 @@ export function createMaterialModal(api) {
       ic.imageSmoothingEnabled = true;
       ic.drawImage(tex.canvas, 0, 0, imgCanvas.width, imgCanvas.height);
     } else {
-      ic.fillStyle = '#24272c';
+      ic.fillStyle = '#242b33';
       ic.fillRect(0, 0, imgCanvas.width, imgCanvas.height);
-      ic.fillStyle = '#8b929c';
+      ic.fillStyle = '#9199a3';
       ic.font = '600 15px system-ui';
       ic.textAlign = 'center'; ic.textBaseline = 'middle';
       ic.fillText('+', imgCanvas.width / 2, imgCanvas.height / 2);

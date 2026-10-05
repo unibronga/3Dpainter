@@ -98,7 +98,7 @@ export function drawUVPreview(canvas, target, cache, showWire) {
   const S = canvas.width;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, S, S);
-  ctx.fillStyle = '#15171a';
+  ctx.fillStyle = '#1a2027';
   ctx.fillRect(0, 0, S, S);
   if (!target) return;
 

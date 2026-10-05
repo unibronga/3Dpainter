@@ -179,7 +179,7 @@ export class UVEditor {
     const ctx = this.ctx;
     const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = '#15171a';
+    ctx.fillStyle = '#1a2027';
     ctx.fillRect(0, 0, w, h);
     if (!this.target) return;
 
@@ -197,7 +197,7 @@ export class UVEditor {
 
     this._ants(ox, oy, scale);
 
-    ctx.strokeStyle = 'rgba(224,163,85,0.75)';
+    ctx.strokeStyle = 'rgba(141,164,255,0.75)';
     ctx.lineWidth = 1;
     ctx.strokeRect(ox + 0.5, oy + 0.5, scale, scale);
 
@@ -356,9 +356,9 @@ export class UVEditor {
     ctx.beginPath();
     ctx.rect(ox, oy, scale, scale);
     ctx.clip();
-    ctx.fillStyle = '#2a2d32';
+    ctx.fillStyle = '#28303a';
     ctx.fillRect(ox, oy, scale, scale);
-    ctx.fillStyle = '#33373d';
+    ctx.fillStyle = '#313a45';
     for (let y = 0; y < scale; y += step) {
       for (let x = ((y / step) | 0) % 2 ? step : 0; x < scale; x += step * 2) {
         ctx.fillRect(ox + x, oy + y, step, step);

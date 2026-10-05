@@ -32,13 +32,13 @@ function faceTexture(label) {
   c.width = c.height = 128;
   const x = c.getContext('2d');
 
-  x.fillStyle = '#31353b';
+  x.fillStyle = '#2f3843';
   x.fillRect(0, 0, 128, 128);
-  x.strokeStyle = '#4b525b';
+  x.strokeStyle = '#4a5463';
   x.lineWidth = 7;
   x.strokeRect(3.5, 3.5, 121, 121);
 
-  x.fillStyle = '#d8dce2';
+  x.fillStyle = '#edf0f4';
   x.font = '600 24px -apple-system, "SF Pro Text", system-ui, sans-serif';
   x.textAlign = 'center';
   x.textBaseline = 'middle';
@@ -82,7 +82,7 @@ export class ViewCube {
     // Рёбра — без них куб в ортографии читается плоским пятном.
     const edges = new THREE.LineSegments(
       new THREE.EdgesGeometry(this.cube.geometry),
-      new THREE.LineBasicMaterial({ color: 0x8b929c }),
+      new THREE.LineBasicMaterial({ color: 0x9199a3 }),
     );
     this.cube.add(edges);
 
@@ -162,7 +162,7 @@ export class ViewCube {
       const idx = r ? r.faceIndex : -1;
       if (idx === this.hovered) return;
       this.hovered = idx;
-      this.materials.forEach((m, i) => m.color.set(i === idx ? 0xe0a355 : 0xffffff));
+      this.materials.forEach((m, i) => m.color.set(i === idx ? 0x8da4ff : 0xffffff));
       el.style.cursor = idx >= 0 ? 'grab' : '';
     });
 

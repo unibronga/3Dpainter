@@ -101,7 +101,9 @@ Other commands:
 | Brush size | **[** and **]** |
 | Tools | **V** select object · **H** pan · **O** orbit · **Z** zoom · **B** brush · **E** eraser · **I** eyedropper · **F** fill faces · **G** fill UV island · **L** lasso (again for polygonal) |
 | Views | **1**–**7** axis views · **0** three-quarter · **5** perspective ↔ orthographic |
-| Orbit pivot | three icons over the viewport: world, object, or **whatever is in the centre of the frame** |
+| Orbit pivot | three icons in the column under the view cube: world, object, or **whatever is in the centre of the frame** |
+| Display | the bar above the model: colors, clay, wireframe, normals; facets; frame |
+| Light | icon in the column under the view cube: strength, rotation, spin the model, unlit |
 | Fit to frame | **Home** |
 | UV editor | **U** |
 | Hide all panels | **Tab** |

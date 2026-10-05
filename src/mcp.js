@@ -998,15 +998,17 @@ export function createMcpTools(api) {
       const былКаркас = viewport.verticesVisible, былРежим = viewport.displayMode;
       let изол = null;
       try {
-        if (wire) viewport.setVerticesVisible(true);
-        if (flat) viewport.setDisplayMode('flat');
+        if (!!wire !== былКаркас) viewport.setVerticesVisible(!!wire);
+        // Глина и нормали — показ для человека; ИИ всегда смотрит на покраску.
+        const режим = flat || былРежим === 'flat' ? 'flat' : 'material';
+        if (режим !== былРежим) viewport.setDisplayMode(режим);
         // Копия — после смены режима: она берёт материал меша на момент создания.
         изол = isolateOn(isolate);
         if (patches) метки = visiblePatches(cam, W, H);
         return viewport.renderView(W, H, 2, { overlay: wire });
       } finally {
-        if (wire && !былКаркас) viewport.setVerticesVisible(false);
-        if (flat && былРежим !== 'flat') viewport.setDisplayMode(былРежим);
+        if (viewport.verticesVisible !== былКаркас) viewport.setVerticesVisible(былКаркас);
+        if (viewport.displayMode !== былРежим) viewport.setDisplayMode(былРежим);
         изол?.restore();
       }
     }, focus);
