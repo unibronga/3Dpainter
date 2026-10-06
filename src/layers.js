@@ -410,3 +410,112 @@ export function cutRect(src, size, stride, rect) {
   }
   return out;
 }
+
+/**
+ * Перенести слой со старой развёртки на новую.
+ *
+ * Развёртку перестраивают, когда в файле она с наложением, — а человек к
+ * этому времени мог уже покрасить, и у модели могла быть своя карта. Терять
+ * это нельзя. Треугольники у обеих развёрток одни и те же и в том же порядке
+ * (меняются только UV), поэтому каждый тексель новой карты знает своё место
+ * на старой: та же точка треугольника, те же барицентрические координаты.
+ *
+ * Тексели в полутора пикселях за краем треугольника тоже заполняются — по
+ * ближайшей точке на нём, как полоса PAD у мазка: иначе видеокарта подмешает
+ * в шов пустоту. Внутренний тексель всегда сильнее чужой полосы.
+ *
+ * Читается со старой карты билинейно, цвет — с учётом альфы: прозрачный
+ * сосед иначе затемнял бы край покраски.
+ *
+ * @param {Layer} layer
+ * @param {number} size сторона текстуры
+ * @param {{uv:Float32Array, idx:ArrayLike<number>, triCount:number}} from кэш старой развёртки
+ * @param {{uv:Float32Array, idx:ArrayLike<number>, triCount:number}} to кэш новой
+ */
+export function remapLayer(layer, size, from, to) {
+  const S = size, N = S * S;
+  const PAD = 1.5;
+  const srcRgba = layer.rgba, srcRough = layer.rough, srcMetal = layer.metal;
+  const srcOpac = layer.opac, srcMask = layer.mask;
+
+  const rgba = new Uint8ClampedArray(N * 4);
+  const rough = new Uint8Array(N);
+  const metal = new Uint8Array(N);
+  const opac = new Uint8Array(N).fill(255);
+  const mask = srcMask ? new Uint8Array(N).fill(255) : null;
+  const занято = new Float32Array(N).fill(Infinity);   // насколько далеко от своего треугольника
+
+  const nx = [0, 0, 0], ny = [0, 0, 0], ox = [0, 0, 0], oy = [0, 0, 0], h = [0, 0, 0];
+  const count = Math.min(from.triCount, to.triCount);
+
+  for (let t = 0; t < count; t++) {
+    for (let k = 0; k < 3; k++) {
+      const a = to.idx[t * 3 + k], b = from.idx[t * 3 + k];
+      nx[k] = to.uv[a * 2] * S;   ny[k] = (1 - to.uv[a * 2 + 1]) * S;
+      ox[k] = from.uv[b * 2] * S; oy[k] = (1 - from.uv[b * 2 + 1]) * S;
+    }
+    const den = (ny[1] - ny[2]) * (nx[0] - nx[2]) + (nx[2] - nx[1]) * (ny[0] - ny[2]);
+    if (Math.abs(den) < 1e-9) continue;
+    const inv = 1 / den;
+    // Высота из каждой вершины: расстояние до противолежащей стороны —
+    // это минус барицентрическая координата, умноженная на высоту.
+    for (let k = 0; k < 3; k++) {
+      const i = (k + 1) % 3, j = (k + 2) % 3;
+      h[k] = Math.abs(den) / Math.max(1e-9, Math.hypot(nx[j] - nx[i], ny[j] - ny[i]));
+    }
+
+    const x0 = Math.max(0, Math.floor(Math.min(nx[0], nx[1], nx[2]) - PAD));
+    const x1 = Math.min(S - 1, Math.ceil(Math.max(nx[0], nx[1], nx[2]) + PAD));
+    const y0 = Math.max(0, Math.floor(Math.min(ny[0], ny[1], ny[2]) - PAD));
+    const y1 = Math.min(S - 1, Math.ceil(Math.max(ny[0], ny[1], ny[2]) + PAD));
+
+    for (let y = y0; y <= y1; y++) {
+      const py = y + 0.5;
+      for (let x = x0; x <= x1; x++) {
+        const px = x + 0.5;
+        let l0 = ((ny[1] - ny[2]) * (px - nx[2]) + (nx[2] - nx[1]) * (py - ny[2])) * inv;
+        let l1 = ((ny[2] - ny[0]) * (px - nx[2]) + (nx[0] - nx[2]) * (py - ny[2])) * inv;
+        let l2 = 1 - l0 - l1;
+        const d = Math.max(0, -l0 * h[0], -l1 * h[1], -l2 * h[2]);
+        const p = y * S + x;
+        if (d > PAD || d >= занято[p]) continue;
+        занято[p] = d;
+
+        // Снаружи — ближайшая точка на треугольнике.
+        if (d > 0) {
+          l0 = Math.max(0, l0); l1 = Math.max(0, l1); l2 = Math.max(0, l2);
+          const s = l0 + l1 + l2; l0 /= s; l1 /= s; l2 /= s;
+        }
+        const fx = l0 * ox[0] + l1 * ox[1] + l2 * ox[2] - 0.5;
+        const fy = l0 * oy[0] + l1 * oy[1] + l2 * oy[2] - 0.5;
+        const cx = Math.floor(fx), cy = Math.floor(fy);
+        const ax = fx - cx, ay = fy - cy;
+
+        let A = 0, R = 0, G = 0, B = 0, Ro = 0, Me = 0, Op = 0, Ma = 0, Wa = 0;
+        for (let c = 0; c < 4; c++) {
+          const sx = Math.min(S - 1, Math.max(0, cx + (c & 1)));
+          const sy = Math.min(S - 1, Math.max(0, cy + (c >> 1)));
+          const w = ((c & 1) ? ax : 1 - ax) * ((c >> 1) ? ay : 1 - ay);
+          const q = sy * S + sx, o = q * 4;
+          const wa = w * srcRgba[o + 3];
+          A += wa; Wa += wa;
+          R += wa * srcRgba[o]; G += wa * srcRgba[o + 1]; B += wa * srcRgba[o + 2];
+          Ro += wa * srcRough[q]; Me += wa * srcMetal[q];
+          Op += w * srcOpac[q];
+          if (srcMask) Ma += w * srcMask[q];
+        }
+        const o = p * 4;
+        if (Wa > 0) {
+          rgba[o] = R / Wa; rgba[o + 1] = G / Wa; rgba[o + 2] = B / Wa;
+          rough[p] = Ro / Wa; metal[p] = Me / Wa;
+        }
+        rgba[o + 3] = A;
+        opac[p] = Op;
+        if (mask) mask[p] = Ma;
+      }
+    }
+  }
+
+  layer.rgba = rgba; layer.rough = rough; layer.metal = metal; layer.opac = opac;
+  layer.mask = mask;
+}

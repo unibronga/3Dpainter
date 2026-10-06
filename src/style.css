@@ -617,6 +617,13 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 .check-row { display: flex; align-items: center; gap: 6px; margin-top: 7px; color: var(--text-dim); cursor: pointer; }
 
 /* Под списком развёрток: сетка слева, маленькая кнопка PNG справа. */
+.btn.uv-rebuild {
+  width: 100%; margin-top: 7px; display: flex; align-items: center; justify-content: center; gap: 6px;
+  color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+}
+.btn.uv-rebuild[hidden] { display: none; }
+.btn.uv-rebuild svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.uv-row-meta .uv-overlap { color: var(--danger); }
 .uv-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 7px; }
 .uv-foot .check-row { margin-top: 0; }
 .btn.uv-png {

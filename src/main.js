@@ -8,10 +8,10 @@ import { Viewport, ORBIT_SPEED } from './viewport.js';
 import { UVEditor } from './uveditor.js';
 import { ViewCube } from './viewcube.js';
 import { MenuBar } from './menubar.js';
-import { PaintTarget, History, bleedLayer, Layer } from './layers.js';
+import { PaintTarget, History, bleedLayer, remapLayer, Layer } from './layers.js';
 import { Stroke, rectStencil, ellipseStencil, imageStencil } from './painter.js';
 import * as THREE from 'three';
-import { floodFaces } from './mesh-cache.js';
+import { floodFaces, OVERLAP_LIMIT } from './mesh-cache.js';
 import * as UI from './ui.js';
 import { createBrushModal, createMaterialModal, createHelpModal,
          createSaveAsModal, createSettingsModal, createViewPngModal, createAboutModal,
@@ -1480,6 +1480,7 @@ function renderUVList() {
 
   if (!viewport.paintables.length) {
     box.appendChild(элемент('div', 'uv-empty', t('uv.none')));
+    $('btn-uv-rebuild').hidden = true;
     return;
   }
 
@@ -1490,8 +1491,11 @@ function renderUVList() {
     thumb.appendChild(canvas);
     const info = элемент('div', 'uv-row-info');
     // Имя меша не переводится: оно уходит в файл и в списки 3D-редакторов.
-    info.append(элемент('div', 'uv-row-name', mesh.name || t('model.unnamed')),
-                элемент('div', 'uv-row-meta', t('uv.rowTris', cache.triCount)));
+    const мета = элемент('div', 'uv-row-meta', t('uv.rowTris', cache.triCount));
+    if ((cache.overlap || 0) > OVERLAP_LIMIT) {
+      мета.append(' · ', элемент('span', 'uv-overlap', t('uv.rowOverlap', Math.round(cache.overlap * 100))));
+    }
+    info.append(элемент('div', 'uv-row-name', mesh.name || t('model.unnamed')), мета);
     row.append(thumb, info);
     row.addEventListener('click', () => {
       // Щелчок по уже открытой развёртке закрывает её — как переключатель.
@@ -1502,6 +1506,7 @@ function renderUVList() {
     box.appendChild(row);
     uvRows.set(mesh, { row, canvas });
   }
+  $('btn-uv-rebuild').hidden = !мешиСНаложением().length;
   syncUVList();
 }
 
@@ -2030,6 +2035,51 @@ function setActiveMesh(mesh) {
   syncStatusModel();
 }
 
+/** Меши, у которых развёртка с наложением. */
+function мешиСНаложением() {
+  return viewport.paintables.filter(({ cache }) => (cache.overlap || 0) > OVERLAP_LIMIT).map((p) => p.mesh);
+}
+
+/**
+ * Перестроить развёртку мешей с наложением — своей, без наложения.
+ *
+ * Развёртку из файла программа не трогает сама: в ней может лежать покраска
+ * автора. Но с наложением красить нельзя — мазок дублируется, — и тогда
+ * человек перестраивает её этой кнопкой. Всё, что уже есть на слоях (и карта
+ * из файла, выпеченная в первый слой), переносится на новую развёртку.
+ *
+ * Журнал отмены очищается: его шаги — куски старых текселей, к новой
+ * развёртке они легли бы кашей. Выделение — по той же причине.
+ */
+function rebuildOverlappingUV() {
+  const меши = мешиСНаложением();
+  if (!меши.length) return;
+  withBusy('busy.uvRebuild', () => {
+    let островов = 0;
+    for (const mesh of меши) {
+      const вышло = viewport.rebuildUV(mesh);
+      const target = targets.get(mesh);
+      if (!вышло || !target) continue;
+      островов += вышло.islands;
+      for (const L of target.layers) remapLayer(L, target.size, вышло.from, вышло.to);
+      target.selection = null;
+      target.compositeRect(null);
+      target.updateTransparency?.();
+      lastReport?.unwrapped?.push({ name: mesh.name || t('model.unnamed'), reason: 'overlap', islands: вышло.islands });
+    }
+    viewport.syncTransparency();
+    history.clear();
+    state.painted = true;      // геометрия другая — проект стоит сохранить
+    selectionChanged();
+    renderUVList();
+    if (state.uvOpen) { uvEditor.setTarget(null, null); refreshUV(); uvEditor.fit(); uvEditor.draw(); }
+    renderHistory();
+    syncHistoryButtons();
+    syncModelNotes();
+    setStatusHint(t('uv.rebuilt', меши.length, островов));
+  });
+}
+
 /**
  * @param {object} report что сообщил загрузчик
  * @param {string} [key] чем модель помечена для запомненного положения:
@@ -2091,14 +2141,17 @@ function syncModelNotes() {
     const островов = report.unwrapped.reduce((n, u) => n + u.islands, 0);
     notes.push(t('status.unwrapped', report.unwrapped.length, островов));
   }
-  if (report.overlapping?.length) {
-    // Наложенная развёртка — не мелочь: мазок по одной грани проступит на
-    // другой. Лучше сказать сразу, чем гадать, почему кисть «мажет мимо».
-    const worst = Math.round(Math.max(...report.overlapping.map((o) => o.ratio)) * 100);
-    notes.push(t('status.overlap', worst, report.overlapping.map((o) => o.name).join(', ')));
+  // Наложенная развёртка — не мелочь: мазок по одной грани проступит на
+  // другой. Лучше сказать сразу, чем гадать, почему кисть «мажет мимо».
+  // Считаем по живым мешам, а не по отчёту загрузки: после перестройки или
+  // смены размера текстуры отчёт уже не тот.
+  const наложение = мешиСНаложением();
+  if (наложение.length) {
+    const worst = Math.round(Math.max(...наложение.map((m) => m.userData.paintCache.overlap)) * 100);
+    notes.push(t('status.overlap', worst, наложение.map((m) => m.name || t('model.unnamed')).join(', ')));
   }
   uvEl.textContent = notes.join(' · ');
-  uvEl.style.color = report.overlapping?.length ? 'var(--danger)' : '';
+  uvEl.style.color = наложение.length ? 'var(--danger)' : '';
 }
 
 /**
@@ -2607,6 +2660,7 @@ function saveUVPng() {
     'busy.maps');
 }
 $('btn-uv-png').addEventListener('click', saveUVPng);
+$('btn-uv-rebuild').addEventListener('click', rebuildOverlappingUV);
 
 const aboutModal = createAboutModal({ version: APP_VERSION, icon: значокПрограммы });
 

@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { buildMeshCache, measureUVOverlap } from './mesh-cache.js';
+import { buildMeshCache, measureUVOverlap, OVERLAP_LIMIT } from './mesh-cache.js';
 import { uvVerdict, buildUV } from './unwrap.js';
 
 /**
@@ -560,14 +560,52 @@ export class Viewport {
     if (this.verticesVisible) this.setVerticesVisible(true);
 
     // Наложения меряем после кадрирования: порог берём от габарита модели.
-    const tol = Math.max(0.01, (this.modelSize || 1) * 0.02);
+    const tol = this._overlapTol();
     for (const { mesh, cache } of this.paintables) {
       const ov = measureUVOverlap(cache, tol);
       cache.overlap = ov.ratio;
-      if (ov.ratio > 0.02) report.overlapping.push({ name: mesh.name || t('model.unnamed'), ratio: ov.ratio });
+      if (ov.ratio > OVERLAP_LIMIT) report.overlapping.push({ name: mesh.name || t('model.unnamed'), ratio: ov.ratio });
     }
 
     return report;
+  }
+
+  /** Порог наложения: на сколько метров грани должны разойтись — от габарита модели. */
+  _overlapTol() { return Math.max(0.01, (this.modelSize || 1) * 0.02); }
+
+  /**
+   * Построить мешу свою развёртку вместо файловой — когда в файле она с
+   * наложением. Треугольники и их порядок остаются прежними, меняются только
+   * UV: по этому покраска потом и переносится (`remapLayer`).
+   *
+   * Старую геометрию не освобождаем — её может делить другой меш.
+   *
+   * @returns {{from:object, to:object, islands:number}|null} старый и новый кэш
+   */
+  rebuildUV(mesh) {
+    const entry = this.paintables.find((p) => p.mesh === mesh);
+    if (!entry) return null;
+    const from = entry.cache;
+    const built = buildUV(mesh.geometry);
+    const to = buildMeshCache(built.geometry);
+    if (!to || to.triCount !== from.triCount) return null;
+
+    mesh.geometry = built.geometry;
+    mesh.userData.paintCache = to;
+    entry.cache = to;
+    to.overlap = measureUVOverlap(to, this._overlapTol()).ratio;
+    // Детали для ИИ считались и по островам старой развёртки.
+    delete mesh.userData.mcpParts;
+
+    // Рёбра и вершины поверх модели собраны по прежней геометрии.
+    const ov = mesh.userData.meshOverlay;
+    if (ov) {
+      mesh.remove(ov);
+      ov.traverse((o) => { if (o.isLineSegments) o.geometry.dispose(); o.material?.dispose?.(); });
+      mesh.userData.meshOverlay = null;
+      if (this.verticesVisible) this.setVerticesVisible(true);
+    }
+    return { from, to, islands: built.islands };
   }
 
   clearModel() {

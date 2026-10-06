@@ -163,6 +163,9 @@ export function floodFaces(cache, startTri, angleDeg, mode = 'geom') {
 
 const THREE_DEG = Math.PI / 180;
 
+/** Доля наложения, с которой развёртка считается негодной для покраски. */
+export const OVERLAP_LIMIT = 0.02;
+
 /**
  * Доля развёртки с наложением.
  *

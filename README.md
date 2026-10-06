@@ -229,8 +229,11 @@ fragments instead of a round mark. Primitives are the usual culprit
 (`BoxGeometry` packs all six faces into one square), as are mirrored unwraps.
 
 The tool measures the overlap when a model loads and **warns in red** in the
-status bar. The fix is on the modeling side: a Smart UV Project or a hand
-unwrap in Blender.
+status bar and in the UV list. The **Rebuild UVs** button gives such objects
+a fresh overlap-free unwrap and carries everything already painted over to
+it. The tool never replaces a file's UVs on its own, since they may carry the
+author's painting. If you need the author's own unwrap, use Smart UV Project
+or a hand unwrap in Blender.
 
 ## Status and roadmap
 
