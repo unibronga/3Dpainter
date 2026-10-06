@@ -2254,6 +2254,16 @@ async function openFile(что) {
     if (f === file || !isSidecar(f.name)) continue;
     спутники.set(f.name.split(/[\\/]/).pop().toLowerCase(), await f.arrayBuffer());
   }
+  // В приложении соседей .obj (.mtl и его картинки) оболочка читает сама:
+  // выбирают обычно один файл модели, а цвета автора лежат рядом.
+  if (extensionOf(file.name) === 'obj' && window.painterHost?.model?.companions) {
+    try {
+      for (const f of await window.painterHost.model.companions(file)) {
+        const ключ = f.name.toLowerCase();
+        if (!спутники.has(ключ)) спутники.set(ключ, f.data.buffer.slice(f.data.byteOffset, f.data.byteOffset + f.data.byteLength));
+      }
+    } catch { /* нет соседей — откроем как есть */ }
+  }
 
   setStatusHint(t('load.loading', file.name));
   return withBusy('busy.open', async () => {

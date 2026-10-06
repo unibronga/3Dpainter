@@ -90,8 +90,19 @@ async function читатьMTL(текстOBJ, спутники) {
   });
 
   try {
-    const creator = new MTLLoader(manager).parse(декодер.decode(спутники.get(имя)), '');
+    const текстMTL = декодер.decode(спутники.get(имя));
+    const creator = new MTLLoader(manager).parse(текстMTL, '');
     creator.preload();
+    // 🔴 Blender пишет в Kd линейный цвет — те же числа, что в baseColorFactor
+    // его GLB. MTLLoader читает Kd как sRGB, и сундук из 3DModelist выходил
+    // тёмным: дерево 0.337 давало 86 из 255 вместо 158. Узнаём Blender по
+    // шапке файла; у прочих Kd остаётся sRGB, как его понимает three.js.
+    if (/^#\s*Blender\b/m.test(текстMTL)) {
+      for (const [название, m] of Object.entries(creator.materials)) {
+        const kd = creator.materialsInfo[название]?.kd;
+        if (kd && m.color) m.color.setRGB(+kd[0], +kd[1], +kd[2], THREE.LinearSRGBColorSpace);
+      }
+    }
     const естьКарты = Object.values(creator.materials).some((m) => m.map || m.bumpMap || m.normalMap);
     if (естьКарты) await готово;
     // Адреса blob живут, пока картинки не прочитаны; отпускаем их следующим

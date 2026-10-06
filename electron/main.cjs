@@ -141,6 +141,52 @@ function buildMenu() {
  */
 let mcp = null;
 
+/**
+ * Соседи модели, на которые она сама ссылается по имени: .mtl из строки
+ * `mtllib` у .obj и картинки из `map_*` в этой библиотеке.
+ *
+ * Страница видит только файл, который человек выбрал, а цвета .obj лежат в
+ * соседнем .mtl — выбирать его вручную никто не догадывается, и модель,
+ * покрашенная в 3DModelist, открывалась белой. Берём строго то, что названо
+ * в файлах модели, только из её же папки (имя без пути), только .mtl и
+ * картинки, не больше 64 МБ на файл.
+ */
+const COMPANION_EXT = new Set(['.mtl', '.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tga']);
+async function companionsOf(файл) {
+  const fsp = require('node:fs/promises');
+  if (typeof файл !== 'string' || path.extname(файл).toLowerCase() !== '.obj') return [];
+  const папка = path.dirname(файл);
+  const прочесть = async (имя) => {
+    const чистое = path.basename(имя.trim().replace(/\\/g, '/'));
+    if (!COMPANION_EXT.has(path.extname(чистое).toLowerCase())) return null;
+    const полный = path.join(папка, чистое);
+    try {
+      const st = await fsp.stat(полный);
+      if (!st.isFile() || st.size > 64 * 1024 * 1024) return null;
+      return { name: чистое, data: new Uint8Array(await fsp.readFile(полный)) };
+    } catch { return null; }
+  };
+  const найдено = new Map();
+  const добавить = (f) => { if (f && !найдено.has(f.name.toLowerCase())) найдено.set(f.name.toLowerCase(), f); };
+  let obj;
+  try { obj = await fsp.readFile(файл, 'utf8'); } catch { return []; }
+  // Имя библиотеки может разойтись с тем, что лежит в папке; тогда — .mtl с
+  // именем модели, как его пишет Blender.
+  const библиотеки = [...obj.matchAll(/^mtllib\s+(.+?)\s*$/gm)].map((x) => x[1]);
+  библиотеки.push(path.basename(файл, path.extname(файл)) + '.mtl');
+  for (const имя of библиотеки) {
+    const mtl = await прочесть(имя);
+    if (!mtl) continue;
+    добавить(mtl);
+    const текст = Buffer.from(mtl.data).toString('utf8');
+    // Последнее слово строки — имя картинки, перед ним бывают ключи (-s 1 1 1).
+    for (const [, хвост] of текст.matchAll(/^\s*(?:map_\w+|bump|disp|decal|refl)\s+(.+?)\s*$/gim)) {
+      добавить(await прочесть(хвост.split(/\s+/).pop()));
+    }
+  }
+  return [...найдено.values()];
+}
+
 app.whenReady().then(async () => {
   buildMenu();
   mcp = new McpServer({
@@ -151,6 +197,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('mcp:state', () => mcp.state());
   ipcMain.handle('mcp:set-enabled', (_e, on) => mcp.setEnabled(on));
   ipcMain.handle('mcp:new-key', () => mcp.newKey());
+  ipcMain.handle('model:companions', (_e, p) => companionsOf(p));
   if (mcp.cfg.enabled && !process.env.PAINT_TOOL_SELFTEST) await mcp.start();
   createWindow();
 

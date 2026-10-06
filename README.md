@@ -71,8 +71,10 @@ texels, it builds its own — islands split on creases, packed into the atlas at
 one texel density. The status line says so. UVs that are fine are left alone.
 
 **A model can be opened together with the files next to it.** The dialog takes
-several files, and a folder can simply be dropped into the window. For an
-`.obj` this picks up the neighbouring `.mtl`: material colours are baked into
+several files, and a folder can simply be dropped into the window; the desktop
+app picks up the `.mtl` an `.obj` names (and its textures) by itself. For an
+`.obj` this brings in the neighbouring `.mtl` — read in linear colour when it
+comes from Blender, as its GLB would be: material colours are baked into
 the first layer, so the model opens the way its author made it and is ready to
 edit with the brush.
 
