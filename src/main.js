@@ -426,6 +426,18 @@ function toolLabel() {
 const SHAPE_TOOLS = new Set(['rect', 'ellipse', 'text']);
 
 /**
+ * Покраска легла, а на модели её не видно: в «Глине» и «Нормалях» модель
+ * рисуется своим материалом, без карты. Владелец красил в «Глине», видел
+ * краску в развёртке и белую модель — и решил, что покраска не применяется.
+ * Подсказка — после правки, не запрет: форму в «Глине» смотрят нарочно.
+ */
+function warnHiddenPaint() {
+  const m = state.viewMode;
+  if (m !== 'clay' && m !== 'normals') return;
+  setStatusHint(t('status.hiddenPaint', t('vm.' + m), t('vm.material')));
+}
+
+/**
  * Перенос накопленного в текстуру — раз в кадр.
  *
  * За один взмах мыши отпечатков ставятся десятки, и каждая сборка тянет
@@ -462,6 +474,7 @@ function endStroke() {
   if (!stroke) return;
   const entry = stroke.end(toolLabel());
   if (entry) history.push(entry);
+  if (entry) warnHiddenPaint();
   stroke = null; strokeMesh = null; lastScreen = null; lastTexel = null;
   if (pumpId) { cancelAnimationFrame(pumpId); pumpId = 0; }
   viewport.syncTransparency();
@@ -581,6 +594,7 @@ function uvShape(a, b, shift) {
 
   const entry = s.end(toolLabel());
   if (entry) history.push(entry);
+  if (entry) warnHiddenPaint();
   state.painted = true;
 
   renderHistory();
@@ -622,6 +636,7 @@ function runFill(target, cache, faceIndex) {
 
   const entry = s.end(toolLabel());
   if (entry) history.push(entry);
+  if (entry) warnHiddenPaint();
   state.painted = true;
   viewport.syncTransparency();
   refreshUV();
@@ -730,6 +745,7 @@ function applyShape3D(mesh, a, b) {
 
   const entry = s.end(toolLabel());
   if (entry) history.push(entry);
+  if (entry) warnHiddenPaint();
   else setStatusHint(t('status.shapeMissed'));
   state.painted = true;
   viewport.syncTransparency();
@@ -1376,6 +1392,7 @@ function applyDecal() {
 
   if (!entries.length) { setStatusHint(t('decal.missed')); return; }
   history.push(entries.length === 1 ? entries[0] : { label: 'act.decal', group: entries });
+  warnHiddenPaint();
   state.painted = true;
   cancelDecal();
   viewport.syncTransparency();
@@ -1764,7 +1781,9 @@ function renderUVList() {
     box.appendChild(row);
     uvRows.set(mesh, { row, canvas });
   }
-  $('btn-uv-rebuild').hidden = !мешиСНаложением().length;
+  // Видна всегда, пока есть что перестраивать; красная — при наложении.
+  $('btn-uv-rebuild').hidden = !viewport.paintables.length;
+  $('btn-uv-rebuild').classList.toggle('warn', мешиСНаложением().length > 0);
   syncUVList();
 }
 
@@ -2300,19 +2319,26 @@ function мешиСНаложением() {
 }
 
 /**
- * Перестроить развёртку мешей с наложением — своей, без наложения.
+ * Перестроить развёртку своей: детали крупными островами рядом друг с
+ * другом, без наложения.
  *
  * Развёртку из файла программа не трогает сама: в ней может лежать покраска
- * автора. Но с наложением красить нельзя — мазок дублируется, — и тогда
- * человек перестраивает её этой кнопкой. Всё, что уже есть на слоях (и карта
+ * автора. С наложением красить нельзя — мазок дублируется, — и тогда кнопка
+ * красная и перестраивает меши с наложением. Без наложения она перестраивает
+ * все меши — когда человеку не нравится, как развёртка порезана (прежний
+ * построитель дробил лицо на осколки), — и спрашивает подтверждение: годную
+ * развёртку одним случайным щелчком не меняют. Всё, что уже есть на слоях (и карта
  * из файла, выпеченная в первый слой), переносится на новую развёртку.
  *
  * Журнал отмены очищается: его шаги — куски старых текселей, к новой
  * развёртке они легли бы кашей. Выделение — по той же причине.
  */
 function rebuildOverlappingUV() {
-  const меши = мешиСНаложением();
-  if (!меши.length) return;
+  let меши = мешиСНаложением();
+  if (!меши.length) {
+    if (!viewport.paintables.length || !window.confirm(t('uv.rebuildConfirm'))) return;
+    меши = viewport.paintables.map((p) => p.mesh);
+  }
   withBusy('busy.uvRebuild', () => {
     let островов = 0;
     for (const mesh of меши) {

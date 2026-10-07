@@ -67,9 +67,11 @@ FBX, DAE and 3MF carry UVs, but not equally: models downloaded from the web
 routinely dump a flat projection of the geometry into the UV channel, which is
 useless for painting. The program judges the UVs on open and, if there are
 none, if they fall outside the 0…1 square, or if they cover only a handful of
-texels, it builds its own — islands split on creases, packed into the atlas at
-one texel density, with small islands tucked into the gaps and hollows of large
-ones (about two thirds of the atlas is covered). The status line says so. UVs that are fine are left alone.
+texels, it builds its own, part by part: each connected piece of the model
+(trousers, jacket, face, a boot) is unwrapped into as few islands as possible —
+conformally, like Blender's Unwrap, so a curved face lies flat as one island —
+and the islands of one piece are packed next to each other, at one texel
+density for the whole model. The status line says so. UVs that are fine are left alone.
 
 **A model can be opened together with the files next to it.** The dialog takes
 several files, and a folder can simply be dropped into the window; the desktop
@@ -246,7 +248,8 @@ fragments instead of a round mark. Primitives are the usual culprit
 The tool measures the overlap when a model loads and **warns in red** in the
 status bar and in the UV list. The **Rebuild UVs** button gives such objects
 a fresh overlap-free unwrap and carries everything already painted over to
-it. The tool never replaces a file's UVs on its own, since they may carry the
+it. Without overlap the same button rebuilds all objects (after asking) — for
+when the file's unwrap is chopped into shards. The tool never replaces a file's UVs on its own, since they may carry the
 author's painting. If you need the author's own unwrap, use Smart UV Project
 or a hand unwrap in Blender.
 

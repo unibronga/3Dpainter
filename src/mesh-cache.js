@@ -80,11 +80,27 @@ export function buildMeshCache(geo) {
     }
   }
 
+  // Сварка по месту И по развёртке: одна точка с одними UV — одна вершина.
+  // 🔴 По индексам нельзя: у неиндексированной геометрии (своя развёртка,
+  // многие файлы) общих вершин нет вовсе, и заливка острова красила по
+  // одному треугольнику (замер: 0 связей на 9832 трис).
+  const weldUV = new Int32Array(vertCount);
+  {
+    const map = new Map();
+    let next = 0;
+    for (let v = 0; v < vertCount; v++) {
+      const k = weld[v] + ':' + Math.round(uv[v * 2] * 1e6) + ',' + Math.round(uv[v * 2 + 1] * 1e6);
+      let id = map.get(k);
+      if (id === undefined) { id = next++; map.set(k, id); }
+      weldUV[v] = id;
+    }
+  }
+
   // Две смежности с разным смыслом:
   //   adjGeom — по сварке: ходит через шов развёртки (заливка по форме);
-  //   adjUV   — по индексам: шов не переходит (заливка одного острова).
+  //   adjUV   — по сварке с UV: шов не переходит (заливка одного острова).
   const adjGeom = buildAdjacency(triCount, idx, weld);
-  const adjUV = buildAdjacency(triCount, idx, null);
+  const adjUV = buildAdjacency(triCount, idx, weldUV);
 
   const cache = {
     geo, pos, uv, idx, vertCount, triCount,

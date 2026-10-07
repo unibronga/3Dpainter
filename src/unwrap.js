@@ -7,18 +7,31 @@
  * геометрии — значения в единицах модели, половина отрицательная. Красить по
  * такому нельзя: весь меш садится в угол атласа размером в десяток текселей.
  *
- * Здесь развёртка строится так же, как Smart UV Project в Blender: грани
- * собираются в острова по излому, каждый остров кладётся на свою плоскость,
- * поворачивается по меньшей стороне и укладывается в квадрат 0..1 с полями.
- * Масштаб у всех островов один — иначе на одной стене кисть была бы вдвое
- * крупнее, чем на соседней.
+ * Развёртка строится по деталям. Деталь — связная оболочка модели: штаны,
+ * куртка, лицо, сапог — у сгенерированных персонажей это отдельные куски
+ * одного меша. Деталь режется на как можно меньше островов: острова растут
+ * по излому с широким допуском и разгибаются на плоскость конформно
+ * (`lscm.js`), а где развёртка выходит негодной — режутся мельче. Острова
+ * одной детали укладываются рядом друг с другом: деталь лежит на холсте
+ * одним куском, а не осколками по всему квадрату. Масштаб у всех островов
+ * один — иначе на одной стене кисть была бы вдвое крупнее, чем на соседней.
  */
 
 import * as THREE from 'three';
+import { flattenChart } from './lscm.js';
 
 const QUANT = 1e4;            // округление при сварке вершин, 0.1 мм
-const ANGLE = Math.cos(Math.PI / 3);  // излом, дальше которого остров не растёт
 const TURNS = 30;             // сколько поворотов перебрать в поиске меньшей рамки
+// Допуски роста острова, от широкого к узкому: остров, развёртка которого
+// вышла негодной, перерастает с допуском поуже. Последняя ступень — плоская
+// проекция с прежним изломом 60°: она годна всегда.
+const CONES = [80, 55, 35].map((d) => Math.cos(d * Math.PI / 180));
+const PLANAR = Math.cos(Math.PI / 3);
+// Остров мельче этой доли детали пробует прирасти к соседу: обрезки по три
+// треугольника и рвали лицо в осколки. Замер 07.10 на модели из Tripo
+// (островов / доля атласа): 0.06 — 206 / 55%, 0.25 — 138 / 53%, 0.5 — 134 / 54%
+// при вдвое большем разбросе деталей.
+const SMALL_SHARE = 0.25;
 // Сетка укладки по растру, клеток на сторону атласа. Замер 07.10 (доля атласа
 // / время): Kian, 760 островов — 256: 58% / 0.16 с, 512: 62% / 0.36 с,
 // 1024: 64% / 0.88 с; у сундука (до 100 островов на меш) 256 отстаёт от 1024
@@ -118,7 +131,7 @@ function rasterCount(uv, i0, i1, i2, res, seen) {
  *
  * @param {THREE.BufferGeometry} geo
  * @param {{margin?:number}} opts margin — поле вокруг острова в долях 0..1
- * @returns {{geometry:THREE.BufferGeometry, islands:number, scale:number}}
+ * @returns {{geometry:THREE.BufferGeometry, islands:number, parts:number, scale:number}}
  */
 export function buildUV(geo, opts = {}) {
   const margin = opts.margin ?? 0.004;   // ~4 текселя при текстуре 1024
@@ -129,44 +142,50 @@ export function buildUV(geo, opts = {}) {
   const normal = new Float32Array(triCount * 3);
   const area = new Float32Array(triCount);
   for (let t = 0; t < triCount; t++) faceNormal(pos, t, normal, area);
-
   const adj = adjacency(pos, triCount);
-  const islands = cluster(triCount, normal, area, adj);
 
-  // Каждый остров — на свою плоскость, с поворотом по меньшей рамке.
-  const flat = islands.map((tris) => project(pos, tris, normal));
+  // Детали и острова каждой — группой: острова группы ложатся рядом.
+  const ctx = { pos, normal, area, adj, mark: new Int32Array(triCount).fill(-1), stamp: 0 };
+  const groups = shells(triCount, adj).map((tris) => chartsOfShell(ctx, tris));
+  const flat = groups.flat();
 
   // Общий масштаб подбираем так, чтобы всё влезло в квадрат: больше масштаб —
   // крупнее тексель на модели, поэтому берём наибольший, при котором укладка
-  // ещё сходится. Сначала полками — это нижняя граница, она сходится всегда;
-  // потом растром — он плотнее, но ищет только выше неё.
-  let lo = 0, hi = 1 / Math.max(1e-6, Math.max(...flat.map((f) => Math.max(f.w, f.h))));
-  for (let i = 0; i < 24; i++) {
-    const mid = (lo + hi) / 2;
-    if (pack(flat, mid, margin)) lo = mid; else hi = mid;
-  }
-  // Растр ищет на грубой сетке: укладка, сошедшаяся на ней, годна и на
-  // мелкой (маски грубой шире), а считается в разы быстрее. Сотни мелких
-  // островов грубая клетка раздувает — их доуточняем на мелкой сетке в узкой
-  // вилке над найденным. Верхняя граница: острова без полей заняли бы весь атлас.
-  const shelf = lo;
+  // ещё сходится. Растр ищет на грубой сетке: укладка, сошедшаяся на ней,
+  // годна и на мелкой (маски грубой шире), а считается в разы быстрее.
+  // Сотни мелких островов грубая клетка раздувает — их доуточняем на мелкой
+  // сетке в узкой вилке над найденным.
   const islandArea = flat.reduce((s, f) => s + f.area, 0);
-  const top = Math.max(shelf, 1 / Math.sqrt(Math.max(1e-12, islandArea)));
-  let best = { scale: shelf, atlas: null };
-  const search = (atlas, from, to, steps) => {
-    let a = from, b = to;
-    for (let i = 0; i < steps && b / a > 1.01; i++) {
-      const mid = (a + b) / 2;
-      if (rasterPack(flat, mid, margin, atlas)) { a = mid; if (mid > best.scale) best = { scale: mid, atlas }; }
-      else b = mid;
+  const top = 1 / Math.sqrt(Math.max(1e-12, islandArea));   // острова без полей заняли бы весь атлас
+  let best = { scale: 0, atlas: null };
+  const coarse = new Atlas(RASTER_COARSE);
+  // Нижняя граница — откуда укладка уже сходится.
+  let from = top * 0.6;
+  for (let i = 0; i < 8 && !packParts(groups, from, margin, coarse); i++) from *= 0.7;
+  if (packParts(groups, from, margin, coarse)) {
+    best = { scale: from, atlas: coarse };
+    const search = (atlas, a, b, steps) => {
+      for (let i = 0; i < steps && b / a > 1.01; i++) {
+        const mid = (a + b) / 2;
+        if (packParts(groups, mid, margin, atlas)) { a = mid; if (mid > best.scale) best = { scale: mid, atlas }; }
+        else b = mid;
+      }
+    };
+    search(coarse, from, Math.max(from, top), RASTER_STEPS);
+    if (flat.length > RASTER_FINE_FROM) {
+      search(new Atlas(RASTER_FINE), best.scale, Math.min(top, best.scale * 1.12), 4);
     }
-  };
-  search(new Atlas(RASTER_COARSE), shelf, top, RASTER_STEPS);
-  if (flat.length > RASTER_FINE_FROM) {
-    search(new Atlas(RASTER_FINE), best.scale, Math.min(top, best.scale * 1.12), 4);
   }
-  if (best.atlas) { lo = best.scale; rasterPack(flat, lo, margin, best.atlas); }
-  else pack(flat, lo, margin);
+  let scale;
+  if (best.atlas) { scale = best.scale; packParts(groups, scale, margin, best.atlas); }
+  else {
+    // Укладка не сошлась ни при каком масштабе (не бывало, но без развёртки
+    // красить нечем) — полками по островам, без деталей.
+    let lo = 0, hi = 1 / Math.max(1e-6, Math.max(...flat.map((f) => Math.max(f.w, f.h))));
+    for (let i = 0; i < 24; i++) { const mid = (lo + hi) / 2; if (pack(flat, mid, margin)) lo = mid; else hi = mid; }
+    pack(flat, lo, margin);
+    scale = lo;
+  }
 
   // Раскладываем обратно в атрибут.
   const uv = new Float32Array(src.getAttribute('position').count * 2);
@@ -177,14 +196,14 @@ export function buildUV(geo, opts = {}) {
         const j = (k * 3 + c) * 2;
         const vert = t * 3 + c;
         const px = f.pts[j] - f.minX, py = f.pts[j + 1] - f.minY;
-        uv[vert * 2] = f.x + (f.rot ? py : px) * lo;
-        uv[vert * 2 + 1] = f.y + (f.rot ? f.w - px : py) * lo;
+        uv[vert * 2] = f.x + (f.rot ? py : px) * scale;
+        uv[vert * 2 + 1] = f.y + (f.rot ? f.w - px : py) * scale;
       }
     }
   });
   src.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   src.name = geo.name;
-  return { geometry: src, islands: islands.length, scale: lo };
+  return { geometry: src, islands: flat.length, parts: groups.length, scale };
 }
 
 /** Нормаль и площадь треугольника. */
@@ -237,41 +256,132 @@ function adjacency(pos, triCount) {
   return adj;
 }
 
-/**
- * Острова: от самой крупной свободной грани разливаемся по соседям, пока
- * их нормаль не отвернулась от затравки дальше порога. Затравка берётся
- * неподвижной, а не скользящим средним: иначе остров уползает по кривой
- * поверхности и в конце разворачивается почти вбок.
- */
-function cluster(triCount, normal, area, adj) {
-  const order = [...Array(triCount).keys()].sort((a, b) => area[b] - area[a]);
-  const taken = new Uint8Array(triCount);
-  const islands = [];
-
-  for (const seed of order) {
-    if (taken[seed]) continue;
-    const nx = normal[seed * 3], ny = normal[seed * 3 + 1], nz = normal[seed * 3 + 2];
-    const tris = [seed];
-    taken[seed] = 1;
-    const stack = [seed];
-    while (stack.length) {
-      const t = stack.pop();
+/** Детали: связные оболочки по общим рёбрам. */
+function shells(triCount, adj) {
+  const seen = new Uint8Array(triCount);
+  const out = [];
+  for (let s = 0; s < triCount; s++) {
+    if (seen[s]) continue;
+    const tris = [s];
+    seen[s] = 1;
+    for (let i = 0; i < tris.length; i++) {
+      const t = tris[i];
       for (let e = 0; e < 3; e++) {
         const n = adj[t * 3 + e];
-        if (n < 0 || taken[n]) continue;
-        const dot = nx * normal[n * 3] + ny * normal[n * 3 + 1] + nz * normal[n * 3 + 2];
-        if (dot < ANGLE) continue;
-        taken[n] = 1;
-        tris.push(n);
-        stack.push(n);
+        if (n >= 0 && !seen[n]) { seen[n] = 1; tris.push(n); }
       }
     }
-    islands.push(tris);
+    out.push(tris);
   }
-  return islands;
+  return out;
 }
 
-/** Остров на плоскость своей затравки, с поворотом по меньшей рамке. */
+/**
+ * Острова в пределах набора треугольников: от самой крупной свободной грани
+ * разливаемся по соседям, пока их нормаль не отвернулась от затравки дальше
+ * допуска. Затравка неподвижна, а не скользящее среднее: иначе остров
+ * уползает по кривой поверхности и в конце разворачивается почти вбок.
+ */
+function grow(ctx, tris, cosLimit) {
+  const { normal, area, adj, mark } = ctx;
+  const id = ++ctx.stamp;               // «свой» набор помечен этим номером
+  for (const t of tris) mark[t] = id;
+  const order = [...tris].sort((a, b) => area[b] - area[a]);
+  const out = [];
+  for (const seed of order) {
+    if (mark[seed] !== id) continue;
+    const nx = normal[seed * 3], ny = normal[seed * 3 + 1], nz = normal[seed * 3 + 2];
+    const chart = [seed];
+    mark[seed] = -1;
+    for (let i = 0; i < chart.length; i++) {
+      const t = chart[i];
+      for (let e = 0; e < 3; e++) {
+        const n = adj[t * 3 + e];
+        if (n < 0 || mark[n] !== id) continue;
+        if (nx * normal[n * 3] + ny * normal[n * 3 + 1] + nz * normal[n * 3 + 2] < cosLimit) continue;
+        mark[n] = -1;
+        chart.push(n);
+      }
+    }
+    out.push(chart);
+  }
+  return out;
+}
+
+/** Развернуть остров конформно; негодный — null. */
+function tryFlat(ctx, tris) {
+  const { pos, normal, area } = ctx;
+  let ax = 0, ay = 0, az = 0;
+  for (const t of tris) { ax += normal[t * 3] * area[t]; ay += normal[t * 3 + 1] * area[t]; az += normal[t * 3 + 2] * area[t]; }
+  let l = Math.hypot(ax, ay, az);
+  if (l < 1e-12) { ax = normal[tris[0] * 3]; ay = normal[tris[0] * 3 + 1]; az = normal[tris[0] * 3 + 2]; l = 1; }
+  const r = flattenChart(pos, tris, [ax / l, ay / l, az / l]);
+  return r.ok ? orient(tris, r.pts) : null;
+}
+
+/**
+ * Острова одной детали — как можно крупнее.
+ * Растут с широким допуском и разгибаются конформно; негодный остров
+ * перерастает с допуском поуже, на последней ступени — плоская проекция.
+ * Мелкие обрезки потом пробуют прирасти к соседу.
+ */
+function chartsOfShell(ctx, shellTris) {
+  const out = [];
+  const queue = grow(ctx, shellTris, CONES[0]).map((tris) => ({ tris, level: 0 }));
+  while (queue.length) {
+    const { tris, level } = queue.pop();
+    const f = tryFlat(ctx, tris);
+    if (f) { out.push(f); continue; }
+    if (level + 1 < CONES.length) {
+      for (const sub of grow(ctx, tris, CONES[level + 1])) queue.push({ tris: sub, level: level + 1 });
+    } else {
+      for (const sub of grow(ctx, tris, PLANAR)) out.push(project(ctx.pos, sub, ctx.normal));
+    }
+  }
+  return mergeSmall(ctx, out, shellTris.length);
+}
+
+/**
+ * Обрезки — к соседу. Остров мельче доли детали прирастает к тому соседнему,
+ * с которым у него больше всего общих рёбер, если вместе они разворачиваются
+ * годно. Иначе остаётся как есть.
+ */
+function mergeSmall(ctx, charts, shellSize) {
+  if (charts.length < 2) return charts;
+  const { adj } = ctx;
+  const small = Math.max(3, shellSize * SMALL_SHARE);
+  const owner = new Map();               // треугольник → остров
+  charts.forEach((c, i) => { for (const t of c.tris) owner.set(t, i); });
+  const alive = charts.slice();
+  const order = alive.map((c, i) => i).filter((i) => alive[i].tris.length < small)
+    .sort((a, b) => alive[a].tris.length - alive[b].tris.length);
+  for (const i of order) {
+    const c = alive[i];
+    if (!c || c.tris.length >= small) continue;
+    const shared = new Map();
+    for (const t of c.tris) {
+      for (let e = 0; e < 3; e++) {
+        const n = adj[t * 3 + e];
+        if (n < 0) continue;
+        const j = owner.get(n);
+        if (j === undefined || j === i || !alive[j]) continue;
+        shared.set(j, (shared.get(j) || 0) + 1);
+      }
+    }
+    const cand = [...shared.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2);
+    for (const [j] of cand) {
+      const merged = tryFlat(ctx, alive[j].tris.concat(c.tris));
+      if (!merged) continue;
+      alive[j] = merged;
+      alive[i] = null;
+      for (const t of c.tris) owner.set(t, j);
+      break;
+    }
+  }
+  return alive.filter(Boolean);
+}
+
+/** Плоская проекция на плоскость затравки — запасная ступень. */
 function project(pos, tris, normal) {
   const s = tris[0];
   const nx = normal[s * 3], ny = normal[s * 3 + 1], nz = normal[s * 3 + 2];
@@ -293,8 +403,11 @@ function project(pos, tris, normal) {
       pts[(k * 3 + c) * 2 + 1] = x * bx + y * by + z * bz;
     }
   }
+  return orient(tris, pts);
+}
 
-  // Поворот, при котором рамка острова меньше: так в атлас влезает больше.
+/** Поворот острова по меньшей рамке: так в атлас влезает больше. */
+function orient(tris, pts) {
   let best = { a: 0, w: Infinity, h: Infinity, area: Infinity, minX: 0, minY: 0 };
   for (let i = 0; i < TURNS; i++) {
     const ang = (Math.PI / 2) * (i / TURNS);
@@ -394,24 +507,26 @@ function islandMask(f, scale, rot, R) {
  * занятые куски, а не идёт клетка за клеткой.
  */
 class Atlas {
-  constructor(R) {
-    this.R = R;
-    this.occ = new Uint8Array(R * R);
-    this.nextOcc = new Int32Array(R * R);
-    this.nextFree = new Int32Array(R * R);
-    this.maxRun = new Int32Array(R);           // самый длинный свободный кусок строки
-    this.lo = new Int32Array(R);               // пределы правки по строкам в put()
-    this.hi = new Int32Array(R);
-    this.emptyRow = Int32Array.from({ length: R }, (_, x) => x);
+  /** W×H клеток; атлас развёртки — квадрат. */
+  constructor(W, H = W) {
+    this.W = W; this.H = H;
+    this.R = W;                                 // клеток на единицу атласа
+    this.occ = new Uint8Array(W * H);
+    this.nextOcc = new Int32Array(W * H);
+    this.nextFree = new Int32Array(W * H);
+    this.maxRun = new Int32Array(H);           // самый длинный свободный кусок строки
+    this.lo = new Int32Array(H);               // пределы правки по строкам в put()
+    this.hi = new Int32Array(H);
+    this.emptyRow = Int32Array.from({ length: W }, (_, x) => x);
   }
 
   /** Пустой атлас. Буферы те же — их выделение дороже самой укладки. */
   reset() {
-    const R = this.R;
+    const W = this.W;
     this.occ.fill(0);
-    this.nextOcc.fill(R);
-    for (let y = 0; y < R; y++) this.nextFree.set(this.emptyRow, y * R);
-    this.maxRun.fill(R);
+    this.nextOcc.fill(W);
+    for (let y = 0; y < this.H; y++) this.nextFree.set(this.emptyRow, y * W);
+    this.maxRun.fill(W);
   }
 
   /**
@@ -419,7 +534,7 @@ class Atlas {
    * поменялось; левее — идём, пока новые значения не совпадут со старыми.
    */
   _row(y, a, b) {
-    const R = this.R, o = y * R;
+    const R = this.W, o = y * R;
     let occAt = b + 1 < R ? this.nextOcc[o + b + 1] : R;
     let freeAt = b + 1 < R ? this.nextFree[o + b + 1] : R;
     for (let x = b; x >= 0; x--) {
@@ -440,7 +555,7 @@ class Atlas {
 
   /** Встаёт ли маска в (x, y)? Да — -1; нет — x, с которого искать дальше. */
   test(m, x, y) {
-    const R = this.R, runs = m.runs, n = runs.length;
+    const R = this.W, runs = m.runs, n = runs.length;
     // С отрезка, на котором споткнулись в прошлый раз: рядом он же и мешает.
     for (let k = 0, i = m.last; k < n; k += 3, i = i + 3 < n ? i + 3 : 0) {
       const o = (y + runs[i]) * R;
@@ -460,12 +575,12 @@ class Atlas {
 
   /** Занять место маски с полем pad клеток вокруг. */
   put(m, x, y, pad) {
-    const R = this.R, runs = m.runs, lo = this.lo, hi = this.hi;
-    const ya = Math.max(0, y - pad), yb = Math.min(R - 1, y + m.mh - 1 + pad);
+    const R = this.W, H = this.H, runs = m.runs, lo = this.lo, hi = this.hi;
+    const ya = Math.max(0, y - pad), yb = Math.min(H - 1, y + m.mh - 1 + pad);
     for (let yy = ya; yy <= yb; yy++) { lo[yy] = R; hi[yy] = -1; }
     for (let i = 0; i < runs.length; i += 3) {
       const a = Math.max(0, x + runs[i + 1] - pad), b = Math.min(R - 1, x + runs[i + 2] + pad);
-      const y0 = Math.max(0, y + runs[i] - pad), y1 = Math.min(R - 1, y + runs[i] + pad);
+      const y0 = Math.max(0, y + runs[i] - pad), y1 = Math.min(H - 1, y + runs[i] + pad);
       for (let yy = y0; yy <= y1; yy++) {
         this.occ.fill(1, yy * R + a, yy * R + b + 1);
         if (a < lo[yy]) lo[yy] = a;
@@ -475,13 +590,47 @@ class Atlas {
     for (let yy = ya; yy <= yb; yy++) if (hi[yy] >= 0) this._row(yy, lo[yy], hi[yy]);
   }
 
+  /**
+   * Ближайшее к точке (cx, cy) место, где маска встаёт, — по расстоянию от
+   * середины маски. Строки перебираются от точки наружу; дальше, чем уже
+   * найденное, не ищем.
+   */
+  findNear(m, edge, cx, cy) {
+    const H = this.H, W = this.W;
+    const y0 = edge, y1 = H - edge - m.mh;
+    if (y1 < y0) return null;
+    const yc = Math.round(cy - m.mh / 2);
+    let best = null, bd = Infinity;
+    for (let k = 0; ; k++) {
+      const dy = (k + 1) >> 1;
+      if (dy * dy >= bd) break;
+      const y = k % 2 ? yc - dy : yc + dy;
+      if (k > 0 && yc - dy < y0 && yc + dy > y1) break;
+      if (y < y0 || y > y1) continue;
+      if (!this.rowsFit(m, y)) continue;
+      const ddy = (y + m.mh / 2 - cy) ** 2;
+      // Левее, чем дальше уже найденного, не начинаем.
+      let x = bd < Infinity ? Math.max(edge, Math.floor(cx - m.mw / 2 - Math.sqrt(bd - ddy))) : edge;
+      while (x + m.mw <= W - edge) {
+        const dx = x + m.mw / 2 - cx;
+        if (dx > 0 && dx * dx + ddy >= bd) break;
+        const next = this.test(m, x, y);
+        if (next < 0) {
+          const d = dx * dx + ddy;
+          if (d < bd) { bd = d; best = { x, y, d }; }
+          x += 1;
+        } else x = Math.max(x + 1, next);
+      }
+    }
+    return best;
+  }
+
   /** Первое место снизу вверх, слева направо; null — некуда. */
   find(m, edge) {
-    const R = this.R;
-    for (let y = edge; y + m.mh <= R - edge; y++) {
+    for (let y = edge; y + m.mh <= this.H - edge; y++) {
       if (!this.rowsFit(m, y)) continue;
       let x = edge;
-      while (x + m.mw <= R - edge) {
+      while (x + m.mw <= this.W - edge) {
         const next = this.test(m, x, y);
         if (next < 0) return { x, y };
         x = Math.max(x + 1, next);
@@ -492,28 +641,43 @@ class Atlas {
 }
 
 /**
- * Укладка по растру: острова от крупных к мелким, каждый — в первое место
- * снизу, где его маска не задевает занятого, из двух поворотов — то, что
- * ниже. Мелкие острова садятся в выемки крупных, а не в отдельную рамку,
- * как у полок. Возвращает false, если при этом масштабе не влезло.
+ * Укладка по деталям. Детали от крупных к мелким, острова детали — от
+ * крупных к мелким. Первый остров детали встаёт в первое место снизу,
+ * каждый следующий — в ближайшее свободное к середине уже уложенных
+ * островов этой же детали: деталь собирается в одном месте атласа, а не
+ * рассыпается по нему.
+ *
+ * Пробовали блоками: сначала острова детали плотно в свой прямоугольник,
+ * потом прямоугольники в атлас. Детали выходили кусками, но потери двух
+ * укладок перемножались: 41–48% атласа против 55% у одной укладки с
+ * притяжением (замер 07.10, модель из Tripo и Kian).
  */
-function rasterPack(flat, scale, margin, atlas) {
+function packParts(groups, scale, margin, atlas) {
   const R = atlas.R;
   const pad = Math.max(1, Math.round(margin * R));
   const edge = Math.ceil(pad / 2);
+  const area = (g) => g.reduce((s, f) => s + f.area, 0);
+  const order = groups.slice().sort((a, b) => area(b) - area(a));
   atlas.reset();
-  const order = [...flat].sort((a, b) => b.w * b.h - a.w * a.h);
-  for (const f of order) {
-    let best = null;
-    for (const rot of [0, 1]) {
-      const m = islandMask(f, scale, rot, R);
-      if (m.mw + edge * 2 > R || m.mh + edge * 2 > R) continue;
-      const at = atlas.find(m, edge);
-      if (at && (!best || at.y < best.at.y || (at.y === best.at.y && at.x < best.at.x))) best = { m, at };
+  for (const g of order) {
+    const charts = g.slice().sort((a, b) => b.area - a.area);
+    let sx = 0, sy = 0, sw = 0;
+    for (const f of charts) {
+      let pick = null;
+      for (const rot of [0, 1]) {
+        const m = islandMask(f, scale, rot, R);
+        if (m.mw + edge * 2 > R || m.mh + edge * 2 > R) continue;
+        const at = sw ? atlas.findNear(m, edge, sx / sw, sy / sw) : atlas.find(m, edge);
+        if (!at) continue;
+        const d = sw ? at.d : at.y * R + at.x;
+        if (!pick || d < pick.d) pick = { m, at, d };
+      }
+      if (!pick) return false;
+      atlas.put(pick.m, pick.at.x, pick.at.y, pad);
+      f.x = pick.at.x / R; f.y = pick.at.y / R; f.rot = pick.m.rot;
+      const w = pick.m.mw * pick.m.mh;
+      sx += (pick.at.x + pick.m.mw / 2) * w; sy += (pick.at.y + pick.m.mh / 2) * w; sw += w;
     }
-    if (!best) return false;
-    atlas.put(best.m, best.at.x, best.at.y, pad);
-    f.x = best.at.x / R; f.y = best.at.y / R; f.rot = best.m.rot;
   }
   return true;
 }
