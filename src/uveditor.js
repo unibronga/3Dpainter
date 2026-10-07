@@ -35,6 +35,8 @@ export class UVEditor {
    *   lassoMode(e)             — режим выделения с учётом модификаторов
    *   onLasso(pts, mode)       — контур лассо замкнут, вершины в текселях
    *   onLassoClick(mode)       — щелчок лассо без контура: снять выделение
+   *   onDecal(phase, e, p)     — аппликация: 'down' | 'move' | 'up', p в текселях
+   *   afterDraw()              — полотно перерисовано: сдвиг, зум, смена слоя
    */
   constructor(container, hooks) {
     this.container = container;
@@ -52,6 +54,7 @@ export class UVEditor {
     this.cursor = null;
     this.painting = false;
     this.shaping = null;     // тянущаяся рамка фигуры или текста
+    this.decaling = false;   // идёт правка углов аппликации
     this.panning = false;
     this.zooming = null;     // протяжка инструментом зума
     this.lasso = null;       // контур лассо в работе: { pts, mode, poly, hover }
@@ -233,6 +236,8 @@ export class UVEditor {
       ctx.lineWidth = 1;
       ctx.stroke();
     }
+    // Слои поверх полотна (углы аппликации) следуют за сдвигом и зумом.
+    this.hooks.afterDraw?.();
   }
 
   /**
@@ -557,6 +562,8 @@ export class UVEditor {
         this.draw();
         return;
       }
+      // Аппликация — те же углы, что над моделью; правит их хозяин.
+      if (tool === 'decal') { this.decaling = true; this.hooks.onDecal('down', e, p); return; }
       // Фигуры и текст здесь тянутся рамкой — тем же движением, что и на
       // модели: инструмент один, значит и повадки у него должны быть одни.
       if (SHAPE_TOOLS.has(tool)) {
@@ -624,6 +631,10 @@ export class UVEditor {
         z.y = e.clientY;
         return;
       }
+      if (this.target && this.hooks.currentTool() === 'decal') {
+        this.hooks.onDecal('move', e, this.toTexel(e.clientX, e.clientY));
+        return;
+      }
       if (this.shaping) {
         this.shaping.b = this.toTexel(e.clientX, e.clientY);
         this.shaping.shift = e.shiftKey;
@@ -651,6 +662,7 @@ export class UVEditor {
         this.draw();
       }
       if (this.painting) { this.painting = false; this.hooks.onEnd(); }
+      if (this.decaling) { this.decaling = false; this.hooks.onDecal('up'); }
       if (this.shaping) {
         const { a, b, shift } = this.shaping;
         this.shaping = null;

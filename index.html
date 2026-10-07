@@ -49,6 +49,21 @@
         <span class="val" id="shape-font-val">96 px</span>
       </div>
 
+      <div class="opt-group" data-for="decal">
+        <span class="opt-label" data-i18n="decal.image">Картинка</span>
+        <img id="decal-thumb" alt="" hidden>
+        <span class="val" id="decal-name"></span>
+        <button class="btn" id="decal-pick" data-i18n="decal.pick" data-i18n-title="tip.decalPick" title="Выбрать картинку">выбрать…</button>
+        <span class="opt-sep"></span>
+        <label class="opt-check" data-i18n-title="tip.decalPart" title="Класть только на деталь, по которой щёлкнули: волосы над лицом картинку не перехватят">
+          <input type="checkbox" id="decal-part" checked><span data-i18n="decal.part">одна деталь</span>
+        </label>
+        <span class="opt-sep"></span>
+        <button class="btn" id="decal-apply" data-i18n="decal.apply" data-i18n-title="tip.decalApply" title="Наложить на модель (Enter)" disabled>наложить</button>
+        <button class="btn" id="decal-cancel" data-i18n="decal.cancel" data-i18n-title="tip.decalCancel" title="Убрать, не накладывая (Esc)" disabled>отмена</button>
+        <input type="file" id="decal-input" accept=".png,.webp,.jpg,.jpeg,.gif,image/png,image/webp,image/jpeg,image/gif" hidden>
+      </div>
+
       <div class="opt-group" data-for="lasso lasso-poly">
         <span class="opt-label" data-i18n="sel.mode">Выделение</span>
         <div class="seg" id="sel-modes">
@@ -129,6 +144,9 @@
     <button class="tool" data-tool="text" data-tip="text">
       <svg viewBox="0 0 24 24"><path d="M5 6.5V5h14v1.5"/><path d="M12 5v14"/><path d="M8.5 19h7"/></svg>
     </button>
+    <button class="tool" data-tool="decal" data-tip="decal">
+      <svg viewBox="0 0 24 24"><path d="M5 7.5 18 4.5l1.5 12.5L6.5 19.5z"/><path d="m8 16.5 3.5-4 2.5 2.5 1.8-1.8 2 2.6"/><circle cx="14.6" cy="9" r="1.3"/></svg>
+    </button>
     <div class="tool-sep"></div>
     <button class="tool" data-tool="fill-faces" data-tip="fill-faces">
       <svg viewBox="0 0 24 24"><path d="M3 12 12 3l9 9-9 9z"/><path d="M3 12h18"/></svg>
@@ -193,6 +211,10 @@
             </button>
           </div>
           <div class="rail-sep"></div>
+          <!-- Модель потерялась из кадра — вернуть её одним нажатием (Home). -->
+          <button class="rail-btn" id="ov-frame" data-i18n-title="tip.center" title="Показать модель целиком (Home)">
+            <svg viewBox="0 0 24 24"><path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9"/><path d="M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9"/><path d="M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15"/><path d="M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
           <div class="rail-item">
             <button class="rail-btn" id="ov-views" data-i18n-title="tip.views" title="Виды: спереди, сзади, слева, справа, сверху, снизу (1–4, 6, 7, 0)">
               <svg viewBox="0 0 24 24"><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5 12 12l8-4.5"/><path d="M12 12v9"/></svg>

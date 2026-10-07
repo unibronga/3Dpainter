@@ -310,6 +310,8 @@ export class History {
  * поэтому запись хранит их списком.
  */
 function restore(entry, which) {
+  // Шаг на несколько объектов сразу (аппликация поверх составной модели).
+  if (entry.group) { entry.group.forEach((e) => restore(e, which)); return; }
   const { target, rect } = entry;
   const S = target.size;
   const w = rect.x1 - rect.x0 + 1;

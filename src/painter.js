@@ -37,6 +37,29 @@ function merge(a, b) {
 }
 export function isEmptyRect(r) { return r.x1 < r.x0 || r.y1 < r.y0; }
 
+/**
+ * Что видно в точке экрана (sx, sy — CSS-пиксели холста; в снимке k клеток
+ * на пиксель): глубина ближайшей поверхности, по самой дальней
+ * из четырёх соседних клеток снимка. Дальняя — чтобы тексель у самого края
+ * силуэта (наполовину виден) не выпадал из печати каймой в пиксель. Фон в
+ * выбор не идёт: его «бесконечность» пропускала бы всё, что за силуэтом
+ * (замер: тысяча текселей глубже 5 см по краю модели).
+ */
+const DEPTH_BG = 1e8;
+function depthAt(dep, sx, sy) {
+  const { data, w, h, k = 1 } = dep;
+  const x0 = Math.max(0, Math.min(w - 1, Math.floor(sx * k - 0.5)));
+  const y0 = Math.max(0, Math.min(h - 1, Math.floor(sy * k - 0.5)));
+  const x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1);
+  const a = data[y0 * w + x0], b = data[y0 * w + x1], c = data[y1 * w + x0], d = data[y1 * w + x1];
+  let far = -1;
+  if (a < DEPTH_BG && a > far) far = a;
+  if (b < DEPTH_BG && b > far) far = b;
+  if (c < DEPTH_BG && c > far) far = c;
+  if (d < DEPTH_BG && d > far) far = d;
+  return far < 0 ? Infinity : far;
+}
+
 /* ── Растеризация треугольника в тексели ───────────────────────── */
 
 /** Квадрат расстояния от точки до отрезка. */
@@ -219,6 +242,9 @@ export class Stroke {
       ? opts.pattern : null;
     this.tiles = Math.max(0.05, (opts.pattern?.scale ?? 8) / 4);
     this.color2 = opts.color2 || opts.color || [0, 0, 0];
+    // Свой цвет на каждый тексель — у аппликации; заводится первым же
+    // цветным трафаретом и тогда главнее цвета, узора и картинки материала.
+    this.tint = null;
 
     const S = target.size;
     // Накопитель мазка: внутри ОДНОГО ПРОХОДА альфа берётся по максимуму,
@@ -408,29 +434,76 @@ export class Stroke {
   }
 
   /**
-   * Отпечаток по экранному трафарету — им печатаются фигуры и текст.
+   * Отпечаток по экранному трафарету — им печатаются фигуры, текст и
+   * аппликация.
    *
    * Для каждого текселя берём его точку на поверхности, проецируем на экран
    * и спрашиваем трафарет, попал ли он в фигуру. Так прямоугольник остаётся
    * прямоугольником на экране, как бы ни была изогнута поверхность под ним.
    *
+   * Трафарет с флагом `colored` отдаёт ещё и цвет: stencil(x, y, out, k)
+   * пишет в out[0..2] цвет картинки, k — пикселей экрана на тексель у этого
+   * треугольника (по нему картинка выбирает свой мип-уровень).
+   *
    * @param {number[]} mvp — элементы матрицы «модель → экран»
-   * @param {function(number, number): number} stencil — покрытие 0..1
+   * @param {function} stencil — покрытие 0..1
+   * @param {object} [more]
+   *   clip  — рамка трафарета на экране: треугольники вне неё не трогаем;
+   *   depth — снимок глубины с экрана (viewport.depthSnapshot): печатаем
+   *           только то, что видно спереди, а не всё, что под рамкой;
+   *   tris  — Uint8Array по треугольникам: печатать только отмеченные
+   *           (аппликация на одну деталь)
    */
-  stampProjected(mvp, viewW, viewH, stencil, viewDir, brush = DEFAULT_BRUSH, frontOnly = true) {
-    const { faceNormal, triCount } = this.cache;
+  stampProjected(mvp, viewW, viewH, stencil, viewDir, brush = DEFAULT_BRUSH, frontOnly = true, more = {}) {
+    const { faceNormal, triCount, pos, uv, idx } = this.cache;
     const S = this.target.size;
     const acc = this.acc;
     const rect = emptyRect();
     const flow = brush.flow ?? 1;
     const e = mvp;
     const vx = viewDir.x, vy = viewDir.y, vz = viewDir.z;
+    const clip = more.clip || null;
+    const dep = more.depth || null;
+    const only = more.tris || null;
+    const m = dep ? dep.mv : null;
+    const colored = !!stencil.colored;
+    const out = [0, 0, 0];
+    if (colored && !this.tint) this.tint = new Uint8ClampedArray(S * S * 3);
+    const tint = this.tint;
+    const sx3 = [0, 0, 0], sy3 = [0, 0, 0];
 
     for (let t = 0; t < triCount; t++) {
+      if (only && !only[t]) continue;
       // Отвёрнутые грани не печатаем: иначе фигура проступит на изнанке.
       if (frontOnly) {
         const d = faceNormal[t * 3] * vx + faceNormal[t * 3 + 1] * vy + faceNormal[t * 3 + 2] * vz;
         if (d >= 0) continue;
+      }
+
+      // Вершины на экран: треугольник целиком вне рамки трафарета не
+      // растеризуем — на плотной модели это почти все треугольники.
+      let behind = false;
+      for (let c = 0; c < 3; c++) {
+        const i = idx[t * 3 + c] * 3;
+        const X = pos[i], Y = pos[i + 1], Z = pos[i + 2];
+        const w = e[3] * X + e[7] * Y + e[11] * Z + e[15];
+        if (w <= 1e-6) { behind = true; break; }
+        sx3[c] = (((e[0] * X + e[4] * Y + e[8] * Z + e[12]) / w) * 0.5 + 0.5) * viewW;
+        sy3[c] = ((-((e[1] * X + e[5] * Y + e[9] * Z + e[13]) / w)) * 0.5 + 0.5) * viewH;
+      }
+      if (clip && !behind) {
+        if (Math.max(sx3[0], sx3[1], sx3[2]) < clip.x0 || Math.min(sx3[0], sx3[1], sx3[2]) > clip.x1 ||
+            Math.max(sy3[0], sy3[1], sy3[2]) < clip.y0 || Math.min(sy3[0], sy3[1], sy3[2]) > clip.y1) continue;
+      }
+
+      // Пикселей экрана на тексель — по площадям треугольника там и там.
+      let k = 1;
+      if (colored && !behind) {
+        const a0 = idx[t * 3] * 2, a1 = idx[t * 3 + 1] * 2, a2 = idx[t * 3 + 2] * 2;
+        const uvArea = Math.abs((uv[a1] - uv[a0]) * (uv[a2 + 1] - uv[a0 + 1]) -
+                                (uv[a2] - uv[a0]) * (uv[a1 + 1] - uv[a0 + 1])) * S * S;
+        const scrArea = Math.abs((sx3[1] - sx3[0]) * (sy3[2] - sy3[0]) - (sx3[2] - sx3[0]) * (sy3[1] - sy3[0]));
+        k = uvArea > 1e-9 ? Math.sqrt(scrArea / uvArea) : 1;
       }
 
       rasterTri(this.cache, S, t, (p, X, Y, Z, px, py) => {
@@ -439,9 +512,19 @@ export class Stroke {
         const sx = (((e[0] * X + e[4] * Y + e[8] * Z + e[12]) / w) * 0.5 + 0.5) * viewW;
         const sy = ((-((e[1] * X + e[5] * Y + e[9] * Z + e[13]) / w)) * 0.5 + 0.5) * viewH;
 
-        const a = stencil(sx, sy) * flow * 255;
+        if (dep) {
+          // Глубина точки против того, что видно в этом месте экрана. Наклон
+          // грани допуском не покрываем: его уже берёт дальняя из четырёх
+          // клеток снимка. Допуск по углу пропускал торс за рукой — у граней
+          // вкось он доходил до 5 см.
+          const z = -(m[2] * X + m[6] * Y + m[10] * Z + m[14]);
+          if (z > depthAt(dep, sx, sy) + dep.tol + dep.pxAt(z)) return;
+        }
+
+        const a = stencil(sx, sy, out, k) * flow * 255;
         if (a <= acc[p]) return;
         acc[p] = a;
+        if (colored) { tint[p * 3] = out[0]; tint[p * 3 + 1] = out[1]; tint[p * 3 + 2] = out[2]; }
         expand(rect, px, py);
       });
     }
@@ -457,16 +540,21 @@ export class Stroke {
     const acc = this.acc;
     const rect = emptyRect();
     const flow = brush.flow ?? 1;
+    const colored = !!stencil.colored;
+    const out = [0, 0, 0];
+    if (colored && !this.tint) this.tint = new Uint8ClampedArray(S * S * 3);
+    const tint = this.tint;
 
     const x0 = Math.max(0, Math.floor(box.x0)), x1 = Math.min(S - 1, Math.ceil(box.x1));
     const y0 = Math.max(0, Math.floor(box.y0)), y1 = Math.min(S - 1, Math.ceil(box.y1));
 
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) {
-        const a = stencil(x + 0.5, y + 0.5) * flow * 255;
+        const a = stencil(x + 0.5, y + 0.5, out, 1) * flow * 255;
         const p = y * S + x;
         if (a <= acc[p]) continue;
         acc[p] = a;
+        if (colored) { tint[p * 3] = out[0]; tint[p * 3 + 1] = out[1]; tint[p * 3 + 2] = out[2]; }
         expand(rect, x, y);
       }
     }
@@ -548,6 +636,7 @@ export class Stroke {
       const matR = this.matRough, matM = this.matMetal, matO = this.matOpac;
       const pat = this.pattern;
       const tex = this.texture;
+      const tint = this.tint;
       const tiles = this.tiles;
       const [p2r, p2g, p2b] = this.color2;
 
@@ -562,7 +651,10 @@ export class Stroke {
           // Узор привязан к развёртке, а не к мазку: два прохода по одному
           // месту дают тот же рисунок, а не кашу из наложенных узоров.
           let sr = cr, sg = cg, sb = cb;
-          if (tex) {
+          if (tint) {
+            // Аппликация несёт свой цвет на каждый тексель.
+            sr = tint[p * 3]; sg = tint[p * 3 + 1]; sb = tint[p * 3 + 2];
+          } else if (tex) {
             // Картинка повторяется по развёртке заданное число раз.
             const u = ((x + 0.5) / S) * tiles;
             const v = (1 - (y + 0.5) / S) * tiles;

@@ -123,11 +123,66 @@ function shrinkPremultiplied(buf, w, h, ss) {
 /** Скорость вращения: полный оборот на 500 пикселей протяжки. */
 export const ORBIT_SPEED = (2 * Math.PI) / 500;
 
+/**
+ * Аппликация на поверхности, пока её ставят: картинка проецируется с экрана
+ * прямо в шейдере материала покраски. Тянешь — и она скользит по модели,
+ * огибает форму и прячется за передними деталями: видеокарта рисует только
+ * видимое, перекрытие выходит само. Впекается потом той же проекцией на
+ * процессоре, так что легло ровно то, что было видно.
+ *
+ * Униформы общие на все меши: смена рамки — запись в них, без пересборки.
+ */
+const DECAL = {
+  decalOn: { value: 0 },
+  decalMap: { value: null },
+  decalH: { value: new THREE.Matrix3() },
+  decalView: { value: new THREE.Vector2(1, 1) },
+  decalFlow: { value: 1 },
+  decalFront: { value: 1 },
+  decalOnlyPart: { value: 0 },
+};
+// Деталь, на которую ставят аппликацию, помечена атрибутом вершин
+// decalPart = 1 — только на время постановки. У остальных мешей атрибута нет,
+// и видеокарта отдаёт за него 0.
+const DECAL_VERT = `
+attribute float decalPart;
+varying vec4 vDecalClip;
+varying float vDecalPart;`;
+const DECAL_FRAG_HEAD = `
+uniform sampler2D decalMap;
+uniform float decalOn, decalFlow, decalFront, decalOnlyPart;
+varying float vDecalPart;
+uniform mat3 decalH;
+uniform vec2 decalView;
+varying vec4 vDecalClip;`;
+// После карты цвета и до света: аппликация освещается, как краска под ней.
+const DECAL_FRAG_BODY = `
+  if (decalOn > 0.5 && (decalFront < 0.5 || gl_FrontFacing) && (decalOnlyPart < 0.5 || vDecalPart > 0.5)) {
+    // Точка в CSS-пикселях холста — в тех же единицах, что углы рамки.
+    vec2 ndc = vDecalClip.xy / vDecalClip.w;
+    vec3 hq = decalH * vec3((ndc.x * 0.5 + 0.5) * decalView.x, (0.5 - ndc.y * 0.5) * decalView.y, 1.0);
+    if (hq.z > 0.0) {
+      vec2 duv = hq.xy / hq.z;
+      if (duv.x >= 0.0 && duv.x <= 1.0 && duv.y >= 0.0 && duv.y <= 1.0) {
+        // Картинка залита с переворотом (flipY) и умноженной прозрачностью —
+        // без кайм у края рисунка.
+        vec4 dc = texture2D(decalMap, vec2(duv.x, 1.0 - duv.y));
+        if (dc.a > 0.002) diffuseColor.rgb = mix(diffuseColor.rgb, dc.rgb / dc.a, dc.a * decalFlow);
+      }
+    }
+  }`;
+
 function patchSelection(material, u) {
   material.onBeforeCompile = (sh) => {
-    Object.assign(sh.uniforms, u);
+    Object.assign(sh.uniforms, u, DECAL);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>' + DECAL_VERT)
+      .replace('#include <project_vertex>', '#include <project_vertex>\n  vDecalClip = gl_Position;\n  vDecalPart = decalPart;');
     sh.fragmentShader = 'uniform sampler2D selMap;\nuniform float selOn;\nuniform float selTime;\n'
-      + sh.fragmentShader.replace('#include <dithering_fragment>', `#include <dithering_fragment>
+      + sh.fragmentShader
+        .replace('#include <common>', '#include <common>' + DECAL_FRAG_HEAD)
+        .replace('#include <map_fragment>', '#include <map_fragment>' + DECAL_FRAG_BODY)
+        .replace('#include <dithering_fragment>', `#include <dithering_fragment>
       if (selOn > 0.5) {
         // Маска лежит строками сверху вниз, как холст покраски, но холст
         // three.js переворачивает при заливке (flipY), а сырые данные — нет.
@@ -1395,6 +1450,184 @@ export class Viewport {
     rot(this.camera.position);
     rot(this.controls.target);
     this.camera.lookAt(this.controls.target);
+  }
+
+  /* ── Аппликация на поверхности ───────────────────────────────── */
+
+  /**
+   * Показать картинку аппликации на модели.
+   * @param {object|null} img картинка из decal.js; null — убрать
+   * @param {number[]} inv обратная матрица рамки (quadInverse), построчно
+   */
+  setDecalPreview(img, inv, { flow = 1, frontOnly = true, part = null } = {}) {
+    this._markDecalPart(part);
+    if (!img) { DECAL.decalOn.value = 0; return; }
+    if (this._decalSrc !== img.canvas) {
+      DECAL.decalMap.value?.dispose();
+      const tex = new THREE.CanvasTexture(img.canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.premultiplyAlpha = true;
+      tex.anisotropy = 4;
+      DECAL.decalMap.value = tex;
+      this._decalSrc = img.canvas;
+    }
+    const c = this.renderer.domElement;
+    DECAL.decalView.value.set(c.clientWidth, c.clientHeight);
+    DECAL.decalH.value.set(...inv);
+    DECAL.decalFlow.value = flow;
+    DECAL.decalFront.value = frontOnly ? 1 : 0;
+    DECAL.decalOnlyPart.value = part ? 1 : 0;
+    DECAL.decalOn.value = 1;
+  }
+
+  /**
+   * Пометить вершины детали атрибутом decalPart. Атрибут временный: он
+   * живёт, только пока аппликацию ставят, и снимается с прежней детали —
+   * иначе уехал бы в выгрузку вместе с геометрией.
+   * @param {{mesh, tris: Uint8Array}|null} part
+   */
+  _markDecalPart(part) {
+    const was = this._decalPart;
+    if (was && (!part || was.mesh !== part.mesh || was.tris !== part.tris)) {
+      was.mesh.geometry.deleteAttribute('decalPart');
+      this._decalPart = null;
+    }
+    if (!part || this._decalPart) return;
+    const geo = part.mesh.geometry;
+    const idx = part.mesh.userData.paintCache.idx;
+    const flag = new Float32Array(geo.getAttribute('position').count);
+    for (let t = 0; t < part.tris.length; t++) {
+      if (!part.tris[t]) continue;
+      flag[idx[t * 3]] = 1; flag[idx[t * 3 + 1]] = 1; flag[idx[t * 3 + 2]] = 1;
+    }
+    geo.setAttribute('decalPart', new THREE.BufferAttribute(flag, 1));
+    this._decalPart = part;
+  }
+
+  /* ── Глубина с экрана ────────────────────────────────────────── */
+
+  /**
+   * Снимок того, что видно с экрана: для каждого пикселя — расстояние вдоль
+   * взгляда до ближайшей поверхности модели. По нему фигуры, текст и
+   * аппликация печатаются только на видимое, а не сквозь руку на грудь.
+   *
+   * Одна отрисовка модели в float-цель вдвое мельче CSS-пикселей холста:
+   * на внутреннем силуэте (край лацкана над рубашкой) спорная полоса —
+   * в клетку снимка, и мельче клетка — уже полоса. Пол, сетка, рёбра и
+   * курсор в снимок не попадают. Без float-целей (старая видеокарта) — null,
+   * и печать идёт как раньше, сквозь.
+   *
+   * @param {{mesh, tris: Uint8Array}|null} [only] снять одну деталь: она тогда
+   *   загораживает только сама себя — волосы над лицом аппликацию на лицо
+   *   не перехватывают
+   * @returns {null|{data: Float32Array, w, h, k, tol, pxAt(z), mvFor(mesh)}}
+   *   data — сверху вниз, клеток w×h; k — клеток на CSS-пиксель;
+   *   mvFor(mesh) — элементы матрицы «меш → вид»
+   */
+  depthSnapshot(only = null) {
+    if (!this.model || !this.renderer.extensions.has('EXT_color_buffer_float')) return null;
+    const canvas = this.renderer.domElement;
+    const k = 2;
+    const w = (canvas.clientWidth | 0) * k, h = (canvas.clientHeight | 0) * k;
+    if (w < 2 || h < 2) return null;
+
+    const cam = this.camera;
+    cam.updateMatrixWorld();
+    this.model.updateMatrixWorld(true);
+
+    if (!this._depthMat) {
+      // Расстояние вдоль взгляда, линейное: у перспективы буфер глубины
+      // нелинеен, и допуск в метрах по нему не задать.
+      this._depthMat = new THREE.ShaderMaterial({
+        side: THREE.DoubleSide,
+        vertexShader: 'varying float vZ; void main() { vec4 mv = modelViewMatrix * vec4(position, 1.0); vZ = -mv.z; gl_Position = projectionMatrix * mv; }',
+        fragmentShader: 'varying float vZ; void main() { gl_FragColor = vec4(vZ, 0.0, 0.0, 1.0); }',
+      });
+    }
+    const rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.FloatType, depthBuffer: true });
+
+    // Рисуем одну модель, без всего остального сцены: меняем материалы на
+    // время и прячем рёбра поверх.
+    const swapped = [];
+    if (!only) this.model.traverse((o) => {
+      if (o.isMesh && this.paintables.some((p) => p.mesh === o)) { swapped.push([o, o.material]); o.material = this._depthMat; }
+      else if (o.isLine || o.isLineSegments || o.isPoints) { swapped.push([o, null, o.visible]); o.visible = false; }
+    });
+    const prevTarget = this.renderer.getRenderTarget();
+    const prevClear = this.renderer.getClearColor(new THREE.Color());
+    const prevAlpha = this.renderer.getClearAlpha();
+    const parent = only ? null : this.model.parent;
+    const scene = new THREE.Scene();
+    // Модель переезжает в пустую сцену на одну отрисовку — мировые матрицы
+    // уже посчитаны и с подставкой, поэтому обновление их не трогает.
+    scene.matrixWorldAutoUpdate = false;
+    const holder = new THREE.Group();
+    holder.matrixAutoUpdate = false;
+    holder.matrixWorldAutoUpdate = false;
+    if (parent) holder.matrixWorld.copy(parent.matrixWorld);
+    scene.add(holder);
+    let part = null;
+    if (only) {
+      // Одна деталь — своей геометрией из её треугольников, на месте меша.
+      const { pos, idx } = only.mesh.userData.paintCache;
+      let n = 0;
+      for (let t = 0; t < only.tris.length; t++) if (only.tris[t]) n++;
+      const p = new Float32Array(n * 9);
+      let o = 0;
+      for (let t = 0; t < only.tris.length; t++) {
+        if (!only.tris[t]) continue;
+        for (let c = 0; c < 3; c++) { const v = idx[t * 3 + c] * 3; p[o++] = pos[v]; p[o++] = pos[v + 1]; p[o++] = pos[v + 2]; }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(p, 3));
+      part = new THREE.Mesh(g, this._depthMat);
+      part.matrixAutoUpdate = false;
+      part.matrixWorldAutoUpdate = false;
+      part.matrixWorld.copy(only.mesh.matrixWorld);
+      scene.add(part);
+    } else {
+      parent?.remove(this.model);
+      holder.add(this.model);
+    }
+
+    let px = null;
+    try {
+      this.renderer.setRenderTarget(rt);
+      // Дальше дальнего: фон — «ничего не видно».
+      this.renderer.setClearColor(new THREE.Color(1e9, 0, 0), 1);
+      this.renderer.clear();
+      this.renderer.render(scene, cam);
+      px = new Float32Array(w * h * 4);
+      this.renderer.readRenderTargetPixels(rt, 0, 0, w, h, px);
+    } finally {
+      if (part) part.geometry.dispose();
+      else { holder.remove(this.model); parent?.add(this.model); }
+      this.renderer.setRenderTarget(prevTarget);
+      this.renderer.setClearColor(prevClear, prevAlpha);
+      for (const [o, mat, vis] of swapped) { if (mat) o.material = mat; else o.visible = vis; }
+      rt.dispose();
+    }
+
+    // Чтение идёт снизу вверх — переворачиваем в порядок экрана.
+    const data = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) {
+      const src = (h - 1 - y) * w * 4;
+      for (let x = 0; x < w; x++) data[y * w + x] = px[src + x * 4];
+    }
+
+    // Пиксель экрана в метрах на глубине z: им растёт допуск у граней,
+    // которые идут к взгляду вкось.
+    const pxAt = cam.isOrthographicCamera
+      ? (() => { const m = (cam.top - cam.bottom) / cam.zoom / (h / k); return () => m; })()
+      : (() => { const m = 2 * Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2) / (h / k); return (z) => z * m; })();
+    const mv = new THREE.Matrix4();
+    return {
+      data, w, h, k, pxAt,
+      // Постоянная часть допуска — доля размера модели: накладка в 2–3 см от
+      // стены ещё отделяется, а неточность растеризации — нет.
+      tol: (this.modelSize || 1) * 0.002,
+      mvFor: (mesh) => mv.multiplyMatrices(cam.matrixWorldInverse, mesh.matrixWorld).elements.slice(),
+    };
   }
 
   /* ── Попадание луча ──────────────────────────────────────────── */

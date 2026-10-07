@@ -10,6 +10,7 @@ import { ViewCube } from './viewcube.js';
 import { MenuBar } from './menubar.js';
 import { PaintTarget, History, bleedLayer, remapLayer, Layer } from './layers.js';
 import { Stroke, rectStencil, ellipseStencil, imageStencil } from './painter.js';
+import { loadDecalImage, decalStencil, DecalOverlay, quadFromDrag, hitQuad, dragQuad, quadBounds, quadInverse } from './decal.js';
 import * as THREE from 'three';
 import { floodFaces, OVERLAP_LIMIT } from './mesh-cache.js';
 import * as UI from './ui.js';
@@ -108,6 +109,8 @@ const uvEditor = new UVEditor($('uv-body'), {
   onFill: uvFill,
   onPick: uvPick,
   onShape: uvShape,
+  onDecal: (phase, e, p) => decalPointer('uv', phase, e, p),
+  afterDraw: () => drawDecal(),
   lassoMode,
   onLasso: (pts, mode) => {
     const target = activeTarget();
@@ -337,7 +340,7 @@ function removeLayer() {
   // правку в никуда. Чистим их, чтобы история не врала.
   const doomed = new Set();
   eachTarget((t) => doomed.add(t.layers[state.activeLayer]));
-  history.prune((e) => !doomed.has(e.layer));
+  history.prune((e) => !(e.group || [e]).some((x) => doomed.has(x.layer)));
 
   eachTarget((t) => t.removeLayer(state.activeLayer));
   state.activeLayer = Math.min(state.activeLayer, first.layers.length - 1);
@@ -416,7 +419,8 @@ function toolLabel() {
   return { brush: 'act.brush', eraser: 'act.eraser',
            'fill-faces': 'act.fillFaces', 'fill-island': 'act.fillIsland',
            'fill-layer': 'act.fillLayer',
-           rect: 'act.rect', ellipse: 'act.ellipse', text: 'act.text' }[state.tool] || 'act.edit';
+           rect: 'act.rect', ellipse: 'act.ellipse', text: 'act.text',
+           decal: 'act.decal' }[state.tool] || 'act.edit';
 }
 
 const SHAPE_TOOLS = new Set(['rect', 'ellipse', 'text']);
@@ -681,6 +685,23 @@ function shapeStencil(kind, a, b) {
   return { fn: imageStencil(img.data, img.w, img.h, a.x - img.w / 2, a.y - img.h / 2), img };
 }
 
+/**
+ * Матрица «локальные координаты меша → экран» и направление взгляда в осях
+ * меша — по нему отбрасываются отвёрнутые грани.
+ */
+function projectionFor(mesh) {
+  const cam = viewport.camera;
+  cam.updateMatrixWorld();
+  mesh.updateMatrixWorld();
+  const mvp = new THREE.Matrix4()
+    .multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)
+    .multiply(mesh.matrixWorld);
+  const inv = new THREE.Matrix3().setFromMatrix4(mesh.matrixWorld).invert();
+  const viewDir = new THREE.Vector3(0, 0, -1)
+    .applyQuaternion(cam.quaternion).applyMatrix3(inv).normalize();
+  return { mvp, viewDir };
+}
+
 /** Напечатать фигуру по поверхности — через проекцию на экран. */
 function applyShape3D(mesh, a, b) {
   const target = targets.get(mesh);
@@ -688,27 +709,24 @@ function applyShape3D(mesh, a, b) {
   if (!target || !cache) return;
   target.activeIndex = state.activeLayer;
 
-  const cam = viewport.camera;
   const canvas = viewport.renderer.domElement;
-  cam.updateMatrixWorld();
-  mesh.updateMatrixWorld();
-
-  // Матрица «локальные координаты меша → экран».
-  const mvp = new THREE.Matrix4()
-    .multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)
-    .multiply(mesh.matrixWorld);
-
-  // Направление взгляда в осях меша — по нему отбрасываем отвёрнутые грани.
-  const inv = new THREE.Matrix3().setFromMatrix4(mesh.matrixWorld).invert();
-  const viewDir = new THREE.Vector3(0, 0, -1)
-    .applyQuaternion(cam.quaternion).applyMatrix3(inv).normalize();
+  const { mvp, viewDir } = projectionFor(mesh);
 
   const st = shapeStencil(state.tool, a, b);
   const fn = st.fn || st;
 
+  // Рамка на экране — с запасом на контур; у надписи — её картинка.
+  const пад = Math.ceil((state.shape.thickness || 1) + 2);
+  const clip = st.img
+    ? { x0: a.x - st.img.w / 2, y0: a.y - st.img.h / 2, x1: a.x + st.img.w / 2, y1: a.y + st.img.h / 2 }
+    : { x0: Math.min(a.x, b.x) - пад, y0: Math.min(a.y, b.y) - пад,
+        x1: Math.max(a.x, b.x) + пад, y1: Math.max(a.y, b.y) + пад };
+  const dep = viewport.depthSnapshot();
+
   const s = new Stroke(target, cache, strokeOpts());
   s.stampProjected(mvp.elements, canvas.clientWidth, canvas.clientHeight,
-                   fn, viewDir, state.brush, state.frontOnly);
+                   fn, viewDir, state.brush, state.frontOnly,
+                   { clip, depth: dep && { ...dep, mv: dep.mvFor(mesh) } });
 
   const entry = s.end(toolLabel());
   if (entry) history.push(entry);
@@ -1040,6 +1058,14 @@ el.addEventListener('pointerdown', (e) => {
   // Оверлей вида лежит внутри вьюпорта, а перехват у нас в фазе погружения:
   // без этой проверки щелчок по кнопке вида заодно ставил бы мазок.
   if (inside($('view-overlay'), e.target)) return;
+  // Аппликацию ставят и правят по всему кадру: углы часто уходят за модель.
+  if (state.tool === 'decal') {
+    e.stopPropagation();
+    e.preventDefault();
+    try { viewport.renderer.domElement.setPointerCapture(e.pointerId); } catch { /* не беда */ }
+    decalPointer('view', 'down', e);
+    return;
+  }
   // Лассо ведут и по пустому кадру: контур часто начинают мимо модели.
   if (LASSO_TOOLS.has(state.tool)) {
     e.stopPropagation();
@@ -1107,6 +1133,12 @@ window.addEventListener('pointermove', (e) => {
             && e.clientY >= r.top && e.clientY <= r.bottom
             && !inside($('view-overlay'), e.target);
   if (lasso && (over || !lasso.poly)) { lassoMove(e); return; }
+  if (state.tool === 'decal' && (over || decal.drag)) {
+    viewport.hideCursor();
+    if (decal.drag?.pane === 'uv') return;
+    decalPointer('view', 'move', e);
+    return;
+  }
   if (!over && !stroke) { viewport.hideCursor(); return; }
 
   if (shapeDrag) {
@@ -1152,6 +1184,7 @@ window.addEventListener('pointermove', (e) => {
 });
 
 window.addEventListener('pointerup', () => {
+  if (decal.drag?.pane === 'view') decalPointer('view', 'up');
   if (lasso) lassoUp();
   if (navDrag) { navDrag = null; viewport.endNav(); }
   if (shapeDrag) {
@@ -1163,6 +1196,226 @@ window.addEventListener('pointerup', () => {
   if (stroke) endStroke();
 });
 el.addEventListener('contextmenu', (e) => e.preventDefault());
+
+/* ── Аппликация ────────────────────────────────────────────────── */
+
+/**
+ * Картинка ставится углами поверх вьюпорта или развёртки и впекается в слой
+ * по Enter. Пока не впечена, вид можно крутить: на модели картинка стоит на
+ * экране, как проектор, и ляжет на то, что окажется под ней в миг наложения.
+ *
+ * Углы живут в координатах своей панели: на модели — пиксели холста, в
+ * развёртке — тексели (картинка едет вместе с полотном при сдвиге и зуме).
+ */
+const decal = { img: null, quad: null, pane: null, drag: null, part: null, anchor: null };
+// Одна деталь: аппликация ложится только на связную оболочку под первым
+// щелчком. Волосы, нависшие над лицом, тогда не перехватывают картинку и не
+// загораживают его — краска ложится и под ними.
+state.decalPart = loadPrefs().decalPart ?? true;
+$('decal-part').checked = state.decalPart;
+
+/**
+ * Деталь под точкой экрана: связная оболочка меша — то, что держится вместе
+ * общими рёбрами. У составной модели это часть меша (волосы, лицо, тело —
+ * отдельные куски одной геометрии), у сундука — доска или оковка.
+ */
+function decalPartAt(clientX, clientY) {
+  if (!state.decalPart) return null;
+  const hit = viewport.pick(clientX, clientY);
+  if (!hit) return null;
+  const set = floodFaces(hit.cache, hit.faceIndex, 180, 'geom');
+  const tris = new Uint8Array(hit.cache.triCount);
+  for (const t of set) tris[t] = 1;
+  return { mesh: hit.mesh, tris };
+}
+const decalOv = { view: new DecalOverlay(el), uv: new DecalOverlay($('uv-body')) };
+
+/** Углы картинки в пикселях холста своей панели. */
+function decalScreenQuad() {
+  if (decal.pane === 'uv') return decal.quad.map((c) => uvEditor._toScreen(c.x, c.y));
+  return decal.quad;
+}
+
+/** Где лежит холст панели внутри её контейнера — туда кладётся слой. */
+function paneBox(canvas, host) {
+  const c = canvas.getBoundingClientRect(), h = host.getBoundingClientRect();
+  return { left: c.left - h.left, top: c.top - h.top, width: c.width, height: c.height };
+}
+
+function drawDecal() {
+  const on = decal.quad && decal.img && state.tool === 'decal';
+  const view = on && decal.pane === 'view';
+  const uv = on && decal.pane === 'uv' && state.uvOpen && !!uvEditor.target;
+  // Над моделью картинку рисует видеокарта прямо на поверхности — сверху
+  // остаются только рамка и ручки.
+  if (view) {
+    decalOv.view.show(decal.img, decal.quad, paneBox(viewport.renderer.domElement, el), false);
+    viewport.setDecalPreview(decal.img, quadInverse(decal.quad),
+      { flow: state.brush.flow ?? 1, frontOnly: state.frontOnly, part: decal.part });
+  } else {
+    decalOv.view.hide();
+    viewport.setDecalPreview(null);
+  }
+  if (uv) decalOv.uv.show(decal.img, decalScreenQuad(), paneBox(uvEditor.canvas, $('uv-body')));
+  else decalOv.uv.hide();
+}
+
+function syncDecalUI() {
+  const img = decal.img;
+  $('decal-thumb').hidden = !img;
+  if (img) $('decal-thumb').src = img.url;
+  $('decal-name').textContent = img ? img.name : t('decal.none');
+  $('decal-apply').disabled = !decal.quad;
+  $('decal-cancel').disabled = !decal.quad;
+}
+
+/**
+ * Ввод аппликации в панели.
+ * @param {'view'|'uv'} pane
+ * @param {object} [p] точка развёртки (у панели развёртки), в текселях
+ */
+function decalPointer(pane, phase, e, p) {
+  const canvas = pane === 'uv' ? uvEditor.canvas : viewport.renderer.domElement;
+  if (phase === 'up') {
+    if (decal.drag) { decal.drag = null; syncDecalUI(); setStatusHint(t('decal.hint')); }
+    return;
+  }
+  const r = canvas.getBoundingClientRect();
+  const s = { x: e.clientX - r.left, y: e.clientY - r.top };      // экран панели
+  const at = pane === 'uv' ? { x: p.tx, y: p.ty } : s;             // пространство углов
+
+  if (phase === 'down') {
+    if (!decal.img) { $('decal-input').click(); return; }
+    // Своя картинка в этой же панели: ручки, перенос, вращение.
+    const hit = decal.quad && decal.pane === pane ? hitQuad(decalScreenQuad(), s.x, s.y) : null;
+    if (hit) {
+      decal.drag = { pane, kind: hit, start: decal.quad.map((c) => ({ ...c })), from: at };
+    } else {
+      // Мимо — ставим заново: протяжкой задаётся ширина, высота по картинке.
+      // Деталь берётся под первым щелчком и дальше не меняется, куда бы
+      // картинку ни тянули.
+      decal.pane = pane;
+      decal.anchor = pane === 'view' ? { x: e.clientX, y: e.clientY } : null;
+      decal.part = pane === 'view' ? decalPartAt(e.clientX, e.clientY) : null;
+      decal.drag = { pane, kind: { kind: 'new' }, from: at };
+      decal.quad = quadFromDrag(at, at, decal.img.w / decal.img.h, decalDefaultSize(pane));
+    }
+    drawDecal();
+    return;
+  }
+
+  // Движение: тянем — правим; нет — подсказываем курсором, что будет.
+  const d = decal.drag;
+  if (d && d.pane === pane) {
+    decal.quad = d.kind.kind === 'new'
+      ? quadFromDrag(d.from, at, decal.img.w / decal.img.h, decalDefaultSize(pane))
+      : dragQuad(d.kind, d.start, d.from, at, e.shiftKey);
+    drawDecal();
+    return;
+  }
+  const hit = decal.quad && decal.pane === pane ? hitQuad(decalScreenQuad(), s.x, s.y) : null;
+  canvas.style.cursor = !hit ? 'crosshair'
+    : hit.kind === 'move' ? 'move'
+    : hit.kind === 'rotate' ? 'grab'
+    : (hit.i % 2 ? 'nesw-resize' : 'nwse-resize');
+}
+
+/** Размер картинки, поставленной щелчком: треть кадра или четверть атласа. */
+function decalDefaultSize(pane) {
+  if (pane === 'uv') return (activeTarget()?.size || 1024) * 0.25;
+  const c = viewport.renderer.domElement;
+  return Math.min(c.clientWidth, c.clientHeight) * 0.35;
+}
+
+function cancelDecal() {
+  decal.quad = null;
+  decal.drag = null;
+  decal.part = null;
+  drawDecal();
+  syncDecalUI();
+}
+
+/** Впечь картинку в активный слой — одним шагом истории на все объекты. */
+function applyDecal() {
+  if (!decal.quad || !decal.img) return;
+  const stencil = decalStencil(decal.img, decal.quad);
+  const entries = [];
+
+  if (decal.pane === 'uv') {
+    const target = activeTarget();
+    const cache = activeMesh?.userData.paintCache;
+    if (target && cache) {
+      target.activeIndex = state.activeLayer;
+      const s = new Stroke(target, cache, strokeOpts());
+      s.stampStencil2D(stencil, quadBounds(decal.quad), state.brush);
+      const entry = s.end('act.decal');
+      if (entry) entries.push(entry);
+    }
+  } else {
+    // На модели — на деталь под первым щелчком, а без неё на все объекты
+    // разом: картинка поверх сундука ложится и на доски, и на окованные углы.
+    // Что видно, решает снимок глубины — у детали её собственный.
+    const canvas = viewport.renderer.domElement;
+    const part = decal.part;
+    const dep = viewport.depthSnapshot(part);
+    const clip = quadBounds(decal.quad);
+    const where = part ? viewport.paintables.filter((p) => p.mesh === part.mesh) : viewport.paintables;
+    for (const { mesh, cache } of where) {
+      const target = targets.get(mesh);
+      if (!target) continue;
+      target.activeIndex = state.activeLayer;
+      const { mvp, viewDir } = projectionFor(mesh);
+      const s = new Stroke(target, cache, strokeOpts());
+      s.stampProjected(mvp.elements, canvas.clientWidth, canvas.clientHeight,
+                       stencil, viewDir, state.brush, state.frontOnly,
+                       { clip, depth: dep && { ...dep, mv: dep.mvFor(mesh) }, tris: part?.tris });
+      const entry = s.end('act.decal');
+      if (entry) entries.push(entry);
+    }
+  }
+
+  if (!entries.length) { setStatusHint(t('decal.missed')); return; }
+  history.push(entries.length === 1 ? entries[0] : { label: 'act.decal', group: entries });
+  state.painted = true;
+  cancelDecal();
+  viewport.syncTransparency();
+  refreshUV();
+  renderHistory();
+  syncHistoryButtons();
+}
+
+$('decal-pick').addEventListener('click', () => $('decal-input').click());
+$('decal-part').addEventListener('change', (e) => {
+  state.decalPart = e.target.checked;
+  savePrefs({ decalPart: state.decalPart });
+  // Поставленная картинка переходит на новое правило сразу — по той же
+  // точке первого щелчка.
+  if (decal.quad && decal.pane === 'view' && decal.anchor) {
+    decal.part = decalPartAt(decal.anchor.x, decal.anchor.y);
+    drawDecal();
+  }
+});
+$('decal-apply').addEventListener('click', applyDecal);
+$('decal-cancel').addEventListener('click', cancelDecal);
+$('decal-input').addEventListener('change', async (e) => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  try {
+    decal.img = await loadDecalImage(f);
+    // Поставленная рамка остаётся, но под пропорции новой картинки её
+    // никто не подгоняет: углы — уже работа человека.
+    setStatusHint(t(decal.quad ? 'decal.hint' : 'decal.place'));
+  } catch (err) {
+    console.error(err);
+    setStatusHint(t('decal.readFailed'));
+  }
+  syncDecalUI();
+  drawDecal();
+});
+syncDecalUI();
+// Панели меняют размер — слой поверх переезжает вместе с холстом.
+window.addEventListener('resize', () => requestAnimationFrame(drawDecal));
 
 /* ── Сворачиваемые секции ──────────────────────────────────────── */
 
@@ -1201,10 +1454,14 @@ function setTool(tool) {
   uvEditor.canvas.style.cursor = LASSO_TOOLS.has(tool) ? 'crosshair' : '';
   syncToolOptions();
   syncLayers();
+  // Окно выбора — сразу по нажатию: браузер открывает его только в ответ
+  // на действие человека, а выбор инструмента и есть это действие.
+  if (tool === 'decal' && !decal.img) $('decal-input').click();
+  drawDecal();
 }
 /** Клавиши инструментов — для тултипа. Лассо по точкам — второе нажатие L. */
 const TOOL_HINTS = { select: 'V', pan: 'H', orbit: 'O', zoom: 'Z', lasso: 'L', 'lasso-poly': 'L L',
-  brush: 'B', rect: 'R', ellipse: 'C', text: 'T', 'fill-faces': 'F', 'fill-island': 'G',
+  brush: 'B', rect: 'R', ellipse: 'C', text: 'T', decal: 'A', 'fill-faces': 'F', 'fill-island': 'G',
   eraser: 'E', eyedropper: 'I' };
 
 initTooltips((id) => {
@@ -1431,6 +1688,7 @@ function setUVOpen(open) {
     requestAnimationFrame(() => { uvEditor.resize(); refreshUV(); });
   }
   viewport.resize();
+  drawDecal();
 }
 
 $('uv-close').addEventListener('click', () => setUVOpen(false));
@@ -1769,6 +2027,7 @@ poseFlyout.querySelectorAll('button').forEach((b) => {
 });
 
 $('ov-center').addEventListener('click', () => viewport.centerCamera());
+$('ov-frame').addEventListener('click', () => viewport.centerCamera());
 $('ov-proj').addEventListener('click', () => setProjection(viewport.projection === 'ortho' ? 'persp' : 'ortho'));
 $('ov-grid').addEventListener('click', () => setGrid(!state.grid));
 document.querySelectorAll('#view-mode button').forEach((b) => {
@@ -2088,6 +2347,7 @@ function rebuildOverlappingUV() {
  */
 function afterModelLoaded(report, key) {
   modelKey = key ?? (typeof report.name === 'function' ? 'demo' : modelKey);
+  cancelDecal();       // углы стояли над прежней моделью
   // Положение, в которое эту модель уже ставили, — сразу, до кадрирования.
   const поза = loadPoses()[modelKey];
   if (поза) { viewport.setPose(поза); viewport.frameModel(false); }
@@ -2688,11 +2948,27 @@ $('btn-view-png').addEventListener('click', () => {
 
 /* ── Клавиатура ────────────────────────────────────────────────── */
 
-const TOOL_KEYS = { l: 'lasso', v: 'select', h: 'pan', o: 'orbit', z: 'zoom', b: 'brush', e: 'eraser', i: 'eyedropper', f: 'fill-faces', g: 'fill-island', r: 'rect', c: 'ellipse', t: 'text' };
+const TOOL_KEYS = { l: 'lasso', v: 'select', h: 'pan', o: 'orbit', z: 'zoom', b: 'brush', e: 'eraser', i: 'eyedropper', f: 'fill-faces', g: 'fill-island', r: 'rect', c: 'ellipse', t: 'text', a: 'decal' };
 const VIEW_KEYS = { 1: 'front', 2: 'back', 3: 'left', 4: 'right', 6: 'top', 7: 'bottom', 0: 'user' };
 
+/**
+ * Печатает ли человек текст — тогда клавиши его, а не инструмента.
+ * 🔴 Ползунок, галка и кнопка фокус держат, но текста в них нет: раньше
+ * после любого ползунка молчали ⌘Z и все клавиши инструментов — событие
+ * доходило до страницы, а обработчик его пропускал.
+ */
+const NOT_TEXT = new Set(['range', 'checkbox', 'radio', 'button', 'color', 'file', 'submit', 'reset']);
+function typingInto(el, e) {
+  if (!el || el === document.body) return false;
+  if (el.isContentEditable || el.tagName === 'TEXTAREA') return true;
+  if (el.tagName === 'INPUT') return !NOT_TEXT.has(el.type);
+  // В списке буквы листают пункты, а сочетания с ⌘ ему не нужны.
+  if (el.tagName === 'SELECT') return !(e.metaKey || e.ctrlKey);
+  return false;
+}
+
 window.addEventListener('keydown', (e) => {
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (typingInto(e.target, e)) return;
 
   // Пробел — временный режим перемещения, как принято в графических пакетах.
   if (e.code === 'Space') {
@@ -2710,6 +2986,10 @@ window.addEventListener('keydown', (e) => {
     if (kk === 'i' && e.shiftKey) { e.preventDefault(); invertSelection(); return; }
   }
   if (!e.metaKey && !e.ctrlKey && !e.altKey && lassoKey(e.key)) { e.preventDefault(); return; }
+  if (!e.metaKey && !e.ctrlKey && !e.altKey && decal.quad && state.tool === 'decal') {
+    if (e.key === 'Enter') { e.preventDefault(); applyDecal(); return; }
+    if (e.key === 'Escape') { e.preventDefault(); cancelDecal(); return; }
+  }
 
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
     e.preventDefault();
@@ -2852,6 +3132,7 @@ const menuBar = new MenuBar($('menubar'), [
     { label: () => t('tool.rect'), hint: 'R', radio: () => state.tool === 'rect', action: () => setTool('rect') },
     { label: () => t('tool.ellipse'), hint: 'C', radio: () => state.tool === 'ellipse', action: () => setTool('ellipse') },
     { label: () => t('tool.text'), hint: 'T', radio: () => state.tool === 'text', action: () => setTool('text') },
+    { label: () => t('tool.decal'), hint: 'A', radio: () => state.tool === 'decal', action: () => setTool('decal') },
     '-',
     { label: () => t('tool.brushes'), action: () => brushModal.open() },
     { label: () => t('tool.materials'), action: () => materialModal.open() },
@@ -2902,6 +3183,7 @@ onLangChange(() => {
   syncStatusModel();
   syncPerf();
   syncShapeUI();
+  syncDecalUI();
   syncStatusCounts();
   syncModelNotes();
   syncModelInfo();
@@ -2959,4 +3241,4 @@ if (loadPrefs().showWelcome !== false) welcome.show();
 // куда попадает луч, не угадывая координаты по скриншоту.
 window.__paint = { viewport, uvEditor, viewCube, menuBar, brushModal, materialModal, helpModal,
   saveAsModal, settingsModal, welcome, targets, state, history,
-  setTool, setColor, setMaterial, setLang, getLang, saveAs, openBuffer, openFile, bootErrors };
+  setTool, setColor, setMaterial, setLang, getLang, saveAs, openBuffer, openFile, bootErrors, decal };

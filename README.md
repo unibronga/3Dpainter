@@ -102,7 +102,7 @@ Other commands:
 | Pan | **Space + left button**, or middle button |
 | Zoom | **Wheel** |
 | Brush size | **[** and **]** |
-| Tools | **V** select object · **H** pan · **O** orbit · **Z** zoom · **B** brush · **E** eraser · **I** eyedropper · **F** fill faces · **G** fill UV island · **L** lasso (again for polygonal) |
+| Tools | **V** select object · **H** pan · **O** orbit · **Z** zoom · **B** brush · **E** eraser · **I** eyedropper · **F** fill faces · **G** fill UV island · **R** · **C** · **T** rectangle · ellipse · text · **A** decal · **L** lasso (again for polygonal) |
 | Views | **1**–**7** axis views · **0** three-quarter · **5** perspective ↔ orthographic |
 | Orbit pivot | three icons in the column under the view cube: world, object, or **whatever is in the centre of the frame** |
 | Display | the bar above the model: colors, clay, wireframe, normals; facets; frame |
@@ -117,9 +117,23 @@ Other commands:
 ## What it can do
 
 **Tools.** Brush with 16 presets (grain, spacing, scatter), eraser,
-eyedropper, three kinds of fill, lasso, rectangle, ellipse and text.
-Shapes and text are printed by screen projection, so a rectangle stays a
-rectangle in frame no matter how the surface curves under it. Text comes with
+eyedropper, three kinds of fill, lasso, rectangle, ellipse, text and decal.
+Shapes, text and decals are printed by screen projection, so a rectangle stays a
+rectangle in frame no matter how the surface curves under it — and only onto
+what is visible: an arm in front of the chest keeps the paint off the chest
+behind it.
+
+**Decal.** Pick a PNG or WebP with transparency (JPG works too), drag a frame
+over the model and adjust it like a free transform: pull the corners
+(perspective is fine; Shift keeps proportions), drag inside to move, drag just
+beyond a corner to rotate. The image shows right on the model and slides over
+its surface as you drag. While it is placed you can still orbit with the right
+button — the image stays on screen like a projector and the model turns under it. **Enter** bakes it into the
+active layer with the current material's surface, across every object it
+covers, in one undo step; **Esc** removes it. By default it lands only on the
+part you started on: click the face and hair hanging in front will not catch it
+("one part" checkbox). The same works in the UV editor, where the image lands
+straight on the texels. Text comes with
 a choice of eight system fonts. The options for whichever tool is selected
 appear in a strip above the model, on the left. The orbit tool, for instance,
 has a rotation step there — tick it, set 30°, and the view turns in exact 30°
@@ -249,8 +263,8 @@ icon. Not yet done:
 
 - AI painting: brush strokes along surface points, brush and material presets.
 
-- Occlusion for shapes, text and the lasso: back-facing polygons are skipped,
-  but a chimney does not cast a "shadow" onto the roof behind it.
+- Occlusion for the lasso: it still selects what is hidden behind the
+  surface in front.
 - Layer reordering and duplication; symmetry, straight-line strokes, stroke
   stabilization.
 - Island selection and seam highlighting in the UV editor.
