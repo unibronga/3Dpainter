@@ -19,6 +19,14 @@ import * as THREE from 'three';
 const QUANT = 1e4;            // округление при сварке вершин, 0.1 мм
 const ANGLE = Math.cos(Math.PI / 3);  // излом, дальше которого остров не растёт
 const TURNS = 30;             // сколько поворотов перебрать в поиске меньшей рамки
+// Сетка укладки по растру, клеток на сторону атласа. Замер 07.10 (доля атласа
+// / время): Kian, 760 островов — 256: 58% / 0.16 с, 512: 62% / 0.36 с,
+// 1024: 64% / 0.88 с; у сундука (до 100 островов на меш) 256 отстаёт от 1024
+// на полтора пункта.
+const RASTER_COARSE = 256;
+const RASTER_FINE = 512;
+const RASTER_FINE_FROM = 200; // островов, с которых доуточнять на мелкой сетке
+const RASTER_STEPS = 10;      // шагов поиска масштаба для растра
 
 /* ── Пригодна ли развёртка, которая пришла с файлом ────────────── */
 
@@ -130,13 +138,35 @@ export function buildUV(geo, opts = {}) {
 
   // Общий масштаб подбираем так, чтобы всё влезло в квадрат: больше масштаб —
   // крупнее тексель на модели, поэтому берём наибольший, при котором укладка
-  // ещё сходится.
+  // ещё сходится. Сначала полками — это нижняя граница, она сходится всегда;
+  // потом растром — он плотнее, но ищет только выше неё.
   let lo = 0, hi = 1 / Math.max(1e-6, Math.max(...flat.map((f) => Math.max(f.w, f.h))));
   for (let i = 0; i < 24; i++) {
     const mid = (lo + hi) / 2;
     if (pack(flat, mid, margin)) lo = mid; else hi = mid;
   }
-  pack(flat, lo, margin);
+  // Растр ищет на грубой сетке: укладка, сошедшаяся на ней, годна и на
+  // мелкой (маски грубой шире), а считается в разы быстрее. Сотни мелких
+  // островов грубая клетка раздувает — их доуточняем на мелкой сетке в узкой
+  // вилке над найденным. Верхняя граница: острова без полей заняли бы весь атлас.
+  const shelf = lo;
+  const islandArea = flat.reduce((s, f) => s + f.area, 0);
+  const top = Math.max(shelf, 1 / Math.sqrt(Math.max(1e-12, islandArea)));
+  let best = { scale: shelf, atlas: null };
+  const search = (atlas, from, to, steps) => {
+    let a = from, b = to;
+    for (let i = 0; i < steps && b / a > 1.01; i++) {
+      const mid = (a + b) / 2;
+      if (rasterPack(flat, mid, margin, atlas)) { a = mid; if (mid > best.scale) best = { scale: mid, atlas }; }
+      else b = mid;
+    }
+  };
+  search(new Atlas(RASTER_COARSE), shelf, top, RASTER_STEPS);
+  if (flat.length > RASTER_FINE_FROM) {
+    search(new Atlas(RASTER_FINE), best.scale, Math.min(top, best.scale * 1.12), 4);
+  }
+  if (best.atlas) { lo = best.scale; rasterPack(flat, lo, margin, best.atlas); }
+  else pack(flat, lo, margin);
 
   // Раскладываем обратно в атрибут.
   const uv = new Float32Array(src.getAttribute('position').count * 2);
@@ -146,8 +176,9 @@ export function buildUV(geo, opts = {}) {
       for (let c = 0; c < 3; c++) {
         const j = (k * 3 + c) * 2;
         const vert = t * 3 + c;
-        uv[vert * 2] = f.x + (f.pts[j] - f.minX) * lo;
-        uv[vert * 2 + 1] = f.y + (f.pts[j + 1] - f.minY) * lo;
+        const px = f.pts[j] - f.minX, py = f.pts[j + 1] - f.minY;
+        uv[vert * 2] = f.x + (f.rot ? py : px) * lo;
+        uv[vert * 2 + 1] = f.y + (f.rot ? f.w - px : py) * lo;
       }
     }
   });
@@ -286,7 +317,205 @@ function project(pos, tris, normal) {
     pts[j] = x; pts[j + 1] = y;
   }
 
-  return { tris, pts, minX: best.minX, minY: best.minY, w: best.w, h: best.h, x: 0, y: 0 };
+  // Площадь на плоскости — для верхней границы масштаба при укладке.
+  let area = 0;
+  for (let j = 0; j < pts.length; j += 6) {
+    area += Math.abs((pts[j + 2] - pts[j]) * (pts[j + 5] - pts[j + 1]) -
+                     (pts[j + 4] - pts[j]) * (pts[j + 3] - pts[j + 1])) / 2;
+  }
+
+  return { tris, pts, area, minX: best.minX, minY: best.minY, w: best.w, h: best.h, x: 0, y: 0, rot: 0 };
+}
+
+/* ── Укладка по растру ─────────────────────────────────────────── */
+
+/**
+ * Остров при данном масштабе и повороте — маской клеток сетки укладки.
+ * Клетка занята, если треугольник её хоть краем задевает: маска шире острова,
+ * а не уже, и соседи по атласу не залезут на его тексели.
+ * rot 1 — поворот на 90° (без отражения: x' = y, y' = W − x).
+ */
+function islandMask(f, scale, rot, R) {
+  const k = scale * R;
+  const W = f.w;
+  const n = f.pts.length / 2;
+  const xs = new Float64Array(n), ys = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const px = f.pts[i * 2] - f.minX, py = f.pts[i * 2 + 1] - f.minY;
+    xs[i] = (rot ? py : px) * k;
+    ys[i] = (rot ? W - px : py) * k;
+  }
+  const mw = Math.floor((rot ? f.h : f.w) * k) + 1;
+  const mh = Math.floor((rot ? f.w : f.h) * k) + 1;
+  const bits = new Uint8Array(mw * mh);
+
+  // Треугольник ∩ полоса строки [j, j+1] — выпуклый кусок; его пределы по x
+  // дают вершины внутри полосы и пересечения рёбер с её краями.
+  for (let t = 0; t < n; t += 3) {
+    const j0 = Math.max(0, Math.floor(Math.min(ys[t], ys[t + 1], ys[t + 2])));
+    const j1 = Math.min(mh - 1, Math.floor(Math.max(ys[t], ys[t + 1], ys[t + 2])));
+    for (let j = j0; j <= j1; j++) {
+      let lo = Infinity, hi = -Infinity;
+      for (let c = 0; c < 3; c++) {
+        const a = t + c, b = t + (c + 1) % 3;
+        const ya = ys[a], yb = ys[b];
+        if (ya >= j && ya <= j + 1) { if (xs[a] < lo) lo = xs[a]; if (xs[a] > hi) hi = xs[a]; }
+        for (const yl of [j, j + 1]) {
+          if ((ya - yl) * (yb - yl) >= 0 || ya === yb) continue;
+          const x = xs[a] + (xs[b] - xs[a]) * (yl - ya) / (yb - ya);
+          if (x < lo) lo = x; if (x > hi) hi = x;
+        }
+      }
+      if (lo > hi) continue;
+      const c0 = Math.max(0, Math.floor(lo)), c1 = Math.min(mw - 1, Math.floor(hi));
+      bits.fill(1, j * mw + c0, j * mw + c1 + 1);
+    }
+  }
+
+  // Маска — отрезками по строкам: проверка места идёт отрезками, не клетками.
+  const runs = [];                 // [строка, начало, конец] подряд
+  const rowLen = new Int32Array(mh);   // самый длинный отрезок строки
+  for (let j = 0; j < mh; j++) {
+    let x = 0;
+    while (x < mw) {
+      if (!bits[j * mw + x]) { x++; continue; }
+      const a = x;
+      while (x < mw && bits[j * mw + x]) x++;
+      runs.push(j, a, x - 1);
+      if (x - a > rowLen[j]) rowLen[j] = x - a;
+    }
+  }
+  return { mw, mh, runs, rowLen, rot, last: 0 };
+}
+
+/**
+ * Атлас укладки: занятость клеток и для каждой строки «где следующая занятая»
+ * и «где следующая свободная» — по ним проверка места перепрыгивает целые
+ * занятые куски, а не идёт клетка за клеткой.
+ */
+class Atlas {
+  constructor(R) {
+    this.R = R;
+    this.occ = new Uint8Array(R * R);
+    this.nextOcc = new Int32Array(R * R);
+    this.nextFree = new Int32Array(R * R);
+    this.maxRun = new Int32Array(R);           // самый длинный свободный кусок строки
+    this.lo = new Int32Array(R);               // пределы правки по строкам в put()
+    this.hi = new Int32Array(R);
+    this.emptyRow = Int32Array.from({ length: R }, (_, x) => x);
+  }
+
+  /** Пустой атлас. Буферы те же — их выделение дороже самой укладки. */
+  reset() {
+    const R = this.R;
+    this.occ.fill(0);
+    this.nextOcc.fill(R);
+    for (let y = 0; y < R; y++) this.nextFree.set(this.emptyRow, y * R);
+    this.maxRun.fill(R);
+  }
+
+  /**
+   * Строка после того, как в ней заняли [a, b]. Правее b ничего не
+   * поменялось; левее — идём, пока новые значения не совпадут со старыми.
+   */
+  _row(y, a, b) {
+    const R = this.R, o = y * R;
+    let occAt = b + 1 < R ? this.nextOcc[o + b + 1] : R;
+    let freeAt = b + 1 < R ? this.nextFree[o + b + 1] : R;
+    for (let x = b; x >= 0; x--) {
+      if (this.occ[o + x]) occAt = x; else freeAt = x;
+      if (x < a && this.nextOcc[o + x] === occAt && this.nextFree[o + x] === freeAt) break;
+      this.nextOcc[o + x] = occAt;
+      this.nextFree[o + x] = freeAt;
+    }
+    // Самый длинный свободный кусок — прыжками по кускам, а не по клеткам.
+    let best = 0, x = this.nextFree[o];
+    while (x < R) {
+      const end = this.nextOcc[o + x];
+      if (end - x > best) best = end - x;
+      x = end < R ? this.nextFree[o + end] : R;
+    }
+    this.maxRun[y] = best;
+  }
+
+  /** Встаёт ли маска в (x, y)? Да — -1; нет — x, с которого искать дальше. */
+  test(m, x, y) {
+    const R = this.R, runs = m.runs, n = runs.length;
+    // С отрезка, на котором споткнулись в прошлый раз: рядом он же и мешает.
+    for (let k = 0, i = m.last; k < n; k += 3, i = i + 3 < n ? i + 3 : 0) {
+      const o = (y + runs[i]) * R;
+      const a = x + runs[i + 1], b = x + runs[i + 2];
+      const hit = this.nextOcc[o + a];
+      if (hit <= b) { m.last = i; return this.nextFree[o + hit] - runs[i + 1]; }
+    }
+    return -1;
+  }
+
+  /** Есть ли в каждой строке под маской свободный кусок нужной длины. */
+  rowsFit(m, y) {
+    const rowLen = m.rowLen, maxRun = this.maxRun;
+    for (let j = 0; j < rowLen.length; j++) if (maxRun[y + j] < rowLen[j]) return false;
+    return true;
+  }
+
+  /** Занять место маски с полем pad клеток вокруг. */
+  put(m, x, y, pad) {
+    const R = this.R, runs = m.runs, lo = this.lo, hi = this.hi;
+    const ya = Math.max(0, y - pad), yb = Math.min(R - 1, y + m.mh - 1 + pad);
+    for (let yy = ya; yy <= yb; yy++) { lo[yy] = R; hi[yy] = -1; }
+    for (let i = 0; i < runs.length; i += 3) {
+      const a = Math.max(0, x + runs[i + 1] - pad), b = Math.min(R - 1, x + runs[i + 2] + pad);
+      const y0 = Math.max(0, y + runs[i] - pad), y1 = Math.min(R - 1, y + runs[i] + pad);
+      for (let yy = y0; yy <= y1; yy++) {
+        this.occ.fill(1, yy * R + a, yy * R + b + 1);
+        if (a < lo[yy]) lo[yy] = a;
+        if (b > hi[yy]) hi[yy] = b;
+      }
+    }
+    for (let yy = ya; yy <= yb; yy++) if (hi[yy] >= 0) this._row(yy, lo[yy], hi[yy]);
+  }
+
+  /** Первое место снизу вверх, слева направо; null — некуда. */
+  find(m, edge) {
+    const R = this.R;
+    for (let y = edge; y + m.mh <= R - edge; y++) {
+      if (!this.rowsFit(m, y)) continue;
+      let x = edge;
+      while (x + m.mw <= R - edge) {
+        const next = this.test(m, x, y);
+        if (next < 0) return { x, y };
+        x = Math.max(x + 1, next);
+      }
+    }
+    return null;
+  }
+}
+
+/**
+ * Укладка по растру: острова от крупных к мелким, каждый — в первое место
+ * снизу, где его маска не задевает занятого, из двух поворотов — то, что
+ * ниже. Мелкие острова садятся в выемки крупных, а не в отдельную рамку,
+ * как у полок. Возвращает false, если при этом масштабе не влезло.
+ */
+function rasterPack(flat, scale, margin, atlas) {
+  const R = atlas.R;
+  const pad = Math.max(1, Math.round(margin * R));
+  const edge = Math.ceil(pad / 2);
+  atlas.reset();
+  const order = [...flat].sort((a, b) => b.w * b.h - a.w * a.h);
+  for (const f of order) {
+    let best = null;
+    for (const rot of [0, 1]) {
+      const m = islandMask(f, scale, rot, R);
+      if (m.mw + edge * 2 > R || m.mh + edge * 2 > R) continue;
+      const at = atlas.find(m, edge);
+      if (at && (!best || at.y < best.at.y || (at.y === best.at.y && at.x < best.at.x))) best = { m, at };
+    }
+    if (!best) return false;
+    atlas.put(best.m, best.at.x, best.at.y, pad);
+    f.x = best.at.x / R; f.y = best.at.y / R; f.rot = best.m.rot;
+  }
+  return true;
 }
 
 /**
@@ -305,7 +534,7 @@ function pack(flat, scale, margin) {
       penX = margin;
     }
     if (shelfY + h + margin > 1) return false;
-    f.x = penX; f.y = shelfY;
+    f.x = penX; f.y = shelfY; f.rot = 0;
     penX += w + margin;
     if (h > shelfH) shelfH = h;
   }

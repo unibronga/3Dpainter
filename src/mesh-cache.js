@@ -211,6 +211,10 @@ export function measureUVOverlap(cache, tol = 0.05, res = 256) {
         const p = y * res + x;
         const prev = owner[p];
         if (prev < 0) { owner[p] = t; covered += 1; continue; }
+        // Центр текселя на самой границе треугольника — общее ребро соседей,
+        // а не наложение: его честно включают оба. Острова, уложенные по
+        // целым клеткам, ставят рёбра на центры текселей рядами.
+        if (Math.min(l0, l1, 1 - l0 - l1) < 1e-6) continue;
 
         const dx = centroid[t * 3] - centroid[prev * 3];
         const dy = centroid[t * 3 + 1] - centroid[prev * 3 + 1];

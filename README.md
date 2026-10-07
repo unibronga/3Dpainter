@@ -68,7 +68,8 @@ routinely dump a flat projection of the geometry into the UV channel, which is
 useless for painting. The program judges the UVs on open and, if there are
 none, if they fall outside the 0…1 square, or if they cover only a handful of
 texels, it builds its own — islands split on creases, packed into the atlas at
-one texel density. The status line says so. UVs that are fine are left alone.
+one texel density, with small islands tucked into the gaps and hollows of large
+ones (about two thirds of the atlas is covered). The status line says so. UVs that are fine are left alone.
 
 **A model can be opened together with the files next to it.** The dialog takes
 several files, and a folder can simply be dropped into the window; the desktop
