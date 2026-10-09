@@ -536,6 +536,7 @@ export class Viewport {
   async loadGLB(arrayBuffer, name) {
     const loader = new GLTFLoader();
     const gltf = await loader.parseAsync(arrayBuffer, '');
+    gltf.scene.animations = gltf.animations;   // см. parseModel
     return this.setModel(gltf.scene, name);
   }
 
@@ -565,6 +566,17 @@ export class Viewport {
     object3D.traverse((o) => {
       if (!o.isMesh) return;
 
+      // Имя материала из файла — пока материал не подменён покраской. Уходит
+      // обратно в GLB при сохранении (`formats.js`, кВыдаче).
+      // У файла с вариантами покраски исходное имя носит материал первого
+      // варианта (см. имяМатериалаВарианта); если он назван именем варианта —
+      // исходник был безымянным.
+      const вм = o.userData.variantMaterials;
+      const имена = object3D.userData.variants;
+      let имяМатериала = (Array.isArray(o.material) ? o.material : [o.material]).find((m) => m?.name)?.name;
+      if (вм?.[0]) имяМатериала = вм[0].name === имена?.[0] ? '' : вм[0].name;
+      if (имяМатериала) o.userData.sourceMaterialName = имяМатериала;
+
       // Развёртка — условие работы, а не украшение: красим-то по текселям.
       // Модели из интернета его сплошь и рядом не выполняют, и тогда строим
       // свою. Старую геометрию не освобождаем: её может делить другой меш.
@@ -590,6 +602,17 @@ export class Viewport {
       // только если развёртка своя, из файла: к построенной заново старая
       // картинка не подходит, она легла бы кашей.
       const сКартой = (Array.isArray(o.material) ? o.material : [o.material]).find((m) => m?.map?.image);
+      // Карты вариантов покраски — каждая ляжет слоем своего варианта.
+      if (вм && verdict.ok) {
+        // Включённый при сохранении — тот, чей материал стоит по умолчанию.
+        // Загрузчик может положить на меш копию материала — тогда по имени.
+        let поУмолчанию = вм.indexOf(o.material);
+        if (поУмолчанию < 0) поУмолчанию = вм.findIndex((m) => m && m.name === o.material?.name);
+        o.userData.defaultVariant = поУмолчанию;
+        o.userData.sourceVariantMaps = вм.map((m) => (m?.map?.image
+          ? { color: картаИз(m.map), orm: m.roughnessMap?.image ? картаИз(m.roughnessMap) : null }
+          : null));
+      }
       if (сКартой) {
         if (verdict.ok) {
           o.userData.sourceMaps = {

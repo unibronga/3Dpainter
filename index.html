@@ -368,6 +368,10 @@
 
     <section class="section" data-open="1" data-key="uv">
       <h3><i class="chev"></i><span data-i18n="sec.uv">Развёртка</span>
+        <!-- Вариант покраски: другое лицо, другой сундук на той же развёртке. -->
+        <button class="sec-btn" id="btn-variant-add" data-i18n-title="tip.variantAdd" title="Добавить вариант покраски: другое лицо, другой сундук на той же развёртке">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+        </button>
         <button class="sec-btn" id="btn-uv-open" data-i18n-title="tip.uvOpen" title="Открыть развёртку на полэкрана (U)">
           <svg viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M21 3 13 11"/><path d="M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/></svg>
         </button>
@@ -375,6 +379,8 @@
       <div class="body">
         <!-- Список развёрток модели: по карте на меш. Щелчок делает меш
              активным и открывает его развёртку; повторный — закрывает. -->
+        <!-- Варианты покраски: включён один. Скрыт, пока вариантов нет. -->
+        <div class="variant-row" id="variant-row" hidden></div>
         <div id="uv-list"></div>
         <!-- Строит свою развёртку и переносит на неё всё покрашенное.
              Красная, когда у какого-то меша развёртка с наложением. -->

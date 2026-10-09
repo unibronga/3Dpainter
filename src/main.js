@@ -77,6 +77,11 @@ const state = {
   orbitStep: 30,
   selMode: 'new',    // как лассо складывается с выделенным: new | add | sub | and
   activeLayer: 0,
+  // Варианты покраски — общие для всех мешей модели: [{id, name, auto}].
+  // Пусто — вариантов нет, все слои собираются вместе, как раньше.
+  variants: [],
+  activeVariant: null,
+  nextVariant: 1,
   texSize: 1024,
   // Размер, выбранный человеком. texSize — у текущей модели: его может
   // поднять или урезать программа, а следующая модель считается отсюда.
@@ -212,6 +217,7 @@ function buildTargets(paintables, имя = null) {
   }
 
   state.activeLayer = 0;
+  state.variants = []; state.activeVariant = null; state.nextVariant = 1;
   activeMesh = paintables.length ? paintables[0].mesh : null;
   // Выделение жило у прежних целей и ушло вместе с ними.
   uvEditor.setSelectionOutline(null);
@@ -286,26 +292,66 @@ function bakeSourceMaps(paintables) {
     const карты = mesh.userData.sourceMaps;
     const target = targets.get(mesh);
     if (!карты?.color || !target) continue;
-    const S = target.size;
-    const L = target.layers[0];
-    const цвет = пикселиКарты(карты.color, S);
-    if (!цвет) continue;
-    for (let p = 0; p < S * S; p++) {
-      const o = p * 4;
-      L.rgba[o] = цвет[o]; L.rgba[o + 1] = цвет[o + 1]; L.rgba[o + 2] = цвет[o + 2];
-      L.rgba[o + 3] = 255;
-      L.opac[p] = цвет[o + 3];
-    }
-    const орм = карты.orm && пикселиКарты(карты.orm, S);
-    if (орм) {
-      for (let p = 0; p < S * S; p++) { L.rough[p] = орм[p * 4 + 1]; L.metal[p] = орм[p * 4 + 2]; }
-    }
+    if (!картаВСлой(target.layers[0], карты, target.size)) continue;
     target.compositeRect(null);
     target.updateTransparency?.();
     легло += 1;
   }
   if (легло) viewport.syncTransparency();
   return легло;
+}
+
+/** Карты из файла — в слой целиком. @returns {boolean} легла ли карта цвета */
+function картаВСлой(L, карты, S) {
+  const цвет = пикселиКарты(карты.color, S);
+  if (!цвет) return false;
+  for (let p = 0; p < S * S; p++) {
+    const o = p * 4;
+    L.rgba[o] = цвет[o]; L.rgba[o + 1] = цвет[o + 1]; L.rgba[o + 2] = цвет[o + 2];
+    L.rgba[o + 3] = 255;
+    L.opac[p] = цвет[o + 3];
+  }
+  const орм = карты.orm && пикселиКарты(карты.orm, S);
+  if (орм) {
+    for (let p = 0; p < S * S; p++) { L.rough[p] = орм[p * 4 + 1]; L.metal[p] = орм[p * 4 + 2]; }
+  }
+  return true;
+}
+
+/**
+ * Варианты покраски из GLB (`KHR_materials_variants`) — обратно вариантами:
+ * карта каждого ложится единственным слоем своего варианта. Общих слоёв в
+ * файле нет — там уже сведённые картинки, — поэтому вариант приходит целиком.
+ *
+ * @returns {number} сколько вариантов вернулось
+ */
+function bakeSourceVariants(paintables, имена) {
+  if (!имена || имена.length < 2) return 0;
+  const сКартами = paintables.filter(({ mesh }) => mesh.userData.sourceVariantMaps && targets.get(mesh));
+  if (!сКартами.length) return 0;
+  state.variants = имена.map((name, i) => ({ id: i + 1, name, auto: null }));
+  state.nextVariant = имена.length + 1;
+  // Включён тот, что был включён при сохранении: его материал — по умолчанию.
+  const поУмолчанию = Math.max(0, сКартами[0].mesh.userData.defaultVariant ?? 0);
+  for (const { mesh } of сКартами) {
+    const target = targets.get(mesh);
+    const S = target.size;
+    target.layers = имена.map((_, i) => {
+      const L = new Layer(S, null, i + 1);
+      L.variant = i + 1;
+      const карты = mesh.userData.sourceVariantMaps[i];
+      if (карты?.color) картаВСлой(L, карты, S);
+      return L;
+    });
+  }
+  // Меши без вариантов держат один общий слой — у всех целей слоёв должно
+  // быть поровну (номер слоя общий на модель), добиваем пустыми.
+  for (const [mesh, target] of targets) {
+    if (сКартами.some((p) => p.mesh === mesh)) continue;
+    while (target.layers.length < имена.length) target.layers.push(new Layer(target.size, null, target.layers.length + 1));
+  }
+  включитьВариант(поУмолчанию + 1, { тихо: true });
+  return имена.length;
 }
 
 /** Картинку текстуры — в пиксели S×S, в ориентации холста покраски. */
@@ -327,7 +373,10 @@ function пикселиКарты(карта, S) {
 /** @param {string} [name] своё имя; без него — номером. Кнопка передаёт событие — его не берём. */
 function addLayer(name) {
   const имя = typeof name === 'string' && name.trim() ? name.trim() : null;
-  eachTarget((t) => { t.activeIndex = state.activeLayer; t.addLayer(имя); });
+  // Новый слой — той же принадлежности, что активный: в варианте рядом со
+  // слоем варианта — тоже его, рядом с общим — общий.
+  const вариант = refLayers()?.[state.activeLayer]?.variant ?? null;
+  eachTarget((t) => { t.activeIndex = state.activeLayer; t.addLayer(имя, вариант); });
   state.activeLayer += 1;
   syncLayers();
 }
@@ -344,6 +393,7 @@ function removeLayer() {
 
   eachTarget((t) => t.removeLayer(state.activeLayer));
   state.activeLayer = Math.min(state.activeLayer, first.layers.length - 1);
+  поправитьАктивныйСлой();
   syncLayers();
   refreshUV();
 }
@@ -353,6 +403,123 @@ function setActiveLayer(i) {
   eachTarget((t) => { t.activeIndex = i; });
   syncLayers();
 }
+
+/* ── Варианты покраски ─────────────────────────────────────────── */
+
+/*
+ * Вариант — обличье модели на той же развёртке: разные лица Kian, разные
+ * сундуки. Слой либо общий (виден во всех вариантах), либо принадлежит
+ * одному варианту. Включён всегда один вариант; в GLB каждый уходит своим
+ * материалом (`KHR_materials_variants`), в Blender они переключаются в
+ * панели glTF Variants.
+ */
+
+function имяВарианта(v) { return v.auto ? t('variants.name', v.auto) : v.name; }
+function слойВВарианте(L) { return L.variant == null || L.variant === state.activeVariant; }
+
+/** Активный слой должен быть виден в варианте — иначе мазок ушёл бы в невидимое. */
+function поправитьАктивныйСлой() {
+  const L = refLayers();
+  if (!L || (L[state.activeLayer] && слойВВарианте(L[state.activeLayer]))) return;
+  for (let i = L.length - 1; i >= 0; i--) {
+    if (слойВВарианте(L[i])) { state.activeLayer = i; eachTarget((t) => { t.activeIndex = i; }); return; }
+  }
+}
+
+function включитьВариант(id, { тихо = false } = {}) {
+  state.activeVariant = id;
+  eachTarget((t) => { t.variant = id; t.compositeRect(null); });
+  // Включили вариант — значит, будут красить его: активным становится его
+  // верхний собственный слой, а не общий, оставшийся от прежнего варианта.
+  const L = refLayers() || [];
+  let свой = -1;
+  for (let i = L.length - 1; i >= 0 && свой < 0; i--) if (L[i].variant === id) свой = i;
+  if (свой >= 0) { state.activeLayer = свой; eachTarget((t) => { t.activeIndex = свой; }); }
+  поправитьАктивныйСлой();
+  if (тихо) return;
+  viewport.syncTransparency();
+  syncLayers(); syncVariants(); drawUVRows(); refreshUV();
+}
+
+/**
+ * Добавить вариант со своим пустым слоем сверху. Первый «+» заводит сразу
+ * два: всё, что уже покрашено, остаётся общим, а новый вариант — второй.
+ */
+function addVariant() {
+  if (!targets.size) return;
+  if (!state.variants.length) state.variants.push({ id: state.nextVariant++, name: null, auto: 1 });
+  const v = { id: state.nextVariant++, name: null, auto: state.variants.length + 1 };
+  state.variants.push(v);
+  включитьВариант(v.id, { тихо: true });
+  const наверх = refLayers().length - 1;
+  eachTarget((t) => { t.activeIndex = наверх; t.addLayer(null, v.id); });
+  state.activeLayer = наверх + 1;
+  viewport.syncTransparency();
+  syncLayers(); syncVariants(); drawUVRows(); refreshUV();
+  setStatusHint(t('variants.created', имяВарианта(v)));
+}
+
+function renameVariant(id) {
+  const v = state.variants.find((x) => x.id === id);
+  if (!v) return;
+  const имя = prompt(t('variants.renamePrompt'), имяВарианта(v));
+  if (!имя || !имя.trim()) return;
+  v.name = имя.trim(); v.auto = null;
+  syncVariants(); syncLayers();
+}
+
+/** Удалить вариант вместе с его слоями. Последний не удаляется. */
+function removeVariant(id) {
+  const v = state.variants.find((x) => x.id === id);
+  if (!v || state.variants.length <= 1) return;
+  const свои = refLayers().filter((L) => L.variant === id).length;
+  if (!confirm(t('variants.confirmDelete', имяВарианта(v), свои))) return;
+
+  // Записи журнала держат ссылку на слой — см. removeLayer.
+  const doomed = new Set();
+  eachTarget((tg) => tg.layers.forEach((L) => { if (L.variant === id) doomed.add(L); }));
+  history.prune((e) => !(e.group || [e]).some((x) => doomed.has(x.layer)));
+  eachTarget((tg) => {
+    tg.layers = tg.layers.filter((L) => L.variant !== id);
+    if (!tg.layers.length) tg.layers.push(new Layer(tg.size, null, 1));
+  });
+  state.variants = state.variants.filter((x) => x.id !== id);
+  state.activeLayer = Math.min(state.activeLayer, refLayers().length - 1);
+  eachTarget((tg) => { tg.activeIndex = state.activeLayer; });
+  включитьВариант(state.activeVariant === id ? state.variants[0].id : state.activeVariant);
+}
+
+/** Слой общий ↔ только в включённом варианте. */
+function toggleLayerVariant(i) {
+  const L = refLayers()?.[i];
+  if (!L || state.activeVariant == null) return;
+  const вариант = L.variant == null ? state.activeVariant : null;
+  eachTarget((tg) => { tg.layers[i].variant = вариант; tg.compositeRect(null); });
+  viewport.syncTransparency();
+  syncLayers(); drawUVRows(); refreshUV();
+}
+
+/** Ряд вариантов под заголовком «Развёртка»: щелчок — включить, двойной — имя. */
+function syncVariants() {
+  const box = $('variant-row');
+  box.textContent = '';
+  box.hidden = !state.variants.length;
+  for (const v of state.variants) {
+    const чип = элемент('button', 'variant-chip' + (v.id === state.activeVariant ? ' on' : ''));
+    чип.append(элемент('span', 'variant-name', имяВарианта(v)));
+    чип.title = t('variants.chipTip');
+    чип.addEventListener('click', () => { if (v.id !== state.activeVariant) включитьВариант(v.id); });
+    чип.addEventListener('dblclick', (e) => { e.preventDefault(); renameVariant(v.id); });
+    if (state.variants.length > 1) {
+      const крест = элемент('span', 'variant-del', '×');
+      крест.title = t('variants.delete');
+      крест.addEventListener('click', (e) => { e.stopPropagation(); removeVariant(v.id); });
+      чип.append(крест);
+    }
+    box.appendChild(чип);
+  }
+}
+$('btn-variant-add').addEventListener('click', addVariant);
 
 /* ── Размеры кисти ─────────────────────────────────────────────── */
 
@@ -1616,9 +1783,14 @@ UI.renderSwatches($('quick-mats'), (hex) => setMaterial({
 /* ── Слои ──────────────────────────────────────────────────────── */
 
 function syncLayers() {
+  const вариант = state.variants.find((v) => v.id === state.activeVariant);
   UI.renderLayers($('layer-list'), activeTarget(),
     { activeIndex: state.activeLayer },
     {
+      // Слои других вариантов не показываются: в них сейчас не красят.
+      hidden: (L) => !слойВВарианте(L),
+      variantTip: вариант ? (L) => t(L.variant == null ? 'layers.common' : 'layers.own', имяВарианта(вариант)) : null,
+      onToggleVariant: toggleLayerVariant,
       onSelect: setActiveLayer,
       onToggleVisible: (i) => {
         const vis = !refLayers()[i].visible;
@@ -1629,7 +1801,7 @@ function syncLayers() {
     });
 
   const L = refLayers();
-  $('layer-count').textContent = L ? String(L.length) : '';
+  $('layer-count').textContent = L ? String(L.filter(слойВВарианте).length) : '';
   if (L) {
     const cur = L[state.activeLayer];
     $('layer-opacity').value = Math.round(cur.opacity * 100);
@@ -2383,10 +2555,12 @@ function afterModelLoaded(report, key) {
   report.upgraded = собрано.upgraded ? собрано.size : null;
   report.baked = bakeSourceColors(viewport.paintables);
   report.bakedMaps = bakeSourceMaps(viewport.paintables);
+  report.bakedVariants = bakeSourceVariants(viewport.paintables, viewport.model?.userData.variants);
   modelName = report.name;
   lastReport = report;
 
   renderUVList();
+  syncVariants();
   syncLayers();
   syncBrushLabels();
   renderHistory();
@@ -2419,7 +2593,8 @@ function syncModelNotes() {
   if (report.upgraded) notes.push(t('status.denseMesh', report.upgraded));
   if (report.noUV?.length) notes.push(t('status.noUVList', report.noUV.join(', ')));
   if (report.baked && !report.bakedMaps) notes.push(t('status.baked', report.baked));
-  if (report.bakedMaps) notes.push(t('status.bakedMaps', report.bakedMaps));
+  if (report.bakedMaps && !report.bakedVariants) notes.push(t('status.bakedMaps', report.bakedMaps));
+  if (report.bakedVariants) notes.push(t('status.bakedVariants', report.bakedVariants));
   if (report.mapsDropped) notes.push(t('status.mapsDropped', report.mapsDropped));
   if (report.unwrapped?.length) {
     // Развёртку подменили — об этом надо сказать вслух: человек открыл свой
@@ -2696,9 +2871,24 @@ async function сохранитьФайлы(имяПапки, сколько, с
  * Карта материала прикладывается только если по ней красили: пустая
  * заставила бы редактор считать всю модель шероховатым металлом.
  */
-function картыДляЭкспорта() {
+function картыДляЭкспорта(сВариантами = false) {
   const карты = new Map();
+  const варианты = сВариантами && state.variants.length > 1 ? state.variants : null;
   for (const [mesh, t] of targets) {
+    if (варианты) {
+      // Каждый вариант — своими картами. Карта материала — у всех, если
+      // поверхностью красили хоть в одном: материалы вариантов должны быть
+      // одного устройства, иначе переключение меняло бы и блеск.
+      const сборки = варианты.map((v) => ({ v, r: t.renderVariant(v.id) }));
+      const сМатериалом = сборки.some(({ r }) => r.materialPaint);
+      карты.set(mesh, {
+        variants: сборки.map(({ v, r }) => ({
+          name: имяВарианта(v), color: r.color, orm: сМатериалом ? r.orm : null, transparent: r.transparent,
+        })),
+        activeVariant: варианты.findIndex((v) => v.id === state.activeVariant),
+      });
+      continue;
+    }
     карты.set(mesh, {
       colorCanvas: t.canvas,
       ormCanvas: hasMaterialPaint(t) ? t.ormCanvas : null,
@@ -2731,7 +2921,7 @@ async function saveAs(формат) {
   if (формат === 'glb' || формат === 'gltf') {
     return сохранитьФайлы(основа, 1, async () => [{
       name: `${основа}.${формат}`,
-      blob: await viewport.inFileSpace(() => exportGLTF(viewport.model, карты, формат === 'glb')),
+      blob: await viewport.inFileSpace(() => exportGLTF(viewport.model, картыДляЭкспорта(true), формат === 'glb')),
     }], 'busy.save', `${основа}.${формат}`);
   }
 
@@ -2760,8 +2950,19 @@ function hasMaterialPaint(t) {
  * Карты меша: цветовая и, если по ней красили поверхностью, карта материала.
  * Без неё работа по поверхности молча потерялась бы.
  */
-function картыМеша(mesh, t) {
+function картыМеша(mesh, t, всеВарианты = false) {
   const stem = имяКарты(mesh);
+  // С вариантами — по карте на каждый, к имени добавляется имя варианта.
+  if (всеВарианты && state.variants.length > 1) {
+    const сборки = state.variants.map((v) => ({ v, r: t.renderVariant(v.id) }));
+    const сМатериалом = сборки.some(({ r }) => r.materialPaint);
+    return сборки.flatMap(({ v, r }) => {
+      const имя = `${stem}_${safeName(имяВарианта(v))}`;
+      const к = [{ name: `${имя}.png`, canvas: r.color }];
+      if (сМатериалом) к.push({ name: `${имя}_material.png`, canvas: r.orm });
+      return к;
+    });
+  }
   const список = [{ name: `${stem}.png`, canvas: t.canvas }];
   if (hasMaterialPaint(t)) список.push({ name: `${stem}_material.png`, canvas: t.ormCanvas });
   return список;
@@ -2797,6 +2998,7 @@ async function собратьПроект() {
       name: typeof state.matName === 'string' ? state.matName : null,
     },
     brush: { ...state.brush }, sizePct: state.sizePct, frontOnly: state.frontOnly,
+    variants: state.variants, activeVariant: state.activeVariant,
   };
   return packProject({ modelGLB, meta, meshes, app: APP_VERSION });
 }
@@ -2872,6 +3074,7 @@ async function openProject(buffer, fileName) {
         tg.layers = м.layers.map((L) => {
           const слой = new Layer(tg.size, L.name, L.auto);
           слой.visible = L.visible; слой.opacity = L.opacity; слой.blend = L.blend;
+          слой.variant = L.variant ?? null;
           for (const [ключ, путь] of Object.entries(L.files)) {
             const байты = file(путь);
             if (!байты) continue;
@@ -2881,9 +3084,14 @@ async function openProject(buffer, fileName) {
           return слой;
         });
         tg.activeIndex = Math.min(м.activeIndex ?? 0, tg.layers.length - 1);
+        tg.variant = meta.activeVariant ?? null;
         tg.compositeRect(null);
       });
       state.activeLayer = Math.min(meta.activeLayer ?? 0, (пары.length ? targets.get(пары[0].mesh).layers.length : 1) - 1);
+      state.variants = Array.isArray(meta.variants) ? meta.variants : [];
+      state.activeVariant = state.variants.length ? (meta.activeVariant ?? state.variants[0].id) : null;
+      state.nextVariant = state.variants.reduce((n, v) => Math.max(n, v.id + 1), 1);
+      поправитьАктивныйСлой();
 
       if (meta.pose) { viewport.setPose(meta.pose); savePose(meta.pose); }
       viewport.setViewState(meta.view);
@@ -2897,7 +3105,7 @@ async function openProject(buffer, fileName) {
       if (typeof meta.frontOnly === 'boolean') { state.frontOnly = meta.frontOnly; $('brush-frontface').checked = meta.frontOnly; }
 
       viewport.syncTransparency();
-      syncBrushLabels(); syncLayers(); syncPoseUI(); syncViewUI();
+      syncBrushLabels(); syncVariants(); syncLayers(); syncPoseUI(); syncViewUI();
       drawUVRows(); refreshUV();
       history.clear(); renderHistory(); syncHistoryButtons();
       state.painted = false;
@@ -2919,7 +3127,7 @@ async function openProject(buffer, fileName) {
 async function saveTextures() {
   if (!targets.size) return 0;
   const base = safeName(имяМодели().replace(/\.[^.]+$/, '') || 'model');
-  const все = [...targets].flatMap(([mesh, t]) => картыМеша(mesh, t));
+  const все = [...targets].flatMap(([mesh, t]) => картыМеша(mesh, t, true));
   return сохранитьФайлы(`${base} — карты`, все.length,
     async () => Promise.all(все.map(async (к) => ({ name: к.name, blob: await canvasBlob(к.canvas) }))),
     'busy.maps');
@@ -3204,6 +3412,7 @@ onLangChange(() => {
 
   syncBrushLabels();
   syncMaterialChip();
+  syncVariants();      // автоимена «Вариант N» переводятся вместе с интерфейсом
   syncLayers();
   renderHistory();
   syncStatusModel();
@@ -3267,4 +3476,8 @@ if (loadPrefs().showWelcome !== false) welcome.show();
 // куда попадает луч, не угадывая координаты по скриншоту.
 window.__paint = { viewport, uvEditor, viewCube, menuBar, brushModal, materialModal, helpModal,
   saveAsModal, settingsModal, welcome, targets, state, history,
-  setTool, setColor, setMaterial, setLang, getLang, saveAs, openBuffer, openFile, bootErrors, decal };
+  setTool, setColor, setMaterial, setLang, getLang, saveAs, openBuffer, openFile, bootErrors, decal,
+  // Для проверок (`tests/`): тот же путь, что «Сохранить как ▸ GLB», без окна сохранения.
+  exportGLB: () => viewport.inFileSpace(() => exportGLTF(viewport.model, картыДляЭкспорта(true), true)),
+  projectBytes: () => собратьПроект(),
+  addVariant, включитьВариант, toggleLayerVariant };

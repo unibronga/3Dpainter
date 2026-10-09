@@ -154,7 +154,12 @@ export async function parseModel(буфер, имя, спутники = null) {
     case 'glb':
     case 'gltf': {
       const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
-      const gltf = await new GLTFLoader().parseAsync(буфер, '');
+      const loader = new GLTFLoader();
+      loader.register(читательВариантов);
+      const gltf = await loader.parseAsync(буфер, '');
+      // Клипы загрузчик отдаёт рядом со сценой, а не в ней. Не положить их
+      // в модель — при сохранении они пропадут: экспортёру нечего передать.
+      gltf.scene.animations = gltf.animations;
       return gltf.scene;
     }
 
@@ -230,19 +235,125 @@ export async function exportGeometryGLB(модель) {
   const { GLTFExporter } = await import('three/addons/exporters/GLTFExporter.js');
   const прежние = new Map();
   const прежниеДанные = new Map();
-  const простой = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
+  const простые = [];
   модель.traverse((o) => {
-    if (o.userData && Object.keys(o.userData).length) { прежниеДанные.set(o, o.userData); o.userData = {}; }
-    if (o.isMesh) { прежние.set(o, o.material); o.material = простой; }
+    const данные = o.userData;
+    if (данные && Object.keys(данные).length) { прежниеДанные.set(o, данные); o.userData = {}; }
+    if (!o.isMesh) return;
+    // Простой материал свой у каждого меша — чтобы нести имя исходного:
+    // из проекта модель потом снова уходит в GLB, и имя не должно потеряться.
+    const простой = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
+    простой.name = данные?.sourceMaterialName || '';
+    простые.push(простой);
+    прежние.set(o, o.material);
+    o.material = простой;
   });
   try {
-    const результат = await new GLTFExporter().parseAsync(модель, { binary: true });
+    const результат = await new GLTFExporter().parseAsync(модель, { binary: true, animations: модель.animations || [] });
     return new Uint8Array(результат);
   } finally {
     прежние.forEach((м, o) => { o.material = м; });
     прежниеДанные.forEach((д, o) => { o.userData = д; });
-    простой.dispose();
+    простые.forEach((м) => м.dispose());
   }
+}
+
+/* ── Варианты покраски: KHR_materials_variants ───────────────────
+ *
+ * Стандарт glTF для «одна модель — несколько обличий»: у примитива меша
+ * несколько материалов, каждый привязан к варианту по номеру, список имён
+ * вариантов лежит в корне файла. Blender читает его панелью glTF Variants.
+ * three.js сам его не пишет и не читает — отсюда два расширения ниже.
+ */
+const ВАРИАНТЫ = 'KHR_materials_variants';
+
+/**
+ * Чтение: материалы вариантов — в `userData.variantMaterials` меша (по номеру
+ * варианта), имена — в `userData.variants` сцены. Дальше их карты ложатся
+ * слоями вариантов (`main.js`, bakeSourceVariants).
+ */
+function читательВариантов(parser) {
+  return {
+    name: ВАРИАНТЫ,
+    async afterRoot(result) {
+      const корень = parser.json.extensions?.[ВАРИАНТЫ];
+      if (!корень?.variants?.length) return;
+      const ждём = [];
+      result.scene.traverse((o) => {
+        if (!o.isMesh) return;
+        const связь = parser.associations.get(o);
+        if (связь?.meshes == null) return;
+        const примитив = parser.json.meshes[связь.meshes]?.primitives?.[связь.primitives ?? 0];
+        const привязки = примитив?.extensions?.[ВАРИАНТЫ]?.mappings;
+        if (!привязки) return;
+        ждём.push((async () => {
+          const список = new Array(корень.variants.length).fill(null);
+          for (const п of привязки) {
+            const материал = await parser.getDependency('material', п.material);
+            for (const v of п.variants) список[v] = материал;
+          }
+          o.userData.variantMaterials = список;
+        })());
+      });
+      await Promise.all(ждём);
+      result.scene.userData.variants = корень.variants.map((v, i) => v.name || String(i + 1));
+    },
+  };
+}
+
+/**
+ * Запись: у меша с вариантами материал по умолчанию — включённого варианта,
+ * остальные дописываются в файл, пока экспортёр пишет материал по умолчанию
+ * (этот шаг он дожидается, `writeMesh` — нет).
+ *
+ * @param {string[]} имена имена вариантов по порядку
+ * @param {Map<THREE.Material, THREE.Material[]>} наборы материал по умолчанию → материалы вариантов
+ */
+function писательВариантов(имена, наборы) {
+  return (writer) => {
+    const номера = new Map();    // материал по умолчанию → номера материалов вариантов в файле
+    return {
+      name: ВАРИАНТЫ,
+      async writeMaterialAsync(material) {
+        const набор = наборы.get(material);
+        if (!набор) return;
+        const список = [];
+        for (const м of набор) список.push(м === material ? null : await writer.processMaterialAsync(м));
+        номера.set(material, список);
+      },
+      writeMesh(mesh, meshDef) {
+        const список = номера.get(mesh.material);
+        if (!список) return;
+        for (const примитив of meshDef.primitives) {
+          // Один материал на несколько вариантов — одной привязкой.
+          const поМатериалу = new Map();
+          список.forEach((номер, v) => {
+            const м = номер ?? примитив.material;
+            if (!поМатериалу.has(м)) поМатериалу.set(м, []);
+            поМатериалу.get(м).push(v);
+          });
+          примитив.extensions = { ...(примитив.extensions || {}),
+            [ВАРИАНТЫ]: { mappings: [...поМатериалу].map(([material, variants]) => ({ material, variants })) } };
+        }
+        writer.extensionsUsed[ВАРИАНТЫ] = true;
+      },
+      afterParse() {
+        if (!номера.size) return;
+        writer.json.extensions = writer.json.extensions || {};
+        writer.json.extensions[ВАРИАНТЫ] = { variants: имена.map((name) => ({ name })) };
+      },
+    };
+  };
+}
+
+/**
+ * Имя материала варианта. Первый вариант носит имя исходного материала —
+ * «Leaf» остаётся «Leaf», — остальные получают имя варианта через «_».
+ * Безымянный исходник — материалы зовутся именами вариантов.
+ */
+export function имяМатериалаВарианта(исходное, вариант, номер) {
+  if (!исходное) return вариант;
+  return номер === 0 ? исходное : `${исходное}_${вариант}`;
 }
 
 /**
@@ -264,10 +375,13 @@ function кВыдаче(модель, карты) {
   const прежние = new Map();
   const прежниеДанные = new Map();
   const созданные = [];
+  const наборы = new Map();     // материал по умолчанию → материалы вариантов
+  let именаВариантов = null;
 
   модель.traverse((o) => {
-    if (o.userData && Object.keys(o.userData).length) {
-      прежниеДанные.set(o, o.userData);
+    const данные = o.userData;
+    if (данные && Object.keys(данные).length) {
+      прежниеДанные.set(o, данные);
       o.userData = {};
     }
     if (!o.isMesh) return;
@@ -282,31 +396,48 @@ function кВыдаче(модель, карты) {
     // как есть, и в любом просмотрщике — и при повторном открытии здесь же —
     // покраска ложилась не на те грани (замер: 41 803 пикселя мазка в
     // «чужом» кадре против 0 на тех же местах в нашем).
-    const цвет = new THREE.CanvasTexture(набор.colorCanvas);
-    цвет.colorSpace = THREE.SRGBColorSpace;
-    созданные.push(цвет);
+    const материал = (холстЦвета, холстМатериала, прозрачный, имя) => {
+      const цвет = new THREE.CanvasTexture(холстЦвета);
+      цвет.colorSpace = THREE.SRGBColorSpace;
+      созданные.push(цвет);
 
-    const параметры = { map: цвет, roughness: 1, metalness: 0 };
+      const параметры = { map: цвет, roughness: 1, metalness: 0 };
 
-    // Шероховатость в зелёном, металл в синем — стандартная упаковка glTF.
-    if (набор.ormCanvas) {
-      const orm = new THREE.CanvasTexture(набор.ormCanvas);   // flipY — см. выше
-      созданные.push(orm);
-      параметры.roughnessMap = orm;
-      параметры.metalnessMap = orm;
-      параметры.metalness = 1;
+      // Шероховатость в зелёном, металл в синем — стандартная упаковка glTF.
+      if (холстМатериала) {
+        const orm = new THREE.CanvasTexture(холстМатериала);   // flipY — см. выше
+        созданные.push(orm);
+        параметры.roughnessMap = orm;
+        параметры.metalnessMap = orm;
+        параметры.metalness = 1;
+      }
+      if (прозрачный) { параметры.transparent = true; параметры.side = THREE.DoubleSide; }
+
+      const м = new THREE.MeshStandardMaterial(параметры);
+      // Имя материала — из файла: в Blender по нему узнают, что это за материал.
+      м.name = имя;
+      созданные.push(м);
+      return м;
+    };
+
+    const исходное = данные?.sourceMaterialName || '';
+    if (набор.variants?.length) {
+      const список = набор.variants.map((v, i) =>
+        материал(v.color, v.orm, v.transparent, имяМатериалаВарианта(исходное, v.name, i)));
+      o.material = список[набор.activeVariant] || список[0];
+      наборы.set(o.material, список);
+      именаВариантов = набор.variants.map((v) => v.name);
+    } else {
+      o.material = материал(набор.colorCanvas, набор.ormCanvas, набор.transparent, исходное);
     }
-    if (набор.transparent) { параметры.transparent = true; параметры.side = THREE.DoubleSide; }
-
-    o.material = new THREE.MeshStandardMaterial(параметры);
-    созданные.push(o.material);
   });
 
-  return () => {
+  const откатить = () => {
     прежние.forEach((м, o) => { o.material = м; });
     прежниеДанные.forEach((д, o) => { o.userData = д; });
     созданные.forEach((р) => р.dispose?.());
   };
+  return { откатить, варианты: наборы.size ? писательВариантов(именаВариантов, наборы) : null };
 }
 
 /**
@@ -316,10 +447,14 @@ function кВыдаче(модель, карты) {
  */
 export async function exportGLTF(модель, карты, двоичный = true) {
   const { GLTFExporter } = await import('three/addons/exporters/GLTFExporter.js');
-  const откатить = кВыдаче(модель, карты);
+  const { откатить, варианты } = кВыдаче(модель, карты);
 
   try {
-    const результат = await new GLTFExporter().parseAsync(модель, { binary: двоичный });
+    const экспортёр = new GLTFExporter();
+    if (варианты) экспортёр.register(варианты);
+    // Клипы — те, с которыми модель открылась: скелет и скин экспортёр
+    // пишет сам, а дорожки анимации берёт только из этой опции.
+    const результат = await экспортёр.parseAsync(модель, { binary: двоичный, animations: модель.animations || [] });
     return двоичный
       ? new Blob([результат], { type: 'model/gltf-binary' })
       : new Blob([JSON.stringify(результат)], { type: 'model/gltf+json' });
@@ -335,7 +470,7 @@ export async function exportGLTF(модель, карты, двоичный = tr
  */
 export async function exportOBJ(модель, карты, основа) {
   const { OBJExporter } = await import('three/addons/exporters/OBJExporter.js');
-  const откатить = кВыдаче(модель, карты);
+  const { откатить } = кВыдаче(модель, карты);   // OBJ — только включённый вариант
 
   let текст;
   try { текст = new OBJExporter().parse(модель); } finally { откатить(); }

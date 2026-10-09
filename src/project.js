@@ -60,7 +60,7 @@ export function packProject({ modelGLB, meta, meshes, app }) {
           файлы[путь + ключ + '.bin'] = new Uint8Array(буфер.buffer, буфер.byteOffset, буфер.byteLength);
           имена[ключ] = путь + ключ + '.bin';
         }
-        return { name: L.name, auto: L.auto, visible: L.visible, opacity: L.opacity, blend: L.blend, files: имена };
+        return { name: L.name, auto: L.auto, visible: L.visible, opacity: L.opacity, blend: L.blend, variant: L.variant ?? null, files: имена };
       }),
     })),
   };

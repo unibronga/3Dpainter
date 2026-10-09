@@ -37,6 +37,10 @@ export class Layer {
     this.visible = true;
     this.opacity = 1;
     this.blend = 'normal';
+    // Вариант покраски, которому принадлежит слой (номер), либо null — слой
+    // общий и виден во всех вариантах. Так «разные лица» живут на одной
+    // развёртке: общие слои — тело и одежда, у каждого варианта — своё лицо.
+    this.variant = null;
   }
 
   ensureMask(size) {
@@ -60,6 +64,9 @@ export class PaintTarget {
 
     this.layers = [new Layer(size, null, 1)];
     this.activeIndex = 0;
+    // Включённый вариант покраски: в сборку идут общие слои и слои этого
+    // варианта. null — вариантов нет, собираются все слои.
+    this.variant = null;
     // Выделение лассо: маска текселей, где разрешено красить, либо null —
     // тогда красится всё. Живёт у цели, а не у слоя: смена слоя его не снимает.
     this.selection = null;
@@ -91,8 +98,12 @@ export class PaintTarget {
 
   get activeLayer() { return this.layers[this.activeIndex]; }
 
-  addLayer(name) {
+  /** Виден ли слой в сборке при включённом варианте. */
+  inVariant(L) { return L.variant == null || L.variant === this.variant; }
+
+  addLayer(name, variant = null) {
     const l = new Layer(this.size, name || null, name ? null : this.layers.length + 1);
+    l.variant = variant;
     this.layers.splice(this.activeIndex + 1, 0, l);
     this.activeIndex += 1;
     return l;
@@ -137,6 +148,7 @@ export class PaintTarget {
         for (let li = 0; li < layers.length; li++) {
           const L = layers[li];
           if (!L.visible || L.opacity <= 0) continue;
+          if (L.variant != null && L.variant !== this.variant) continue;
 
           let a = L.rgba[o + 3] / 255;
           if (a <= 0) continue;
@@ -182,6 +194,36 @@ export class PaintTarget {
     this.ormCtx.putImageData(this.ormImageData, 0, 0, x0, y0, w, h);
     this.texture.needsUpdate = true;
     this.ormTexture.needsUpdate = true;
+  }
+
+  /**
+   * Итоговые карты другого варианта — для выдачи: в GLB каждый вариант
+   * уходит своим материалом. Собирается во временные холсты, рабочая сборка
+   * после этого возвращается к включённому варианту.
+   *
+   * @returns {{color: HTMLCanvasElement, orm: HTMLCanvasElement, transparent: boolean, materialPaint: boolean}}
+   */
+  renderVariant(variant) {
+    const прежний = this.variant;
+    this.variant = variant;
+    this.compositeRect(null);
+    const копия = (src) => {
+      const c = document.createElement('canvas');
+      c.width = c.height = this.size;
+      c.getContext('2d').drawImage(src, 0, 0);
+      return c;
+    };
+    const S = this.size;
+    let transparent = false, materialPaint = false;
+    for (let p = 0; p < S * S; p++) {
+      if (this.composite[p * 4 + 3] < 250) transparent = true;
+      if (this.orm[p * 4 + 2] > 4 || Math.abs(this.orm[p * 4 + 1] - this.bgRough) > 3) materialPaint = true;
+      if (transparent && materialPaint) break;
+    }
+    const out = { color: копия(this.canvas), orm: копия(this.ormCanvas), transparent, materialPaint };
+    this.variant = прежний;
+    this.compositeRect(null);
+    return out;
   }
 
   /**

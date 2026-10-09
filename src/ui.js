@@ -41,19 +41,25 @@ export function renderSwatches(el, onPick) {
 const EYE_ON = '<svg viewBox="0 0 24 24"><path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>';
 const EYE_OFF = '<svg viewBox="0 0 24 24"><path d="M4 4l16 16"/><path d="M9.6 9.7A2.6 2.6 0 0 0 12 14.6"/><path d="M6.3 6.5C3.8 8.2 2 12 2 12s3.6 6 10 6c1.7 0 3.2-.4 4.5-1"/><path d="M19.5 15.4C21.2 13.9 22 12 22 12s-3.6-6-10-6c-.9 0-1.7.1-2.5.3"/></svg>';
 
+// Ярлык варианта: залитый — слой только в этом варианте, контур — общий.
+const TAG = '<svg viewBox="0 0 24 24"><path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="8" cy="8" r="1.6"/></svg>';
+
 /**
  * @param {HTMLElement} el
  * @param {PaintTarget} target — эталон структуры слоёв
  * @param {object} state {activeIndex}
- * @param {object} handlers {onSelect, onToggleVisible, onRename}
+ * @param {object} handlers {onSelect, onToggleVisible, onRename, hidden?, variantTip?, onToggleVariant?}
+ *   hidden(L) — слой не показывать (он другого варианта); variantTip(L) —
+ *   подсказка ярлыка варианта; без неё ярлыка нет (вариантов нет).
  */
 export function renderLayers(el, target, state, handlers) {
   el.innerHTML = '';
   if (!target) return;
 
   target.layers.forEach((L, i) => {
+    if (handlers.hidden?.(L)) return;
     const row = document.createElement('div');
-    row.className = 'layer' + (i === state.activeIndex ? ' active' : '');
+    row.className = 'layer' + (i === state.activeIndex ? ' active' : '') + (handlers.variantTip ? ' with-tag' : '');
 
     const eye = document.createElement('div');
     eye.className = 'eye' + (L.visible ? '' : ' off');
@@ -72,6 +78,14 @@ export function renderLayers(el, target, state, handlers) {
     });
 
     row.append(eye, name);
+    if (handlers.variantTip) {
+      const tag = document.createElement('div');
+      tag.className = 'vtag' + (L.variant != null ? ' own' : '');
+      tag.innerHTML = TAG;
+      tag.title = handlers.variantTip(L);
+      tag.addEventListener('click', (e) => { e.stopPropagation(); handlers.onToggleVariant(i); });
+      row.append(tag);
+    }
     row.addEventListener('click', () => handlers.onSelect(i));
     el.appendChild(row);
   });
