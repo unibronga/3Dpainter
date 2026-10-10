@@ -894,9 +894,12 @@ export function createSaveAsModal(api) {
   const отмена = elT('button', 'btn', 'save.cancel');
   отмена.addEventListener('click', () => m.close());
   const готово = elT('button', 'btn accent', 'save.go');
-  готово.addEventListener('click', async () => {
-    готово.disabled = true;
-    try { await api.save(выбран); } finally { готово.disabled = false; m.close(); }
+  // Окно закрывается сразу: дальше — выбор папки и индикатор занятости на
+  // чистом экране. Ждать сохранения с погашенной кнопкой — выглядит как
+  // зависание (выгрузка лица на плотной модели идёт секунды).
+  готово.addEventListener('click', () => {
+    m.close();
+    api.save(выбран);
   });
   m.foot.append(пояснение, отмена, готово);
 

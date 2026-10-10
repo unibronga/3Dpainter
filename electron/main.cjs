@@ -5,7 +5,7 @@
  * а без неё страница остаётся ровно тем же, что открывается в браузере.
  */
 
-const { app, BrowserWindow, Menu, shell, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, shell, ipcMain, session, dialog } = require('electron');
 const path = require('node:path');
 const { McpServer } = require('./mcp.cjs');
 
@@ -19,6 +19,43 @@ let win = null;
 // Своя папка данных — для проверок: иначе тестовый запуск делит настройки
 // (и ключ MCP) с установленной программой.
 if (process.env.PAINT_TOOL_USER_DATA) app.setPath('userData', process.env.PAINT_TOOL_USER_DATA);
+
+/**
+ * 🔴 Сохранение набором в папку и «закрытые» папки.
+ *
+ * Chromium не даёт странице писать в домашнюю папку, «Загрузки», «Рабочий
+ * стол» и системные папки: Chrome при этом спрашивает человека, а Electron без
+ * обработчика молча запрещает. Окно выбора просто закрывалось, страница
+ * понимала это как «передумал» — и выгрузка лица в «Загрузки» не сохраняла
+ * ничего, без единой ошибки.
+ *
+ * Папки пользователя и всё внутри них (кроме ~/Library) разрешаем: человек
+ * выбрал их сам, а программа создаёт там только свою подпапку. Системные — нет:
+ * объясняем и открываем выбор заново.
+ */
+const сессииСПапками = new WeakSet();
+function разрешитьПапкиПользователя(сессия) {
+  if (сессииСПапками.has(сессия)) return;     // окно на macOS создаётся заново — обработчик один
+  сессииСПапками.add(сессия);
+  const path = require('node:path');
+  const дом = app.getPath('home');
+  const библиотека = path.join(дом, 'Library');
+  const свои = ['home', 'desktop', 'documents', 'downloads', 'pictures', 'music', 'videos']
+    .map((k) => { try { return app.getPath(k); } catch { return null; } }).filter(Boolean);
+  const внутри = (p, корень) => p === корень || p.startsWith(корень + path.sep);
+  сессия.on('file-system-access-restricted', async (e, d, callback) => {
+    const p = path.resolve(d.path);
+    if (!внутри(p, библиотека) && свои.some((корень) => внутри(p, корень))) { callback('allow'); return; }
+    const ru = /^(ru|uk|be)/i.test(app.getLocale());
+    await dialog.showMessageBox(BrowserWindow.fromWebContents(d.webContents) || undefined, {
+      type: 'warning',
+      message: ru ? 'В эту папку сохранять нельзя' : 'Cannot save to this folder',
+      detail: ru ? `«${p}» — системная папка. Выберите папку в своей домашней: «Документы», «Загрузки», «Рабочий стол».`
+        : `“${p}” is a system folder. Pick a folder in your home: Documents, Downloads, Desktop.`,
+    });
+    callback('tryAgain');
+  });
+}
 
 function createWindow() {
   win = new BrowserWindow({
@@ -41,6 +78,7 @@ function createWindow() {
     },
   });
 
+  разрешитьПапкиПользователя(session.fromPartition('persist:paint-tool'));
   if (DEV_URL) win.loadURL(DEV_URL);
   else win.loadFile(INDEX);
 
