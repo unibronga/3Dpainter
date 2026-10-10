@@ -724,6 +724,11 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
   box-shadow: var(--shadow); padding: 3px;
 }
 .expr-suggest[hidden] { display: none; }
+/* Полоса прокрутки — как у остальных списков программы, а не системная. */
+.expr-suggest::-webkit-scrollbar { width: 8px; }
+.expr-suggest::-webkit-scrollbar-track { background: transparent; }
+.expr-suggest::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+.expr-suggest::-webkit-scrollbar-thumb:hover { background: var(--line-strong); }
 .expr-suggest-item { padding: 4px 8px; border-radius: 4px; color: var(--text-2); cursor: pointer; font-size: 12px; }
 .expr-suggest-item:hover, .expr-suggest-item.on { background: var(--hover-bg); color: var(--hover-fg); }
 .expr-input {
