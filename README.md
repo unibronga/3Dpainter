@@ -107,7 +107,7 @@ Other commands:
 | Pan | **Space + left button**, or middle button |
 | Zoom | **Wheel** |
 | Brush size | **[** and **]** |
-| Tools | **V** select object · **H** pan · **O** orbit · **Z** zoom · **B** brush · **E** eraser · **I** eyedropper · **F** fill faces · **G** fill UV island · **R** · **C** · **T** rectangle · ellipse · text · **A** decal · **L** lasso (again for polygonal) |
+| Tools | **V** select object · **H** pan · **O** orbit · **Z** zoom · **B** brush · **E** eraser · **K** blur · **I** eyedropper · **F** fill faces · **G** fill UV island · **R** · **C** · **T** rectangle · ellipse · text · **A** decal · **L** lasso (again for polygonal) |
 | Views | **1**–**7** axis views · **0** three-quarter · **5** perspective ↔ orthographic |
 | Orbit pivot | three icons in the column under the view cube: world, object, or **whatever is in the centre of the frame** |
 | Display | the bar above the model: colors, clay, wireframe, normals; facets; frame |
@@ -121,7 +121,7 @@ Other commands:
 
 ## What it can do
 
-**Tools.** Brush with 16 presets (grain, spacing, scatter), eraser,
+**Tools.** Brush with 16 presets (grain, spacing, scatter), eraser, blur,
 eyedropper, three kinds of fill, lasso, rectangle, ellipse, text and decal.
 Shapes, text and decals are printed by screen projection, so a rectangle stays a
 rectangle in frame no matter how the surface curves under it — and only onto
@@ -145,7 +145,7 @@ has a rotation step there — tick it, set 30°, and the view turns in exact 30�
 steps — plus a button to reset the view.
 
 **Lasso selection**, freehand and polygonal, as in Photoshop. While a selection
-exists, every tool paints only inside it — brush, eraser, fills, shapes —
+exists, every tool paints only inside it — brush, eraser, blur, fills, shapes —
 so a stroke can run right over the edge. Shift adds, Alt subtracts, Shift+Alt
 intersects. On the model the outline is projected from the screen, across all
 objects at once; in the UV editor it is drawn straight onto the texture. The

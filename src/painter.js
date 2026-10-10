@@ -211,7 +211,7 @@ export class Stroke {
    * @param {object} cache — предрасчёт меша
    * @param {object} opts
    *   channel: 'rgba' | 'mask'
-   *   mode:    'paint' | 'erase' | 'mask-add' | 'mask-sub'
+   *   mode:    'paint' | 'erase' | 'blur' | 'mask-add' | 'mask-sub'
    *   color:   [r,g,b] 0..255
    *   opacity: 0..1 — укрывистость мазка, предел непрозрачности за один мазок
    *   alpha:   0..1 — прозрачность материала (стекло), уходит в карту;
@@ -619,6 +619,55 @@ export class Stroke {
     return true;
   }
 
+  /**
+   * Размытое состояние слоя до мазка в пределах rect — для режима 'blur'.
+   *
+   * Считается по цвету с весом альфы (premultiplied): иначе прозрачные
+   * тексели с чёрным цветом затемняли бы край краски. Квадратное окно в два
+   * прохода — по строкам, затем по столбцам; радиус растёт с размером
+   * текстуры, чтобы размытие на 512 и на 2048 выглядело одинаково.
+   *
+   * @returns {Float32Array} w*h*4: R·A, G·A, B·A, A — все в шкале 0..255
+   */
+  _blurred(rect) {
+    const S = this.target.size, base = this.base;
+    const R = Math.max(2, Math.round(S / 256));
+    const w = rect.x1 - rect.x0 + 1, h = rect.y1 - rect.y0 + 1;
+    const py0 = Math.max(0, rect.y0 - R), py1 = Math.min(S - 1, rect.y1 + R);
+    const ph = py1 - py0 + 1;
+
+    // Проход по строкам: берём окно шире прямоугольника на радиус.
+    const row = new Float32Array(w * ph * 4);
+    for (let y = py0; y <= py1; y++) {
+      for (let x = rect.x0; x <= rect.x1; x++) {
+        const xa = Math.max(0, x - R), xb = Math.min(S - 1, x + R);
+        let r = 0, g = 0, b = 0, al = 0;
+        for (let xx = xa; xx <= xb; xx++) {
+          const o = (y * S + xx) * 4, a = base[o + 3];
+          r += base[o] * a; g += base[o + 1] * a; b += base[o + 2] * a; al += a;
+        }
+        const n = xb - xa + 1, q = ((y - py0) * w + (x - rect.x0)) * 4;
+        row[q] = r / (255 * n); row[q + 1] = g / (255 * n); row[q + 2] = b / (255 * n); row[q + 3] = al / n;
+      }
+    }
+
+    // Проход по столбцам — уже только по строкам самого прямоугольника.
+    const out = new Float32Array(w * h * 4);
+    for (let y = rect.y0; y <= rect.y1; y++) {
+      const ya = Math.max(0, y - R), yb = Math.min(S - 1, y + R), n = yb - ya + 1;
+      for (let x = 0; x < w; x++) {
+        let r = 0, g = 0, b = 0, al = 0;
+        for (let yy = ya; yy <= yb; yy++) {
+          const q = ((yy - py0) * w + x) * 4;
+          r += row[q]; g += row[q + 1]; b += row[q + 2]; al += row[q + 3];
+        }
+        const q = ((y - rect.y0) * w + x) * 4;
+        out[q] = r / n; out[q + 1] = g / n; out[q + 2] = b / n; out[q + 3] = al / n;
+      }
+    }
+    return out;
+  }
+
   /** Перенести накопитель мазка в слой — считаем от состояния до мазка. */
   apply(rect) {
     const S = this.target.size;
@@ -641,6 +690,8 @@ export class Stroke {
       const dst = this.layer.rgba;
       const [cr, cg, cb] = this.color;
       const erase = this.mode === 'erase';
+      const blur = this.mode === 'blur' ? this._blurred(rect) : null;
+      const bw = rect.x1 - rect.x0 + 1;
       const dstR = this.layer.rough, dstM = this.layer.metal, dstO = this.layer.opac;
       const baseR = this.baseRough, baseM = this.baseMetal, baseO = this.baseOpac;
       const matR = this.matRough, matM = this.matMetal, matO = this.matOpac;
@@ -657,6 +708,20 @@ export class Stroke {
           if (a <= 0) continue;
           const o = p * 4;
           const ba = base[o + 3] / 255;
+
+          if (blur) {
+            // Размытие: часть размытого состояния подмешивается в исходное
+            // с тем же покрытием, что у краски, — цвета не берём ниоткуда.
+            const q = ((y - rect.y0) * bw + (x - rect.x0)) * 4;
+            const outA = ba * 255 * (1 - a) + blur[q + 3] * a;   // 0..255
+            if (outA <= 0) continue;
+            const k = 255 / outA, keep = ba * (1 - a);
+            dst[o] = (base[o] * keep + blur[q] * a) * k;
+            dst[o + 1] = (base[o + 1] * keep + blur[q + 1] * a) * k;
+            dst[o + 2] = (base[o + 2] * keep + blur[q + 2] * a) * k;
+            dst[o + 3] = outA;
+            continue;
+          }
 
           // Узор привязан к развёртке, а не к мазку: два прохода по одному
           // месту дают тот же рисунок, а не кашу из наложенных узоров.

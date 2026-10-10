@@ -1036,7 +1036,7 @@ let perfMs = 0;
 function strokeOpts() {
   return {
     channel: 'rgba',
-    mode: state.tool === 'eraser' ? 'erase' : 'paint',
+    mode: state.tool === 'eraser' ? 'erase' : state.tool === 'blur' ? 'blur' : 'paint',
     color: state.color,
     // 🔴 Два разных понятия, и путать их нельзя:
     //   opacity — укрывистость мазка. Сила мазка живёт в кисти («Нажим»),
@@ -1062,7 +1062,7 @@ function strokeOpts() {
  * чем выбранный язык, и переводится при каждой отрисовке списка.
  */
 function toolLabel() {
-  return { brush: 'act.brush', eraser: 'act.eraser',
+  return { brush: 'act.brush', eraser: 'act.eraser', blur: 'act.blur',
            'fill-faces': 'act.fillFaces', 'fill-island': 'act.fillIsland',
            'fill-layer': 'act.fillLayer',
            rect: 'act.rect', ellipse: 'act.ellipse', text: 'act.text',
@@ -2321,7 +2321,7 @@ function setTool(tool) {
 /** Клавиши инструментов — для тултипа. Лассо по точкам — второе нажатие L. */
 const TOOL_HINTS = { select: 'V', pan: 'H', orbit: 'O', zoom: 'Z', lasso: 'L', 'lasso-poly': 'L L',
   brush: 'B', rect: 'R', ellipse: 'C', text: 'T', decal: 'A', 'fill-faces': 'F', 'fill-island': 'G',
-  eraser: 'E', eyedropper: 'I' };
+  eraser: 'E', blur: 'K', eyedropper: 'I' };
 
 initTooltips((id) => {
   const ключ = id.replace(/-(\w)/g, (_, c) => c.toUpperCase());   // fill-faces → fillFaces
@@ -4084,7 +4084,7 @@ $('btn-view-png').addEventListener('click', () => {
 
 /* ── Клавиатура ────────────────────────────────────────────────── */
 
-const TOOL_KEYS = { l: 'lasso', v: 'select', h: 'pan', o: 'orbit', z: 'zoom', b: 'brush', e: 'eraser', i: 'eyedropper', f: 'fill-faces', g: 'fill-island', r: 'rect', c: 'ellipse', t: 'text', a: 'decal' };
+const TOOL_KEYS = { l: 'lasso', v: 'select', h: 'pan', o: 'orbit', z: 'zoom', b: 'brush', e: 'eraser', k: 'blur', i: 'eyedropper', f: 'fill-faces', g: 'fill-island', r: 'rect', c: 'ellipse', t: 'text', a: 'decal' };
 const VIEW_KEYS = { 1: 'front', 2: 'back', 3: 'left', 4: 'right', 6: 'top', 7: 'bottom', 0: 'user' };
 
 /**
@@ -4250,6 +4250,7 @@ const menuBar = new MenuBar($('menubar'), [
   { title: () => t('menu.tool'), items: [
     { label: () => t('tool.brush'), hint: 'B', radio: () => state.tool === 'brush', action: () => setTool('brush') },
     { label: () => t('tool.eraser'), hint: 'E', radio: () => state.tool === 'eraser', action: () => setTool('eraser') },
+    { label: () => t('tool.blur'), hint: 'K', radio: () => state.tool === 'blur', action: () => setTool('blur') },
     { label: () => t('tool.eyedropper'), hint: 'I', radio: () => state.tool === 'eyedropper', action: () => setTool('eyedropper') },
     '-',
     { label: () => t('tool.select'), hint: 'V', radio: () => state.tool === 'select', action: () => setTool('select') },
