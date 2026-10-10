@@ -67,6 +67,7 @@ export default {
 
   'tool.brush': 'Brush',
   'tool.eraser': 'Eraser',
+  'tool.blur': 'Blur',
   'tool.eyedropper': 'Eyedropper',
   'tool.pan': 'Pan view',
   'tool.orbit': 'Orbit view',
@@ -121,6 +122,7 @@ export default {
   'tip.select': 'Click an object to make it active together with its UV map. Paints nothing — this is how you switch between parts of a composite model.',
   'tip.brush': 'Paints on the surface, straight across UV seams. Size, hardness and pressure live in the side panel; [ and ] change the size.',
   'tip.eraser': 'Removes paint down to transparency — the base shows through.',
+  'tip.blur': 'Softens paint and blends neighbouring colors — brush over a rough edge or a seam. Strength — the Flow slider.',
   'tip.eyedropper': 'Picks the whole material under the cursor: color, roughness, metalness, transparency.',
   'tip.fillFaces': 'Fills a face and its neighbours while the crease stays below the angle limit from the top strip.',
   'tip.fillIsland': 'Fills a whole UV island: the seam holds it.',
@@ -371,6 +373,7 @@ export default {
   /* ── History entry names ─────────────────────────────────────── */
   'act.brush': 'Brush',
   'act.eraser': 'Eraser',
+  'act.blur': 'Blur',
   'act.fillFaces': 'Face fill',
   'act.fillIsland': 'Island fill',
   'act.fillLayer': 'Layer fill',
@@ -500,6 +503,7 @@ export default {
   'help.tools': 'Tools',
   'help.tools.brush': 'brush',
   'help.tools.eraser': 'eraser',
+  'help.tools.blur': 'blur — softens paint',
   'help.tools.eyedropper': 'eyedropper — picks the whole material',
   'help.tools.fillFaces': 'fill connected faces',
   'help.tools.fillIsland': 'fill a UV island',
