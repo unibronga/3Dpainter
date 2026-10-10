@@ -11,6 +11,8 @@
  *   model.glb                     геометрия с той развёрткой, по которой красили
  *   layers/<меш>/<слой>/rgba.bin  карты слоя — сырые байты, без потерь
  *                    …/rough.bin, metal.bin, opac.bin, mask.bin
+ *   face/tris.bin                 грани лица (1 байт на треугольник), если лицо задано
+ *   face/<слот>/<n>/rgba.bin …    выражения лица — вырезки по прямоугольнику лица
  *
  * 🔴 Геометрия хранится вместе с развёрткой, а не исходный файл модели. Если
  * развёртку строила программа, а построитель в новой версии поменяется,
@@ -44,8 +46,9 @@ export function isProject(имя) {
  * @param {string} о.app            версия программы
  * @returns {Uint8Array} содержимое файла
  */
-export function packProject({ modelGLB, meta, meshes, app }) {
+export function packProject({ modelGLB, meta, meshes, app, files = {} }) {
   const файлы = { 'model.glb': [modelGLB, { level: 0 }] };   // GLB уже плотный
+  for (const [путь, байты] of Object.entries(files)) файлы[путь] = байты;
   const описание = {
     format: FORMAT, version: VERSION, app, savedAt: new Date().toISOString(),
     ...meta,
@@ -60,7 +63,8 @@ export function packProject({ modelGLB, meta, meshes, app }) {
           файлы[путь + ключ + '.bin'] = new Uint8Array(буфер.buffer, буфер.byteOffset, буфер.byteLength);
           имена[ключ] = путь + ключ + '.bin';
         }
-        return { name: L.name, auto: L.auto, visible: L.visible, opacity: L.opacity, blend: L.blend, variant: L.variant ?? null, files: имена };
+        return { name: L.name, auto: L.auto, visible: L.visible, opacity: L.opacity, blend: L.blend,
+          variant: L.variant ?? null, slot: L.slot ?? null, expr: L.slot ? L.expr : undefined, files: имена };
       }),
     })),
   };

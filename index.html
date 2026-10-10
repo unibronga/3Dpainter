@@ -286,6 +286,79 @@
     </div>
   </div>
 
+  <!-- ── Вторая колонка: развёртки со слоями и UV объектов ─────────
+       Сворачивается в полоску значков, как панели Photoshop. -->
+  <div id="dock">
+    <div class="dock-bar">
+      <button class="dock-btn" id="dock-toggle" data-i18n-title="tip.dockToggle" title="Свернуть или развернуть колонку">
+        <svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>
+      </button>
+      <button class="dock-btn dock-icon" data-dock="maps" data-i18n-title="sec.maps" title="Развёртки и слои">
+        <svg viewBox="0 0 24 24"><path d="M12 3 3 8l9 5 9-5z"/><path d="m3 13 9 5 9-5"/></svg>
+      </button>
+      <button class="dock-btn dock-icon" data-dock="uv" data-i18n-title="sec.uv" title="UV объектов">
+        <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 12h16M12 4v16"/></svg>
+      </button>
+    </div>
+    <div class="dock-body" id="dock-body">
+    <!-- Развёртки и слои: развёртка — карта со своими слоями, как папка.
+         Щелчок по развёртке показывает её, стрелка раскрывает её слои. -->
+    <section class="section" data-open="1" data-key="maps">
+      <h3><i class="chev"></i><span data-i18n="sec.maps">Развёртки и слои</span><span class="count" id="layer-count"></span>
+        <button class="sec-btn" id="btn-variant-add" data-i18n-title="tip.variantAdd" title="Новая развёртка: своя карта с пустым слоем на той же UV">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+        </button>
+      </h3>
+      <div class="body">
+        <div class="map-tree" id="map-tree"></div>
+        <div class="btn-row">
+          <button class="btn" id="btn-layer-add" data-i18n="layers.add" data-i18n-title="layer.new" title="Новый слой">+ слой</button>
+          <button class="btn" id="btn-layer-del" data-i18n="layers.del" data-i18n-title="layer.remove" title="Удалить слой">удалить</button>
+        </div>
+        <div class="row" style="margin-top:6px">
+          <label data-i18n="layers.opacity">Непрозр.</label>
+          <input type="range" id="layer-opacity" min="0" max="100" step="1" value="100">
+          <span class="val" id="layer-opacity-val">100%</span>
+        </div>
+        <div class="row wide">
+          <label data-i18n="layers.blend">Наложение</label>
+          <select id="layer-blend">
+            <option value="normal" data-i18n="blend.normal">обычное</option>
+            <option value="multiply" data-i18n="blend.multiply">умножение</option>
+            <option value="screen" data-i18n="blend.screen">экран</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" data-open="1" data-key="uv">
+      <h3><i class="chev"></i><span data-i18n="sec.uv">UV объектов</span>
+        <button class="sec-btn" id="btn-uv-open" data-i18n-title="tip.uvOpen" title="Открыть развёртку на полэкрана (U)">
+          <svg viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M21 3 13 11"/><path d="M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/></svg>
+        </button>
+      </h3>
+      <div class="body">
+        <!-- Список развёрток модели: по карте на меш. Щелчок делает меш
+             активным и открывает его развёртку; повторный — закрывает. -->
+        <div id="uv-list"></div>
+        <!-- Строит свою развёртку и переносит на неё всё покрашенное.
+             Красная, когда у какого-то меша развёртка с наложением. -->
+        <button class="btn uv-rebuild" id="btn-uv-rebuild" hidden data-i18n-title="tip.uvRebuild" title="Построить развёртку без наложения; покраска переносится на неё">
+          <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg><span data-i18n="uv.rebuild">Перестроить развёртку</span>
+        </button>
+        <!-- Под списком: сетка слева, выгрузка открытой развёртки справа.
+             Кнопка неактивна, пока ни одна развёртка не открыта. -->
+        <div class="uv-foot">
+          <label class="check-row"><input type="checkbox" id="uv-preview-wire" checked> <span data-i18n="uv.previewWire">сетка UV</span></label>
+          <button class="btn uv-png" id="btn-uv-png" disabled data-i18n-title="tip.uvPng" title="Сохранить открытую развёртку в PNG">
+            <svg viewBox="0 0 24 24"><path d="M12 4v11"/><path d="m7.5 10.5 4.5 4.5 4.5-4.5"/><path d="M5 19h14"/></svg><span>PNG</span>
+          </button>
+        </div>
+      </div>
+    </section>
+    </div>
+  </div>
+
   <div id="side-splitter" data-i18n-title="tip.sideSplitter" title="Потянуть — ширина панели"></div>
 
   <!-- ── Правая панель ───────────────────────────────────────── -->
@@ -331,26 +404,44 @@
       </div>
     </section>
 
-    <section class="section" data-open="1" data-key="layers">
-      <h3><i class="chev"></i><span data-i18n="sec.layers">Слои</span><span class="count" id="layer-count"></span></h3>
+    <!-- Лицо с выражениями: грани лица — материал «Face», над кожей слои
+         «Глаза» и «Рот», у каждого своё выражение. -->
+    <section class="section" data-open="1" data-key="face">
+      <h3><i class="chev"></i><span data-i18n="sec.face">Лицо</span></h3>
       <div class="body">
-        <div class="layer-list" id="layer-list"></div>
-        <div class="btn-row">
-          <button class="btn" id="btn-layer-add" data-i18n="layers.add" data-i18n-title="layer.new" title="Новый слой">+ слой</button>
-          <button class="btn" id="btn-layer-del" data-i18n="layers.del" data-i18n-title="layer.remove" title="Удалить слой">удалить</button>
+        <div id="face-none">
+          <div class="face-hint" data-i18n="face.hintNone">Лицо не задано. Выделите грани лица лассо — на модели или в развёртке — или выберите материал.</div>
+          <div class="btn-row">
+            <button class="btn" id="face-from-sel" data-i18n="face.fromSel" data-i18n-title="tip.faceFromSel" title="Грани, выделенные лассо, становятся лицом — материал «Face»">Из выделения</button>
+            <select id="face-material" data-i18n-title="tip.faceMaterial" title="Взять лицо по материалу модели"></select>
+          </div>
         </div>
-        <div class="row" style="margin-top:6px">
-          <label data-i18n="layers.opacity">Непрозр.</label>
-          <input type="range" id="layer-opacity" min="0" max="100" step="1" value="100">
-          <span class="val" id="layer-opacity-val">100%</span>
-        </div>
-        <div class="row wide">
-          <label data-i18n="layers.blend">Наложение</label>
-          <select id="layer-blend">
-            <option value="normal" data-i18n="blend.normal">обычное</option>
-            <option value="multiply" data-i18n="blend.multiply">умножение</option>
-            <option value="screen" data-i18n="blend.screen">экран</option>
-          </select>
+        <div id="face-on" hidden>
+          <div class="face-info-row">
+            <span class="face-info" id="face-info"></span>
+            <button class="btn face-remove" id="face-remove" data-i18n="face.remove">Убрать лицо</button>
+          </div>
+          <!-- Сначала часть лица, потом «+» и имя: строка выражения этой части. -->
+          <div class="face-list-head">
+            <div class="seg" id="face-part">
+              <button data-part="eyes" data-i18n="face.eyes">Глаза</button>
+              <button data-part="mouth" data-i18n="face.mouth">Рот</button>
+              <button data-part="full" data-i18n="face.full">Всё лицо</button>
+            </div>
+            <button class="sec-btn" id="face-add-expr" data-i18n-title="tip.faceAddExpr" title="Новое выражение выбранной части — введите имя и Enter">
+              <svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            </button>
+          </div>
+          <div class="face-list" id="face-list"></div>
+          <input type="file" id="face-file" accept="image/png,image/webp,image/jpeg" hidden>
+          <label class="check-row face-mouth"><input type="checkbox" id="face-mouth" checked> <span data-i18n="face.mouthLayer">слой «Рот»</span></label>
+          <div class="btn-row">
+            <button class="btn" id="face-blink" data-i18n="face.blink" data-i18n-title="tip.faceBlink" title="На миг показать «моргание»">Моргнуть</button>
+            <button class="btn" id="face-talk" data-i18n="face.talk" data-i18n-title="tip.faceTalk" title="Рот перебирает нарисованные выражения; ещё раз — остановить">Говорить</button>
+          </div>
+          <div class="face-actions">
+            <button class="btn" id="face-export" data-i18n="face.export" data-i18n-title="save.faceHint" title="Модель с материалом «Face», атласы глаз, рта и всего лица, описание для игры">Выгрузить лицо…</button>
+          </div>
         </div>
       </div>
     </section>
@@ -362,38 +453,6 @@
         <div class="btn-row">
           <button class="btn" id="btn-hist-undo" data-i18n="hist.back">← шаг</button>
           <button class="btn" id="btn-hist-redo" data-i18n="hist.fwd">шаг →</button>
-        </div>
-      </div>
-    </section>
-
-    <section class="section" data-open="1" data-key="uv">
-      <h3><i class="chev"></i><span data-i18n="sec.uv">Развёртка</span>
-        <!-- Вариант покраски: другое лицо, другой сундук на той же развёртке. -->
-        <button class="sec-btn" id="btn-variant-add" data-i18n-title="tip.variantAdd" title="Добавить вариант покраски: другое лицо, другой сундук на той же развёртке">
-          <svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
-        </button>
-        <button class="sec-btn" id="btn-uv-open" data-i18n-title="tip.uvOpen" title="Открыть развёртку на полэкрана (U)">
-          <svg viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M21 3 13 11"/><path d="M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/></svg>
-        </button>
-      </h3>
-      <div class="body">
-        <!-- Список развёрток модели: по карте на меш. Щелчок делает меш
-             активным и открывает его развёртку; повторный — закрывает. -->
-        <!-- Варианты покраски: включён один. Скрыт, пока вариантов нет. -->
-        <div class="variant-row" id="variant-row" hidden></div>
-        <div id="uv-list"></div>
-        <!-- Строит свою развёртку и переносит на неё всё покрашенное.
-             Красная, когда у какого-то меша развёртка с наложением. -->
-        <button class="btn uv-rebuild" id="btn-uv-rebuild" hidden data-i18n-title="tip.uvRebuild" title="Построить развёртку без наложения; покраска переносится на неё">
-          <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg><span data-i18n="uv.rebuild">Перестроить развёртку</span>
-        </button>
-        <!-- Под списком: сетка слева, выгрузка открытой развёртки справа.
-             Кнопка неактивна, пока ни одна развёртка не открыта. -->
-        <div class="uv-foot">
-          <label class="check-row"><input type="checkbox" id="uv-preview-wire" checked> <span data-i18n="uv.previewWire">сетка UV</span></label>
-          <button class="btn uv-png" id="btn-uv-png" disabled data-i18n-title="tip.uvPng" title="Сохранить открытую развёртку в PNG">
-            <svg viewBox="0 0 24 24"><path d="M12 4v11"/><path d="m7.5 10.5 4.5 4.5 4.5-4.5"/><path d="M5 19h14"/></svg><span>PNG</span>
-          </button>
         </div>
       </div>
     </section>

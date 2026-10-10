@@ -10,6 +10,11 @@ args = sys.argv[sys.argv.index('--') + 1:]
 path = args[0]
 # --variants A,B,C — файл с вариантами покраски: сверяются они, а не «Leaf».
 variants = args[args.index('--variants') + 1].split(',') if '--variants' in args else None
+# --clips Имя:сек,… — какие клипы ждать (по умолчанию стебель: Sway и Bend);
+# --materials A,B — какие материалы ждать; у «Face» должна быть карта.
+clips_arg = args[args.index('--clips') + 1] if '--clips' in args else 'Sway:1.0417,Bend:2.0417'
+wanted = {c.split(':')[0]: float(c.split(':')[1]) for c in clips_arg.split(',')}
+materials = args[args.index('--materials') + 1].split(',') if '--materials' in args else None
 fails = []
 
 
@@ -27,11 +32,10 @@ fps = scene.render.fps / scene.render.fps_base
 rigs = [o for o in scene.objects if o.type == 'ARMATURE']
 meshes = [o for o in scene.objects if o.type == 'MESH']
 check(len(rigs) == 1 and len(rigs[0].data.bones) == 2, f'арматура с двумя костями ({[len(r.data.bones) for r in rigs]})')
-mesh = meshes[0] if meshes else None
+mesh = next((o for o in meshes if any(m.type == 'ARMATURE' for m in o.modifiers)), meshes[0] if meshes else None)
 check(mesh is not None and any(m.type == 'ARMATURE' for m in mesh.modifiers), 'меш привязан к арматуре')
 
 # Импортёр называет действия по имени анимации; может добавить имя объекта.
-wanted = {'Sway': 1.0417, 'Bend': 2.0417}
 for name, dur in wanted.items():
     act = next((a for a in bpy.data.actions if a.name == name or a.name.startswith(name + '_')), None)
     check(act is not None, f'клип «{name}» есть ({[a.name for a in bpy.data.actions]})')
@@ -80,7 +84,19 @@ blue = lambda r, g, b: b > 0.5 and r < 0.2
 red = lambda r, g, b: r > 0.5 and b < 0.2
 green = lambda r, g, b: g > 0.5 and r < 0.3 and b < 0.35   # 48,160,64
 
-if variants is None:
+if materials is not None:
+    names = [m.name for m in bpy.data.materials if m.users]
+    for name in materials:
+        check(name in names, f'материал «{name}» ({names})')
+    face = bpy.data.materials.get('Face')
+    img = base_image(face)
+    check(img is not None, 'у «Face» карта подключена к Base Color')
+    # Лицо, взятое по материалу, — свой меш; выделенное — слот того же меша.
+    slots = [s.material.name for o in meshes for s in o.material_slots if s.material]
+    skinned = [o for o in meshes if any(m.type == 'ARMATURE' for m in o.modifiers)
+               and any(s.material and s.material.name == 'Face' for s in o.material_slots)]
+    check(bool(skinned), f'«Face» стоит на меше с костями ({slots})')
+elif variants is None:
     mats = [m for m in bpy.data.materials if m.users]
     names = [m.name for m in mats]
     check('Leaf' in names, f'материал «Leaf» ({names})')

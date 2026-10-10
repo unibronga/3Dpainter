@@ -357,6 +357,39 @@ export function имяМатериалаВарианта(исходное, ва�
 }
 
 /**
+ * Геометрия на время выдачи: сначала грани тела, потом грани лица — двумя
+ * группами, экспортёр сделает из них два примитива. Переставляются все
+ * атрибуты, включая скин и морфы: модель с костями должна остаться целой.
+ * Рабочая геометрия не трогается — порядок граней держит слои и кэш.
+ *
+ * @param {Uint8Array} лицо 1 — грань лица, по номерам треугольников
+ */
+function разделитьЛицо(geo, лицо) {
+  const src = geo.index ? geo.toNonIndexed() : geo;
+  const n = src.attributes.position.count / 3;
+  const порядок = [];
+  for (let t = 0; t < n; t++) if (!лицо[t]) порядок.push(t);
+  const тела = порядок.length;
+  for (let t = 0; t < n; t++) if (лицо[t]) порядок.push(t);
+
+  const переставить = (attr) => {
+    const a = attr.isInterleavedBufferAttribute ? attr.clone() : attr;   // clone() снимает чередование
+    const k = a.itemSize;
+    const arr = new a.array.constructor(n * 3 * k);
+    порядок.forEach((t, i) => arr.set(a.array.subarray(t * 3 * k, (t + 1) * 3 * k), i * 3 * k));
+    return new THREE.BufferAttribute(arr, k, a.normalized);
+  };
+  const out = new THREE.BufferGeometry();
+  for (const [имя, a] of Object.entries(src.attributes)) out.setAttribute(имя, переставить(a));
+  for (const [имя, список] of Object.entries(src.morphAttributes)) out.morphAttributes[имя] = список.map(переставить);
+  out.morphTargetsRelative = src.morphTargetsRelative;
+  out.addGroup(0, тела * 3, 0);
+  out.addGroup(тела * 3, (n - тела) * 3, 1);
+  if (src !== geo) src.dispose();
+  return out;
+}
+
+/**
  * Подготовить модель к выдаче — только на время экспорта.
  *
  * Делается две вещи. Первая: материалы подменяются на покрашенные, чтобы в
@@ -377,6 +410,7 @@ function кВыдаче(модель, карты) {
   const созданные = [];
   const наборы = new Map();     // материал по умолчанию → материалы вариантов
   let именаВариантов = null;
+  const прежниеГеометрии = new Map();
 
   модель.traverse((o) => {
     const данные = o.userData;
@@ -421,6 +455,20 @@ function кВыдаче(модель, карты) {
     };
 
     const исходное = данные?.sourceMaterialName || '';
+    // Лицо: целый меш (взят по материалу) — просто зовётся «Face»; часть
+    // меша (выделенные грани) — уходит своим примитивом с материалом «Face».
+    // Развёртка та же, текстура та же картинка: клетка атласа лица ложится
+    // на прямоугольник лица в этой же развёртке.
+    if (набор.face) {
+      const тело = материал(набор.colorCanvas, набор.ormCanvas, набор.transparent, набор.face.whole ? 'Face' : исходное);
+      if (набор.face.whole) { o.material = тело; return; }
+      const лицо = материал(набор.colorCanvas, набор.ormCanvas, набор.transparent, 'Face');
+      прежниеГеометрии.set(o, o.geometry);
+      o.geometry = разделитьЛицо(o.geometry, набор.face.tris);
+      созданные.push(o.geometry);
+      o.material = [тело, лицо];
+      return;
+    }
     if (набор.variants?.length) {
       const список = набор.variants.map((v, i) =>
         материал(v.color, v.orm, v.transparent, имяМатериалаВарианта(исходное, v.name, i)));
@@ -433,6 +481,7 @@ function кВыдаче(модель, карты) {
   });
 
   const откатить = () => {
+    прежниеГеометрии.forEach((г, o) => { o.geometry = г; });
     прежние.forEach((м, o) => { o.material = м; });
     прежниеДанные.forEach((д, o) => { o.userData = д; });
     созданные.forEach((р) => р.dispose?.());

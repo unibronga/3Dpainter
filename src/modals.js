@@ -856,6 +856,7 @@ export function createSaveAsModal(api) {
     { id: 'obj',  kind: 'model', key: 'save.obj' },
     { id: 'png',  kind: 'maps',  key: 'save.png' },
     { id: 'project', kind: 'project', key: 'save.project' },
+    { id: 'face', kind: 'face', key: 'save.face' },
   ];
 
   let выбран = 'glb';
@@ -883,7 +884,8 @@ export function createSaveAsModal(api) {
     кнопки.forEach((_, id) => кнопки.get(id).строка.classList.toggle('on', id === выбран));
     const ф = ФОРМАТЫ.find((x) => x.id === выбран);
     пояснение.dataset.i18n = ф.kind === 'model' ? 'save.modelHint'
-      : ф.kind === 'project' ? 'save.projectHint' : 'save.mapsHint';
+      : ф.kind === 'project' ? 'save.projectHint'
+      : ф.kind === 'face' ? 'save.faceHint' : 'save.mapsHint';
     пояснение.textContent = t(пояснение.dataset.i18n);
   }
 

@@ -229,6 +229,16 @@ export class Stroke {
     // Выделение лассо: красится только внутри. Берём у цели, а не из
     // параметров — тогда его слушается любой инструмент, не зная о нём.
     this.sel = target.selection || null;
+    // Слои лица красятся только по граням лица; у меша без лица — никак.
+    if (this.layer.slot) {
+      const S0 = target.size;
+      const fm = target.faceMask || new Uint8Array(S0 * S0);
+      if (this.sel) {
+        const both = new Uint8Array(S0 * S0);
+        for (let p = 0; p < both.length; p++) both[p] = Math.min(fm[p], this.sel[p]);
+        this.sel = both;
+      } else this.sel = fm;
+    }
     if (this.channel === 'mask') this.layer.ensureMask(target.size);
 
     // Поверхность материала ложится вместе с краской, по тем же текселям.
@@ -720,7 +730,10 @@ export class Stroke {
       parts.push(part(this.layer.opac, 1, this.baseOpac));
     }
 
-    return { label, target: this.target, layer: this.layer, channel: this.channel, rect: r, parts };
+    const entry = { label, target: this.target, layer: this.layer, channel: this.channel, rect: r, parts };
+    // Правка выражения лица помнит, чьё это выражение: отмена сперва его покажет.
+    if (this.layer.slot) entry.face = { slot: this.layer.slot, expr: this.layer.expr };
+    return entry;
   }
 }
 

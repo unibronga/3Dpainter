@@ -150,17 +150,19 @@ async function main() {
   // 5. Blender — если есть.
   blender(файл);
 
-  // 6. Варианты покраски: общий низ зелёный, верх у вариантов свой.
+  // 6. Развёртки — карты со своими слоями: у каждой свой низ (зелёный) и
+  //    свой верх (у первой не крашен, у второй синий, у третьей красный).
   console.log('\nВарианты покраски:');
   await открыть(исходник, 'leaf-rig.glb');
   const середина = (m0.lo + m0.hi) / 2;
   const вариантыДо = await js(`(async () => {
     const P = window.__paint;
     await window.__mcp.call('fill', { target: { mesh: 0, below: ${середина} }, color: '#30a040' });
-    P.addVariant();
-    await window.__mcp.call('fill', { target: { mesh: 0, above: ${середина} }, color: '#2050e0', layer: P.state.activeLayer });
-    P.addVariant();
-    await window.__mcp.call('fill', { target: { mesh: 0, above: ${середина} }, color: '#e04020', layer: P.state.activeLayer });
+    for (const верх of ['#2050e0', '#e04020']) {
+      P.addVariant();
+      await window.__mcp.call('fill', { target: { mesh: 0, below: ${середина} }, color: '#30a040', layer: P.state.activeLayer });
+      await window.__mcp.call('fill', { target: { mesh: 0, above: ${середина} }, color: верх, layer: P.state.activeLayer });
+    }
     ['Base', 'Blue', 'Red'].forEach((n, i) => { P.state.variants[i].name = n; P.state.variants[i].auto = null; });
     P.включитьВариант(2);
     return P.state.variants.length;

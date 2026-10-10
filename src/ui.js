@@ -41,54 +41,85 @@ export function renderSwatches(el, onPick) {
 const EYE_ON = '<svg viewBox="0 0 24 24"><path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>';
 const EYE_OFF = '<svg viewBox="0 0 24 24"><path d="M4 4l16 16"/><path d="M9.6 9.7A2.6 2.6 0 0 0 12 14.6"/><path d="M6.3 6.5C3.8 8.2 2 12 2 12s3.6 6 10 6c1.7 0 3.2-.4 4.5-1"/><path d="M19.5 15.4C21.2 13.9 22 12 22 12s-3.6-6-10-6c-.9 0-1.7.1-2.5.3"/></svg>';
 
-// Ярлык варианта: залитый — слой только в этом варианте, контур — общий.
-const TAG = '<svg viewBox="0 0 24 24"><path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="8" cy="8" r="1.6"/></svg>';
+const CHEV = '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
+
+/** Строка слоя: глаз, имя (двойной щелчок — переименовать). */
+function layerRow(L, i, active, h) {
+  const row = document.createElement('div');
+  row.className = 'layer' + (active ? ' active' : '');
+
+  const eye = document.createElement('div');
+  eye.className = 'eye' + (L.visible ? '' : ' off');
+  eye.innerHTML = L.visible ? EYE_ON : EYE_OFF;
+  eye.title = t(L.visible ? 'layers.hide' : 'layers.show');
+  eye.addEventListener('click', (e) => { e.stopPropagation(); h.onToggleVisible(i); });
+
+  const name = document.createElement('div');
+  name.className = 'name';
+  name.textContent = L.auto ? t('layers.name', L.auto) : L.name;
+  name.title = t('layers.renameTip');
+  name.addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    const v = prompt(t('layers.renamePrompt'), name.textContent);
+    if (v && v.trim()) h.onRenameLayer(i, v.trim());
+  });
+
+  row.append(eye, name);
+  row.addEventListener('click', () => h.onSelect(i));
+  return row;
+}
 
 /**
+ * Дерево «Развёртки и слои»: строка-папка на развёртку (стрелка, миниатюра,
+ * имя, число слоёв), под раскрытой — её слои, верхний сверху.
+ *
  * @param {HTMLElement} el
- * @param {PaintTarget} target — эталон структуры слоёв
- * @param {object} state {activeIndex}
- * @param {object} handlers {onSelect, onToggleVisible, onRename, hidden?, variantTip?, onToggleVariant?}
- *   hidden(L) — слой не показывать (он другого варианта); variantTip(L) —
- *   подсказка ярлыка варианта; без неё ярлыка нет (вариантов нет).
+ * @param {{maps: {id, name, count, open, on, drawThumb}[], layersOf: (id) => {L, i}[], activeIndex: number}} d
+ * @param {object} h {onMap, onToggle, onRename, onDelete|null, onSelect, onToggleVisible, onRenameLayer}
  */
-export function renderLayers(el, target, state, handlers) {
+export function renderMapTree(el, d, h) {
   el.innerHTML = '';
-  if (!target) return;
-
-  target.layers.forEach((L, i) => {
-    if (handlers.hidden?.(L)) return;
+  for (const m of d.maps) {
     const row = document.createElement('div');
-    row.className = 'layer' + (i === state.activeIndex ? ' active' : '') + (handlers.variantTip ? ' with-tag' : '');
+    row.className = 'map-row' + (m.on ? ' on' : '') + (m.open ? ' open' : '');
 
-    const eye = document.createElement('div');
-    eye.className = 'eye' + (L.visible ? '' : ' off');
-    eye.innerHTML = L.visible ? EYE_ON : EYE_OFF;
-    eye.title = t(L.visible ? 'layers.hide' : 'layers.show');
-    eye.addEventListener('click', (e) => { e.stopPropagation(); handlers.onToggleVisible(i); });
+    const chev = document.createElement('div');
+    chev.className = 'map-chev';
+    chev.innerHTML = CHEV;
+    chev.addEventListener('click', (e) => { e.stopPropagation(); h.onToggle(m.id); });
+
+    const thumb = document.createElement('canvas');
+    thumb.className = 'map-thumb';
+    m.drawThumb(thumb);
 
     const name = document.createElement('div');
-    name.className = 'name';
-    name.textContent = L.auto ? t('layers.name', L.auto) : L.name;
-    name.title = t('layers.renameTip');
-    name.addEventListener('dblclick', (e) => {
-      e.stopPropagation();
-      const v = prompt(t('layers.renamePrompt'), L.name);
-      if (v) handlers.onRename(i, v.trim());
-    });
+    name.className = 'map-name';
+    name.textContent = m.name;
+    name.title = t('variants.chipTip');
+    name.addEventListener('dblclick', (e) => { e.stopPropagation(); h.onRename(m.id); });
 
-    row.append(eye, name);
-    if (handlers.variantTip) {
-      const tag = document.createElement('div');
-      tag.className = 'vtag' + (L.variant != null ? ' own' : '');
-      tag.innerHTML = TAG;
-      tag.title = handlers.variantTip(L);
-      tag.addEventListener('click', (e) => { e.stopPropagation(); handlers.onToggleVariant(i); });
-      row.append(tag);
-    }
-    row.addEventListener('click', () => handlers.onSelect(i));
+    const count = document.createElement('span');
+    count.className = 'map-count';
+    count.textContent = String(m.count);
+
+    row.append(chev, thumb, name, count);
+    if (h.onDelete) {
+      const del = document.createElement('span');
+      del.className = 'map-del';
+      del.textContent = '×';
+      del.title = t('variants.delete');
+      del.addEventListener('click', (e) => { e.stopPropagation(); h.onDelete(m.id); });
+      row.append(del);
+    } else row.append(document.createElement('span'));
+    row.addEventListener('click', () => h.onMap(m.id));
     el.appendChild(row);
-  });
+
+    if (!m.open) continue;
+    const box = document.createElement('div');
+    box.className = 'map-layers';
+    for (const { L, i } of d.layersOf(m.id)) box.appendChild(layerRow(L, i, i === d.activeIndex, h));
+    el.appendChild(box);
+  }
 }
 
 /**

@@ -31,6 +31,7 @@ import { withBusy, busyNote } from './busy.js';
 import { rasterPolygon, projectCover, combine, isEmpty, outline } from './selection.js';
 import { initTooltips } from './tooltip.js';
 import { canSaveToFolder, pickFolder, writeToFolder, downloadBlob, canvasBlob, safeName } from './savefiles.js';
+import { EXPRESSIONS, SLOTS, faceMaskOf, trisFromSelection, cropLayer, putCrop, cropIsEmpty, buildAtlas, faceDescription } from './face.js';
 
 // Сбор ошибок с самого начала загрузки: в консоли браузера вперемешку лежат
 // сообщения от прошлых версий модулей, и по ней не понять, живая ошибка или
@@ -217,7 +218,9 @@ function buildTargets(paintables, имя = null) {
   }
 
   state.activeLayer = 0;
-  state.variants = []; state.activeVariant = null; state.nextVariant = 1;
+  однаРазвёртка();
+  остановитьРазговор();
+  state.face = null;        // лицо жило на прежних целях
   activeMesh = paintables.length ? paintables[0].mesh : null;
   // Выделение жило у прежних целей и ушло вместе с ними.
   uvEditor.setSelectionOutline(null);
@@ -331,6 +334,7 @@ function bakeSourceVariants(paintables, имена) {
   if (!сКартами.length) return 0;
   state.variants = имена.map((name, i) => ({ id: i + 1, name, auto: null }));
   state.nextVariant = имена.length + 1;
+  state.mapThumbs = new Map();
   // Включён тот, что был включён при сохранении: его материал — по умолчанию.
   const поУмолчанию = Math.max(0, сКартами[0].mesh.userData.defaultVariant ?? 0);
   for (const { mesh } of сКартами) {
@@ -344,12 +348,18 @@ function bakeSourceVariants(paintables, имена) {
       return L;
     });
   }
-  // Меши без вариантов держат один общий слой — у всех целей слоёв должно
-  // быть поровну (номер слоя общий на модель), добиваем пустыми.
+  // Меши без вариантов: у всех целей слоёв поровну (номер слоя общий на
+  // модель) — прежний слой остаётся первой развёртке, остальным — пустые.
   for (const [mesh, target] of targets) {
     if (сКартами.some((p) => p.mesh === mesh)) continue;
-    while (target.layers.length < имена.length) target.layers.push(new Layer(target.size, null, target.layers.length + 1));
+    const первый = target.layers[0];
+    target.layers = имена.map((_, i) => {
+      const L = i === 0 && первый ? первый : new Layer(target.size, null, 1);
+      L.variant = i + 1;
+      return L;
+    });
   }
+  state.mapsOpen = new Set([поУмолчанию + 1]);
   включитьВариант(поУмолчанию + 1, { тихо: true });
   return имена.length;
 }
@@ -373,17 +383,28 @@ function пикселиКарты(карта, S) {
 /** @param {string} [name] своё имя; без него — номером. Кнопка передаёт событие — его не берём. */
 function addLayer(name) {
   const имя = typeof name === 'string' && name.trim() ? name.trim() : null;
-  // Новый слой — той же принадлежности, что активный: в варианте рядом со
-  // слоем варианта — тоже его, рядом с общим — общий.
-  const вариант = refLayers()?.[state.activeLayer]?.variant ?? null;
-  eachTarget((t) => { t.activeIndex = state.activeLayer; t.addLayer(имя, вариант); });
-  state.activeLayer += 1;
+  // Новый слой — в показанную развёртку, над её активным слоем; если активен
+  // слой лица — над верхним слоем развёртки (слои лица всегда сверху).
+  const L = refLayers() || [];
+  let над = state.activeLayer;
+  if (!L[над] || L[над].slot || L[над].variant !== state.activeVariant) {
+    над = -1;
+    L.forEach((x, k) => { if (!x.slot && x.variant === state.activeVariant) над = k; });
+  }
+  eachTarget((t) => { t.activeIndex = над; t.addLayer(имя, state.activeVariant); });
+  state.activeLayer = над + 1;
+  eachTarget((t) => { t.activeIndex = state.activeLayer; });
   syncLayers();
 }
 
 function removeLayer() {
-  const first = targets.values().next().value;
-  if (!first || first.layers.length <= 1) return;
+  const L = refLayers();
+  const cur = L?.[state.activeLayer];
+  if (!cur) return;
+  // Слои лица уходят только вместе с лицом — «Убрать лицо».
+  if (cur.slot) { setStatusHint(t('face.layerLocked')); return; }
+  // Последний слой развёртки не удаляется: развёртка без слоёв — пустое место.
+  if (L.filter((x) => !x.slot && x.variant === cur.variant).length <= 1) { setStatusHint(t('layers.lastInMap')); return; }
 
   // Записи журнала держат ссылку на сам слой: после удаления они вели бы
   // правку в никуда. Чистим их, чтобы история не врала.
@@ -392,7 +413,8 @@ function removeLayer() {
   history.prune((e) => !(e.group || [e]).some((x) => doomed.has(x.layer)));
 
   eachTarget((t) => t.removeLayer(state.activeLayer));
-  state.activeLayer = Math.min(state.activeLayer, first.layers.length - 1);
+  state.activeLayer = Math.max(0, state.activeLayer - 1);
+  eachTarget((t) => { t.activeIndex = state.activeLayer; });
   поправитьАктивныйСлой();
   syncLayers();
   refreshUV();
@@ -404,58 +426,97 @@ function setActiveLayer(i) {
   syncLayers();
 }
 
-/* ── Варианты покраски ─────────────────────────────────────────── */
+/* ── Развёртки: карты со своими слоями ─────────────────────────── */
 
 /*
- * Вариант — обличье модели на той же развёртке: разные лица Kian, разные
- * сундуки. Слой либо общий (виден во всех вариантах), либо принадлежит
- * одному варианту. Включён всегда один вариант; в GLB каждый уходит своим
- * материалом (`KHR_materials_variants`), в Blender они переключаются в
- * панели glTF Variants.
+ * Развёртка — карта покраски со своими слоями на той же UV: разные лица
+ * Kian, разные сундуки. Слой принадлежит ровно одной развёртке (`L.variant`
+ * — её номер), показана всегда одна — её слои и собираются. Слои лица
+ * (`L.slot`) лежат поверх любой развёртки, ими управляет раздел «Лицо».
+ * Развёрток две и больше — в GLB каждая уходит своим материалом
+ * (`KHR_materials_variants`), в Blender они переключаются в панели glTF Variants.
  */
 
 function имяВарианта(v) { return v.auto ? t('variants.name', v.auto) : v.name; }
 function слойВВарианте(L) { return L.variant == null || L.variant === state.activeVariant; }
 
-/** Активный слой должен быть виден в варианте — иначе мазок ушёл бы в невидимое. */
+/** Развёртка по умолчанию: одна, все обычные слои — её. */
+function однаРазвёртка() {
+  state.variants = [{ id: 1, name: null, auto: 1 }];
+  state.activeVariant = 1;
+  state.nextVariant = 2;
+  state.mapsOpen = new Set([1]);
+  state.mapThumbs = new Map();
+  eachTarget((tg) => { tg.variant = 1; tg.layers.forEach((L) => { if (!L.slot) L.variant = 1; }); });
+}
+
+/** Активный слой должен быть виден — иначе мазок ушёл бы в невидимое. */
 function поправитьАктивныйСлой() {
   const L = refLayers();
   if (!L || (L[state.activeLayer] && слойВВарианте(L[state.activeLayer]))) return;
   for (let i = L.length - 1; i >= 0; i--) {
-    if (слойВВарианте(L[i])) { state.activeLayer = i; eachTarget((t) => { t.activeIndex = i; }); return; }
+    if (!L[i].slot && слойВВарианте(L[i])) { state.activeLayer = i; eachTarget((t) => { t.activeIndex = i; }); return; }
   }
 }
 
+/** Миниатюра развёртки: показанная — живая, остальные — снимком. */
+function нарисоватьМиниатюру(id, canvas) {
+  const tg = activeTarget();
+  const S = 60;
+  canvas.width = canvas.height = S;
+  if (!tg) return;
+  let src = state.mapThumbs.get(id);
+  if (id === state.activeVariant) src = tg.canvas;
+  else if (!src) {
+    // Снимка нет (развёртка пришла из файла) — собираем её один раз.
+    src = document.createElement('canvas');
+    src.width = src.height = S;
+    src.getContext('2d').drawImage(tg.renderVariant(id).color, 0, 0, S, S);
+    state.mapThumbs.set(id, src);
+  }
+  const g = canvas.getContext('2d');
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(src, 0, 0, S, S);
+}
+function снятьМиниатюру(id) {
+  const tg = activeTarget();
+  if (!tg || id == null) return;
+  const c = document.createElement('canvas');
+  c.width = c.height = 60;
+  c.getContext('2d').drawImage(tg.canvas, 0, 0, 60, 60);
+  state.mapThumbs.set(id, c);
+}
+
 function включитьВариант(id, { тихо = false } = {}) {
+  if (state.activeVariant !== id) снятьМиниатюру(state.activeVariant);
   state.activeVariant = id;
+  state.mapsOpen.add(id);
   eachTarget((t) => { t.variant = id; t.compositeRect(null); });
-  // Включили вариант — значит, будут красить его: активным становится его
-  // верхний собственный слой, а не общий, оставшийся от прежнего варианта.
+  // Показали развёртку — значит, будут красить её: активным становится её
+  // верхний слой.
   const L = refLayers() || [];
   let свой = -1;
-  for (let i = L.length - 1; i >= 0 && свой < 0; i--) if (L[i].variant === id) свой = i;
+  for (let i = L.length - 1; i >= 0 && свой < 0; i--) if (!L[i].slot && L[i].variant === id) свой = i;
   if (свой >= 0) { state.activeLayer = свой; eachTarget((t) => { t.activeIndex = свой; }); }
   поправитьАктивныйСлой();
   if (тихо) return;
   viewport.syncTransparency();
-  syncLayers(); syncVariants(); drawUVRows(); refreshUV();
+  syncLayers(); drawUVRows(); refreshUV();
 }
 
-/**
- * Добавить вариант со своим пустым слоем сверху. Первый «+» заводит сразу
- * два: всё, что уже покрашено, остаётся общим, а новый вариант — второй.
- */
+/** Новая развёртка: своя карта с одним пустым слоем, сразу показана. */
 function addVariant() {
   if (!targets.size) return;
-  if (!state.variants.length) state.variants.push({ id: state.nextVariant++, name: null, auto: 1 });
-  const v = { id: state.nextVariant++, name: null, auto: state.variants.length + 1 };
+  const номер = Math.max(0, ...state.variants.map((v) => v.auto || 0)) + 1;
+  const v = { id: state.nextVariant++, name: null, auto: номер };
   state.variants.push(v);
-  включитьВариант(v.id, { тихо: true });
-  const наверх = refLayers().length - 1;
-  eachTarget((t) => { t.activeIndex = наверх; t.addLayer(null, v.id); });
-  state.activeLayer = наверх + 1;
-  viewport.syncTransparency();
-  syncLayers(); syncVariants(); drawUVRows(); refreshUV();
+  // Пустой слой — под слоями лица: они всегда сверху.
+  const L = refLayers();
+  let куда = L.findIndex((x) => x.slot);
+  if (куда < 0) куда = L.length;
+  eachTarget((t) => { t.activeIndex = куда - 1; t.addLayer(null, v.id); });
+  state.mapsOpen = new Set([v.id]);
+  включитьВариант(v.id);
   setStatusHint(t('variants.created', имяВарианта(v)));
 }
 
@@ -465,10 +526,10 @@ function renameVariant(id) {
   const имя = prompt(t('variants.renamePrompt'), имяВарианта(v));
   if (!имя || !имя.trim()) return;
   v.name = имя.trim(); v.auto = null;
-  syncVariants(); syncLayers();
+  syncLayers();
 }
 
-/** Удалить вариант вместе с его слоями. Последний не удаляется. */
+/** Удалить развёртку вместе с её слоями. Последняя не удаляется. */
 function removeVariant(id) {
   const v = state.variants.find((x) => x.id === id);
   if (!v || state.variants.length <= 1) return;
@@ -479,47 +540,465 @@ function removeVariant(id) {
   const doomed = new Set();
   eachTarget((tg) => tg.layers.forEach((L) => { if (L.variant === id) doomed.add(L); }));
   history.prune((e) => !(e.group || [e]).some((x) => doomed.has(x.layer)));
-  eachTarget((tg) => {
-    tg.layers = tg.layers.filter((L) => L.variant !== id);
-    if (!tg.layers.length) tg.layers.push(new Layer(tg.size, null, 1));
-  });
+  eachTarget((tg) => { tg.layers = tg.layers.filter((L) => L.variant !== id); });
   state.variants = state.variants.filter((x) => x.id !== id);
+  state.mapThumbs.delete(id);
+  state.mapsOpen.delete(id);
   state.activeLayer = Math.min(state.activeLayer, refLayers().length - 1);
   eachTarget((tg) => { tg.activeIndex = state.activeLayer; });
   включитьВариант(state.activeVariant === id ? state.variants[0].id : state.activeVariant);
 }
 
-/** Слой общий ↔ только в включённом варианте. */
-function toggleLayerVariant(i) {
-  const L = refLayers()?.[i];
-  if (!L || state.activeVariant == null) return;
-  const вариант = L.variant == null ? state.activeVariant : null;
-  eachTarget((tg) => { tg.layers[i].variant = вариант; tg.compositeRect(null); });
-  viewport.syncTransparency();
-  syncLayers(); drawUVRows(); refreshUV();
-}
+$('btn-variant-add').addEventListener('click', (e) => { e.stopPropagation(); addVariant(); });
 
-/** Ряд вариантов под заголовком «Развёртка»: щелчок — включить, двойной — имя. */
-function syncVariants() {
-  const box = $('variant-row');
-  box.textContent = '';
-  box.hidden = !state.variants.length;
-  for (const v of state.variants) {
-    const чип = элемент('button', 'variant-chip' + (v.id === state.activeVariant ? ' on' : ''));
-    чип.append(элемент('span', 'variant-name', имяВарианта(v)));
-    чип.title = t('variants.chipTip');
-    чип.addEventListener('click', () => { if (v.id !== state.activeVariant) включитьВариант(v.id); });
-    чип.addEventListener('dblclick', (e) => { e.preventDefault(); renameVariant(v.id); });
-    if (state.variants.length > 1) {
-      const крест = элемент('span', 'variant-del', '×');
-      крест.title = t('variants.delete');
-      крест.addEventListener('click', (e) => { e.stopPropagation(); removeVariant(v.id); });
-      чип.append(крест);
-    }
-    box.appendChild(чип);
+/* ── Лицо с выражениями ────────────────────────────────────────── */
+
+/*
+ * Лицо — набор граней одного меша. Над развёрткой лежат три слоя лица:
+ * «Всё лицо» (глаза и рот одной картинкой), «Глаза» и «Рот». Выражение —
+ * строка списка: часть лица и имя («Глаза · радость», «Всё лицо · злость»).
+ * Слой лица — рабочий холст показанного выражения своей части, остальные
+ * хранятся вырезками по прямоугольнику лица (`face.js`). Кисть, заливки и
+ * аппликация в слоях лица красят только грани лица.
+ *
+ * state.face = { mesh, tris, source, materialName, rect, mouth,
+ *                shown: {full, eyes, mouth} — показанное выражение или null,
+ *                exprs: {full, eyes, mouth} — Map: выражение → вырезка (нарисованные),
+ *                list: [{slot, id}] — строки списка, current: {slot, id} | null } | null
+ */
+state.face = null;
+state.facePart = loadPrefs().facePart || 'eyes';
+
+/** Имена для подсказки при вводе: встроенные и свои — свои общие для всех моделей. */
+function списокВыражений() { return [...EXPRESSIONS, ...(loadPrefs().faceExprs || [])]; }
+function имяВыражения(id) { return EXPRESSIONS.includes(id) ? t('expr.' + id) : id; }
+/** Введённое имя → общее имя: «радость» и «joy» — одно выражение `joy`. */
+function idВыражения(имя) {
+  const s = имя.trim();
+  const низ = s.toLowerCase();
+  return EXPRESSIONS.find((id) => id === низ || t('expr.' + id).toLowerCase() === низ) || s;
+}
+function рабочийСлой(slot) {
+  const tg = state.face && targets.get(state.face.mesh);
+  return tg ? tg.layers.find((L) => L.slot === slot) : null;
+}
+/** Слои лица у цели: недостающие дописываются сверху в порядке SLOTS. */
+function слоиЛица(tg) {
+  for (const slot of SLOTS) {
+    if (tg.layers.some((L) => L.slot === slot)) continue;
+    const L = new Layer(tg.size, null, null);
+    L.slot = slot; L.expr = null;
+    // «Всё лицо» — под глазами и ртом.
+    const выше = tg.layers.findIndex((x) => x.slot && SLOTS.indexOf(x.slot) > SLOTS.indexOf(slot));
+    if (выше < 0) tg.layers.push(L); else tg.layers.splice(выше, 0, L);
   }
 }
-$('btn-variant-add').addEventListener('click', addVariant);
+
+/**
+ * Задать лицо: грани меша становятся отдельным материалом «Face».
+ * Развёртка не трогается — лицо берёт её как есть.
+ */
+function задатьЛицо(mesh, tris, source, materialName = null) {
+  const target = targets.get(mesh);
+  const cache = mesh.userData.paintCache;
+  if (!target || !cache) return false;
+  if (state.face) убратьЛицо(true);
+  const { mask, rect } = faceMaskOf(cache, target.size, tris);
+  if (!rect) { setStatusHint(t('face.empty')); return false; }
+  target.faceMask = mask;
+  state.face = {
+    mesh, tris, source, materialName, rect, mouth: true,
+    shown: { full: null, eyes: null, mouth: null },
+    exprs: { full: new Map(), eyes: new Map(), mouth: new Map() },
+    overlays: { full: new Map(), eyes: new Map(), mouth: new Map() },
+    list: [], current: null,
+  };
+  // Слои лица — у всех мешей: номер слоя общий на модель.
+  eachTarget(слоиЛица);
+  setActiveMesh(mesh);
+  syncLayers(); syncFace(); drawUVRows(); refreshUV();
+  let граней = 0;
+  for (let i = 0; i < tris.length; i++) граней += tris[i];
+  setStatusHint(t('face.set', граней));
+  return true;
+}
+
+/** Убрать лицо вместе с выражениями. Развёртки остаются как были. */
+function убратьЛицо(тихо = false) {
+  const f = state.face;
+  if (!f) return;
+  if (!тихо) {
+    const нарисовано = SLOTS.reduce((n, s) => n + нарисованные(s).length, 0);
+    if (нарисовано && !confirm(t('face.confirmRemove', нарисовано))) return;
+  }
+  остановитьРазговор();
+  if (decal.face) cancelDecal();
+  history.prune((e) => !(e.group || [e]).some((x) => x.layer?.slot));
+  eachTarget((tg) => { tg.layers = tg.layers.filter((L) => !L.slot); tg.faceMask = null; tg.compositeRect(null); });
+  state.face = null;
+  state.activeLayer = Math.min(state.activeLayer, (refLayers()?.length || 1) - 1);
+  eachTarget((tg) => { tg.activeIndex = state.activeLayer; });
+  поправитьАктивныйСлой();
+  if (тихо) return;
+  syncLayers(); syncFace(); drawUVRows(); refreshUV();
+}
+
+function выбратьСлойЛица(slot) {
+  const i = (refLayers() || []).findIndex((L) => L.slot === slot);
+  if (i >= 0) setActiveLayer(i);
+}
+
+/** Показанное выражение — из рабочего слоя в его вырезку. */
+function зафиксировать(slot) {
+  const f = state.face, L = рабочийСлой(slot);
+  const id = f?.shown[slot];
+  if (!L || id == null) return;
+  const c = cropLayer(L, targets.get(f.mesh).size, f.rect);
+  if (cropIsEmpty(c)) f.exprs[slot].delete(id);
+  else f.exprs[slot].set(id, c);
+}
+
+/** Какие выражения части нарисованы — в порядке списка. */
+function нарисованные(slot) {
+  if (!state.face) return [];
+  зафиксировать(slot);
+  return state.face.list.filter((x) => x.slot === slot && state.face.exprs[slot].has(x.id)).map((x) => x.id);
+}
+
+/** Показать выражение в части (null — ничего): прежнее уходит в вырезку, новое — в слой. */
+function показатьВыражение(slot, id, { тихо = false } = {}) {
+  const f = state.face;
+  const L = рабочийСлой(slot);
+  if (!f || !L || f.shown[slot] === id) return;
+  const tg = targets.get(f.mesh);
+  зафиксировать(slot);
+  putCrop(L, tg.size, f.rect, id == null ? null : f.exprs[slot].get(id) || null);
+  f.shown[slot] = id;
+  eachTarget((t2) => t2.layers.forEach((x) => { if (x.slot === slot) x.expr = id; }));
+  tg.compositeRect(f.rect);
+  if (тихо) return;
+  syncFace(); drawUVRow(f.mesh); refreshUV();
+}
+
+/**
+ * Выбрать строку списка: её выражение показывается, её слой — активный.
+ * «Всё лицо» прячет отдельные глаза и рот, и наоборот: на лице одно из двух.
+ */
+function выбратьВыражение(slot, id, { тихо = false } = {}) {
+  const f = state.face;
+  if (!f) return;
+  остановитьРазговор();
+  if (decal.face && !(decal.face.slot === slot && decal.face.id === id)) cancelDecal();
+  показатьВыражение(slot, id, { тихо: true });
+  if (slot === 'full') { показатьВыражение('eyes', null, { тихо: true }); показатьВыражение('mouth', null, { тихо: true }); }
+  else показатьВыражение('full', null, { тихо: true });
+  f.current = { slot, id };
+  выбратьСлойЛица(slot);
+  if (тихо) return;
+  syncFace(); drawUVRow(f.mesh); refreshUV();
+}
+
+/** Новая строка: часть — выбранная над списком, имя — введённое. */
+function добавитьВыражение(slot, имя) {
+  const f = state.face;
+  if (!f || !имя || !имя.trim()) return false;
+  const id = idВыражения(имя);
+  if (!EXPRESSIONS.includes(id) && !(loadPrefs().faceExprs || []).includes(id)) {
+    savePrefs({ faceExprs: [...(loadPrefs().faceExprs || []), id] });
+  }
+  if (!f.list.some((x) => x.slot === slot && x.id === id)) f.list.push({ slot, id });
+  выбратьВыражение(slot, id);
+  setStatusHint(t('face.exprAdded', `${t('face.' + slot)} · ${имяВыражения(id)}`));
+  return true;
+}
+
+/** Удалить строку вместе с нарисованным. */
+function удалитьВыражение(slot, id) {
+  const f = state.face;
+  if (!f) return;
+  if (нарисованные(slot).includes(id) && !confirm(t('face.confirmDeleteExpr', `${t('face.' + slot)} · ${имяВыражения(id)}`))) return;
+  if (decal.face) cancelDecal();
+  if (f.shown[slot] === id) показатьВыражение(slot, null, { тихо: true });
+  f.exprs[slot].delete(id);
+  f.overlays[slot].delete(id);
+  f.list = f.list.filter((x) => !(x.slot === slot && x.id === id));
+  history.prune((e) => !(e.group || [e]).some((x) => x.face?.slot === slot && x.face?.expr === id));
+  if (f.current?.slot === slot && f.current?.id === id) {
+    f.current = null;
+    поправитьАктивныйСлой();
+    const L = refLayers() || [];
+    if (L[state.activeLayer]?.slot) { for (let i = L.length - 1; i >= 0; i--) if (!L[i].slot && слойВВарианте(L[i])) { setActiveLayer(i); break; } }
+  }
+  syncLayers(); syncFace(); drawUVRow(f.mesh); refreshUV();
+}
+
+/** Слой «Рот» выключается — у зверя без рта; в выгрузку он тогда не идёт. */
+function включитьРот(on) {
+  if (!state.face) return;
+  state.face.mouth = on;
+  eachTarget((tg) => { tg.layers.forEach((L) => { if (L.slot === 'mouth') L.visible = on; }); tg.compositeRect(null); });
+  syncFace(); drawUVRows(); refreshUV();
+}
+
+/** Что показано сейчас — чтобы просмотр вернул лицо как было. */
+function снимокЛица() { return { ...state.face.shown }; }
+function вернутьЛицо(с) { for (const slot of SLOTS) показатьВыражение(slot, с[slot], { тихо: true }); syncFace(); drawUVRow(state.face.mesh); refreshUV(); }
+
+/** Моргнуть: на миг показать «моргание» в глазах (целое лицо на это время прячется). */
+function моргнуть() {
+  const f = state.face;
+  if (!f) return;
+  if (!нарисованные('eyes').includes('blink')) { setStatusHint(t('face.noBlink')); return; }
+  if (f.shown.eyes === 'blink') return;
+  const было = снимокЛица();
+  показатьВыражение('full', null, { тихо: true });
+  показатьВыражение('eyes', 'blink');
+  setTimeout(() => { if (state.face === f) вернутьЛицо(было); }, 160);
+}
+
+/** Говорить: рот перебирает нарисованные выражения, пока не нажать снова. */
+state.talk = null;
+function говорить() {
+  const f = state.face;
+  if (!f) return;
+  if (state.talk) { остановитьРазговор(); return; }
+  const рты = нарисованные('mouth');
+  if (рты.length < 2 || !f.mouth) { setStatusHint(t('face.noTalk')); return; }
+  const было = снимокЛица();
+  // Глаза на время разговора — те, что были, или первые нарисованные.
+  if (f.shown.full != null && f.shown.eyes == null) показатьВыражение('eyes', нарисованные('eyes')[0] ?? null, { тихо: true });
+  показатьВыражение('full', null, { тихо: true });
+  let k = 0;
+  показатьВыражение('mouth', рты[0]);
+  state.talk = { было, id: setInterval(() => { k = (k + 1) % рты.length; показатьВыражение('mouth', рты[k]); }, 130) };
+  syncFace();
+}
+function остановитьРазговор() {
+  if (!state.talk) return;
+  clearInterval(state.talk.id);
+  const было = state.talk.было;
+  state.talk = null;
+  if (state.face) вернутьЛицо(было);
+}
+
+/** Лицо из выделения (лассо на модели или в развёртке): меш с наибольшим числом граней. */
+function лицоИзВыделения() {
+  let лучшее = null;
+  for (const { mesh, cache } of viewport.paintables) {
+    const tg = targets.get(mesh);
+    if (!tg?.selection) continue;
+    const r = trisFromSelection(cache, tg.size, tg.selection);
+    if (r.count && (!лучшее || r.count > лучшее.count)) лучшее = { mesh, ...r };
+  }
+  if (!лучшее) { setStatusHint(t('face.noSelection')); return false; }
+  const ok = задатьЛицо(лучшее.mesh, лучшее.tris, 'select');
+  if (ok) clearSelection();
+  return ok;
+}
+
+/**
+ * Материалы модели, из которых можно взять лицо: меш целиком (GLB из Blender
+ * приходит мешем на материал) или группа граней внутри меша (OBJ с .mtl).
+ */
+function материалыМодели() {
+  const out = [];
+  for (const { mesh, cache } of viewport.paintables) {
+    const имя = mesh.userData.sourceMaterialName;
+    if (имя) out.push({ name: имя, mesh, tris: new Uint8Array(cache.triCount).fill(1), whole: true });
+    for (const g of mesh.userData.sourceGroups || []) {
+      if (!g.name || g.name === имя) continue;
+      const tris = new Uint8Array(cache.triCount);
+      for (let t2 = g.from; t2 < g.to; t2++) tris[t2] = 1;
+      out.push({ name: g.name, mesh, tris, whole: false });
+    }
+  }
+  return out;
+}
+function лицоПоМатериалу(имя) {
+  const м = материалыМодели().find((x) => x.name.toLowerCase() === String(имя).toLowerCase());
+  if (!м) { setStatusHint(t('face.noMaterial', имя)); return false; }
+  return задатьЛицо(м.mesh, м.tris, 'material', м.name);
+}
+
+/** Лицо целиком в одном меше (взято по материалу и весь меш) — тогда грани не делятся. */
+function лицоЦелымМешем() {
+  const f = state.face;
+  if (!f) return false;
+  for (let i = 0; i < f.tris.length; i++) if (!f.tris[i]) return false;
+  return true;
+}
+
+/** Миниатюра выражения: его вырезка на шахматке. */
+function миниатюраВыражения(canvas, slot, id) {
+  const f = state.face;
+  const S = 40;
+  canvas.width = canvas.height = S;
+  const g = canvas.getContext('2d');
+  for (let y = 0; y < S; y += 8) for (let x = 0; x < S; x += 8) {
+    g.fillStyle = ((x + y) / 8) % 2 ? '#3a424c' : '#2c333b';
+    g.fillRect(x, y, 8, 8);
+  }
+  const c = f.exprs[slot].get(id);
+  if (!c) return;
+  const w = f.rect.x1 - f.rect.x0 + 1, h = f.rect.y1 - f.rect.y0 + 1;
+  const tmp = document.createElement('canvas');
+  tmp.width = w; tmp.height = h;
+  tmp.getContext('2d').putImageData(new ImageData(c.rgba.slice(), w, h), 0, 0);
+  const k = Math.min(S / w, S / h);
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(tmp, (S - w * k) / 2, (S - h * k) / 2, w * k, h * k);
+}
+
+const ЗНАЧОК = {
+  плюс: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+  ручки: '<svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12"/><rect x="3.5" y="3.5" width="4" height="4" class="f"/><rect x="16.5" y="3.5" width="4" height="4" class="f"/><rect x="16.5" y="16.5" width="4" height="4" class="f"/><rect x="3.5" y="16.5" width="4" height="4" class="f"/></svg>',
+  заменить: '<svg viewBox="0 0 24 24"><path d="M4 9a8 8 0 0 1 14-3l2 2"/><path d="M20 4v4h-4"/><path d="M20 15a8 8 0 0 1-14 3l-2-2"/><path d="M4 20v-4h4"/></svg>',
+  стереть: '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>',
+};
+
+/**
+ * Поле для имени нового выражения со своим списком подсказок (системный
+ * datalist выбивается из оформления). Стрелки — по списку, Enter — добавить
+ * выбранное или введённое, Esc — передумать.
+ */
+let вводВыражения = false;
+function полеВыражения() {
+  const строка = элемент('div', 'expr-row editing');
+  const поле = элемент('input', 'expr-input');
+  поле.type = 'text';
+  поле.placeholder = t('face.newExprPrompt');
+  поле.autocomplete = 'off';
+  const список = элемент('div', 'expr-suggest');
+  let выбор = -1;
+  const варианты = () => {
+    const q = поле.value.trim().toLowerCase();
+    return списокВыражений().map(имяВыражения).filter((n) => !q || n.toLowerCase().includes(q));
+  };
+  const показать = () => {
+    список.textContent = '';
+    const все = варианты();
+    выбор = Math.min(выбор, все.length - 1);
+    все.forEach((n, k) => {
+      const п = элемент('div', 'expr-suggest-item' + (k === выбор ? ' on' : ''), n);
+      // mousedown, а не click: иначе поле теряет фокус раньше выбора.
+      п.addEventListener('mousedown', (e) => { e.preventDefault(); готово(n); });
+      список.appendChild(п);
+    });
+    список.hidden = !все.length;
+  };
+  const готово = (имя) => { вводВыражения = false; добавитьВыражение(state.facePart, имя) || syncFace(); };
+  поле.addEventListener('input', () => { выбор = -1; показать(); });
+  поле.addEventListener('keydown', (e) => {
+    e.stopPropagation();          // буквы — в поле, а не инструментам
+    const все = варианты();
+    if (e.key === 'ArrowDown') { e.preventDefault(); выбор = Math.min(все.length - 1, выбор + 1); показать(); }
+    if (e.key === 'ArrowUp') { e.preventDefault(); выбор = Math.max(-1, выбор - 1); показать(); }
+    if (e.key === 'Enter') готово(выбор >= 0 ? все[выбор] : поле.value);
+    if (e.key === 'Escape') { вводВыражения = false; syncFace(); }
+  });
+  поле.addEventListener('blur', () => { if (вводВыражения) { вводВыражения = false; setTimeout(syncFace); } });
+  строка.append(элемент('span', 'expr-part', t('face.' + state.facePart)), поле, список);
+  показать();
+  setTimeout(() => поле.focus());      // кадра в свёрнутом окне может не быть
+  return строка;
+}
+function начатьВводВыражения() {
+  if (!state.face) return;
+  вводВыражения = true;
+  syncFace();
+}
+
+/** Панель «Лицо»: способы задать, часть, список выражений, просмотр, выгрузка. */
+function syncFace() {
+  const f = state.face;
+  $('face-none').hidden = !!f;
+  $('face-on').hidden = !f;
+  const выбор = $('face-material');
+  const мат = материалыМодели();
+  выбор.textContent = '';
+  выбор.appendChild(элемент('option', null, t('face.byMaterial')));
+  выбор.options[0].value = '';
+  for (const м of мат) { const o = элемент('option', null, м.name); o.value = м.name; выбор.appendChild(o); }
+  выбор.disabled = !мат.length;
+  if (!f) return;
+
+  let граней = 0;
+  for (let i = 0; i < f.tris.length; i++) граней += f.tris[i];
+  $('face-info').textContent = t('face.info', f.mesh.name || t('model.unnamed'), граней,
+    f.rect.x1 - f.rect.x0 + 1, f.rect.y1 - f.rect.y0 + 1);
+  $('face-mouth').checked = f.mouth;
+  document.querySelectorAll('#face-part button').forEach((b) => b.classList.toggle('on', b.dataset.part === state.facePart));
+
+  for (const slot of SLOTS) зафиксировать(slot);
+  const box = $('face-list');
+  box.textContent = '';
+  if (вводВыражения) box.appendChild(полеВыражения());
+  // Новые сверху — как слои.
+  for (const { slot, id } of [...f.list].reverse()) {
+    const on = f.current?.slot === slot && f.current?.id === id;
+    const строка = элемент('div', 'expr-row' + (on ? ' on' : '') + (f.shown[slot] === id ? ' shown' : '')
+      + (slot === 'mouth' && !f.mouth ? ' off' : ''));
+    const мини = document.createElement('canvas');
+    мини.className = 'expr-thumb';
+    миниатюраВыражения(мини, slot, id);
+    const действия = элемент('span', 'expr-acts');
+    // На выбранной строке — картинка: пустая строка «+», заполненная —
+    // поправить (если клали картинку), заменить, стереть.
+    if (on) {
+      const кнопка = (класс, svg, подсказка, дело) => {
+        const b = элемент('button', 'expr-act ' + класс);
+        b.innerHTML = svg;
+        b.title = t(подсказка);
+        b.addEventListener('click', (e) => { e.stopPropagation(); дело(); });
+        действия.appendChild(b);
+      };
+      const нарисовано = f.exprs[slot].has(id);
+      if (!нарисовано) кнопка('add', ЗНАЧОК.плюс, 'tip.faceOverlayAdd', () => наложитьСпереди(null));
+      else {
+        if (f.overlays[slot].has(id)) кнопка('edit', ЗНАЧОК.ручки, 'tip.faceOverlayEdit', () => поправитьНаложение(slot, id));
+        кнопка('replace', ЗНАЧОК.заменить, 'tip.faceOverlayReplace', () => наложитьСпереди(null, { replace: true }));
+        кнопка('clear', ЗНАЧОК.стереть, 'tip.faceClear', () => стеретьВыражение(slot, id));
+      }
+    }
+    const крест = элемент('span', 'expr-del', '×');
+    крест.title = t('face.deleteExpr');
+    крест.addEventListener('click', (e) => { e.stopPropagation(); удалитьВыражение(slot, id); });
+    // Имя сверху, кнопки картинки под ним — иначе в узкой колонке имя не видно.
+    const середина = элемент('div', 'expr-mid');
+    середина.append(элемент('span', 'expr-name', имяВыражения(id)));
+    if (действия.childElementCount) середина.append(действия);
+    строка.append(мини, середина, элемент('span', 'expr-part', t('face.' + slot)), крест);
+    строка.title = t('face.exprTip');
+    строка.addEventListener('click', () => выбратьВыражение(slot, id));
+    box.appendChild(строка);
+  }
+  if (!f.list.length && !вводВыражения) box.appendChild(элемент('div', 'face-hint', t('face.listEmpty')));
+
+  $('face-talk').classList.toggle('on', !!state.talk);
+}
+
+$('face-from-sel').addEventListener('click', лицоИзВыделения);
+$('face-material').addEventListener('change', (e) => { if (e.target.value) лицоПоМатериалу(e.target.value); e.target.value = ''; });
+$('face-remove').addEventListener('click', () => убратьЛицо());
+$('face-mouth').addEventListener('change', (e) => включитьРот(e.target.checked));
+document.querySelectorAll('#face-part button').forEach((b) => b.addEventListener('click', () => {
+  state.facePart = b.dataset.part;
+  savePrefs({ facePart: state.facePart });
+  syncFace();
+}));
+$('face-add-expr').addEventListener('click', начатьВводВыражения);
+$('face-blink').addEventListener('click', моргнуть);
+$('face-talk').addEventListener('click', говорить);
+$('face-export').addEventListener('click', () => saveAs('face'));
+
+// Отмена правки выражения: сперва показать то выражение, которое правили.
+history.beforeRestore = (e) => {
+  for (const x of (e.group || [e])) {
+    if (x.face && state.face && x.face.expr != null && state.face.shown[x.face.slot] !== x.face.expr) {
+      выбратьВыражение(x.face.slot, x.face.expr, { тихо: true });
+    }
+  }
+};
 
 /* ── Размеры кисти ─────────────────────────────────────────────── */
 
@@ -1390,7 +1869,7 @@ el.addEventListener('contextmenu', (e) => e.preventDefault());
  * Углы живут в координатах своей панели: на модели — пиксели холста, в
  * развёртке — тексели (картинка едет вместе с полотном при сдвиге и зуме).
  */
-const decal = { img: null, quad: null, pane: null, drag: null, part: null, anchor: null };
+const decal = { img: null, quad: null, pane: null, drag: null, part: null, anchor: null, face: null };
 // Одна деталь: аппликация ложится только на связную оболочку под первым
 // щелчком. Волосы, нависшие над лицом, тогда не перехватывают картинку и не
 // загораживают его — краска ложится и под ними.
@@ -1403,6 +1882,9 @@ $('decal-part').checked = state.decalPart;
  * отдельные куски одной геометрии), у сундука — доска или оковка.
  */
 function decalPartAt(clientX, clientY) {
+  // На слоях лица деталь одна — само лицо: рисунок выражения не уйдёт на шею.
+  const лицо = частьЛица();
+  if (лицо) return лицо;
   if (!state.decalPart) return null;
   const hit = viewport.pick(clientX, clientY);
   if (!hit) return null;
@@ -1511,6 +1993,7 @@ function decalDefaultSize(pane) {
 }
 
 function cancelDecal() {
+  отменитьНаложение();
   decal.quad = null;
   decal.drag = null;
   decal.part = null;
@@ -1521,6 +2004,7 @@ function cancelDecal() {
 /** Впечь картинку в активный слой — одним шагом истории на все объекты. */
 function applyDecal() {
   if (!decal.quad || !decal.img) return;
+  if (частьЛица() && decal.pane === 'view') decal.part = частьЛица();
   const stencil = decalStencil(decal.img, decal.quad);
   const entries = [];
 
@@ -1558,7 +2042,8 @@ function applyDecal() {
   }
 
   if (!entries.length) { setStatusHint(t('decal.missed')); return; }
-  history.push(entries.length === 1 ? entries[0] : { label: 'act.decal', group: entries });
+  if (decal.face) наложениеВпечатано();
+  else history.push(entries.length === 1 ? entries[0] : { label: 'act.decal', group: entries });
   warnHiddenPaint();
   state.painted = true;
   cancelDecal();
@@ -1580,6 +2065,194 @@ $('decal-part').addEventListener('change', (e) => {
   }
 });
 $('decal-apply').addEventListener('click', applyDecal);
+
+/** Лицо как деталь аппликации — когда активен слой «Глаза» или «Рот». */
+function частьЛица() {
+  const f = state.face;
+  if (!f || !refLayers()?.[state.activeLayer]?.slot) return null;
+  return { mesh: f.mesh, tris: f.tris };
+}
+
+/*
+ * Картинка на строке выражения. Наложение помнит, что и как клали: файл,
+ * рамку, вид и «основу» — выражение без этой картинки. Поэтому картинку
+ * можно поправить теми же ручками или заменить: основа возвращается в слой,
+ * картинка ложится заново. Всё наложение — один шаг журнала на прямоугольник
+ * лица.
+ *
+ * state.face.overlays[slot]: Map выражение → { bytes, img, quad, view, base, sum }
+ * decal.face: идущий сеанс { slot, id, bytes, before, base } | null
+ */
+
+/** Отпечаток вырезки — заметить, что поверх картинки уже рисовали. */
+function отпечаток(c) {
+  if (!c) return 0;
+  let s = 0;
+  for (let i = 0; i < c.rgba.length; i += 3) s = (s * 31 + c.rgba[i]) >>> 0;
+  return s;
+}
+/** Вырезка рабочего слоя части сейчас (null — пусто). */
+function вырезкаСейчас(slot) {
+  const f = state.face;
+  const c = cropLayer(рабочийСлой(slot), targets.get(f.mesh).size, f.rect);
+  return cropIsEmpty(c) ? null : c;
+}
+/** Положить вырезку в рабочий слой части и пересобрать лицо. */
+function положитьВырезку(slot, c) {
+  const f = state.face;
+  const tg = targets.get(f.mesh);
+  putCrop(рабочийСлой(slot), tg.size, f.rect, c);
+  tg.compositeRect(f.rect);
+}
+
+/**
+ * Шаг журнала на прямоугольник лица: было → стало. Буферы те же, что у
+ * мазка, поэтому отмена работает как обычно и сперва показывает выражение.
+ */
+function шагЛица(label, slot, id, было, стало) {
+  const f = state.face;
+  const tg = targets.get(f.mesh);
+  const L = рабочийСлой(slot);
+  const r = f.rect;
+  const n = (r.x1 - r.x0 + 1) * (r.y1 - r.y0 + 1);
+  const пусто = { rgba: new Uint8ClampedArray(n * 4), rough: new Uint8Array(n), metal: new Uint8Array(n), opac: new Uint8Array(n).fill(255) };
+  const parts = ['rgba', 'rough', 'metal', 'opac'].map((k) => ({
+    buf: L[k], stride: k === 'rgba' ? 4 : 1, before: (было || пусто)[k].slice(), after: (стало || пусто)[k].slice(),
+  }));
+  history.push({ label, target: tg, layer: L, channel: 'rgba', rect: { ...r }, parts, face: { slot, expr: id } });
+}
+
+/**
+ * Наложить картинку на выбранную строку спереди: вид спереди в ортографии
+ * на лицо, рамка встаёт по части (глаза — верх, рот — низ, всё лицо —
+ * целиком). Дальше ручки аппликации; Enter впекает, Esc — как было.
+ * @param {File|Blob} [file] картинка; без неё откроется выбор файла
+ * @param {{replace?: boolean}} [how] заменить картинку строки, а не добавить поверх
+ */
+async function наложитьСпереди(file = null, { replace = false } = {}) {
+  const f = state.face;
+  if (!f) return false;
+  if (!f.current) { setStatusHint(t('face.pickFirst')); return false; }
+  if (!file) { лицоФайл = { replace }; $('face-file').click(); return true; }
+  const { slot, id } = f.current;
+  отменитьНаложение();
+  выбратьВыражение(slot, id);
+  const было = вырезкаСейчас(slot);
+  // Заменить: под новой картинкой — основа прежней (или пусто, если
+  // выражение рисовали кистью без картинки). Добавить: то, что есть.
+  const ov = f.overlays[slot].get(id);
+  const основа = replace ? (ov ? ov.base : null) : было;
+  let img;
+  try { img = await loadDecalImage(file); } catch (err) { console.error(err); setStatusHint(t('decal.readFailed')); return false; }
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  viewport.frameFront(viewport.trisBox(f.mesh, f.mesh.userData.paintCache, f.tris));
+  syncViewUI();
+  setTool('decal');
+  положитьВырезку(slot, основа);
+  decal.face = { slot, id, bytes, before: было, base: основа };
+  decal.img = img;
+  поставитьНаЛицо();
+  syncDecalUI(); syncFace();
+  return true;
+}
+
+/** Поправить наложенную картинку: тот же вид, та же рамка с ручками. */
+async function поправитьНаложение(slot, id) {
+  const f = state.face;
+  const ov = f?.overlays[slot].get(id);
+  if (!ov) return false;
+  отменитьНаложение();
+  выбратьВыражение(slot, id);
+  const было = вырезкаСейчас(slot);
+  // Поверх картинки рисовали кистью — эти мазки уйдут вместе со старой картинкой.
+  if (отпечаток(было) !== ov.sum && !confirm(t('face.confirmEditLoses'))) return false;
+  if (!ov.img) ov.img = await loadDecalImage(new File([ov.bytes], 'overlay.png', { type: 'image/png' }));
+  viewport.setViewState(ov.view);
+  syncViewUI();
+  setTool('decal');
+  положитьВырезку(slot, ov.base);
+  decal.face = { slot, id, bytes: ov.bytes, before: было, base: ov.base };
+  decal.img = ov.img;
+  decal.pane = 'view';
+  decal.anchor = null;
+  decal.part = { mesh: f.mesh, tris: f.tris };
+  decal.quad = ov.quad.map((c) => ({ ...c }));
+  drawDecal();
+  syncDecalUI(); syncFace();
+  setStatusHint(t('face.editHint'));
+  return true;
+}
+
+/** Сеанс наложения на строку прерван — выражение как было до него. */
+function отменитьНаложение() {
+  const d = decal.face;
+  if (!d) return;
+  decal.face = null;
+  if (state.face) { положитьВырезку(d.slot, d.before); drawUVRow(state.face.mesh); refreshUV(); }
+}
+
+/** Впечатано: шаг журнала и запись о наложении — для правки и замены. */
+function наложениеВпечатано() {
+  const d = decal.face;
+  decal.face = null;
+  const f = state.face;
+  const стало = вырезкаСейчас(d.slot);
+  // Сперва запись о наложении: шаг журнала перерисует строку, и на ней
+  // уже должна быть кнопка «поправить».
+  f.overlays[d.slot].set(d.id, {
+    bytes: d.bytes, img: decal.img, quad: decal.quad.map((c) => ({ ...c })),
+    view: viewport.viewState(), base: d.base, sum: отпечаток(стало),
+  });
+  шагЛица('act.decal', d.slot, d.id, d.before, стало);
+}
+
+/** Стереть выражение строки: и картинку, и мазки. Одним шагом журнала. */
+function стеретьВыражение(slot, id) {
+  const f = state.face;
+  if (!f) return;
+  отменитьНаложение();
+  выбратьВыражение(slot, id);
+  const было = вырезкаСейчас(slot);
+  if (!было) return;
+  положитьВырезку(slot, null);
+  f.overlays[slot].delete(id);
+  шагЛица('act.faceClear', slot, id, было, null);
+  syncFace(); drawUVRow(f.mesh); refreshUV();
+}
+
+let лицоФайл = null;      // что делать с файлом, выбранным кнопкой на строке
+$('face-file').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  const как = лицоФайл;
+  лицоФайл = null;
+  if (file && как) наложитьСпереди(file, как);
+});
+
+/** Рамка картинки — по рамке лица на экране, с пропорциями картинки. */
+function поставитьНаЛицо() {
+  const f = state.face;
+  if (!f || !decal.img) return;
+  const b = viewport.trisScreenBox(f.mesh, f.mesh.userData.paintCache, f.tris);
+  // Рамка по части: глаза — верх лица, рот — низ, всё лицо — целиком.
+  const часть = f.current?.slot;
+  const H = b.y1 - b.y0;
+  if (часть === 'eyes') b.y1 = b.y0 + H * 0.6;
+  if (часть === 'mouth') b.y0 = b.y0 + H * 0.55;
+  const cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
+  const k = decal.img.w / decal.img.h;
+  let w = b.x1 - b.x0, h = b.y1 - b.y0;
+  if (w / h > k) w = h * k; else h = w / k;
+  decal.pane = 'view';
+  decal.anchor = null;
+  decal.part = { mesh: f.mesh, tris: f.tris };
+  decal.quad = [
+    { x: cx - w / 2, y: cy - h / 2 }, { x: cx + w / 2, y: cy - h / 2 },
+    { x: cx + w / 2, y: cy + h / 2 }, { x: cx - w / 2, y: cy + h / 2 },
+  ];
+  drawDecal();
+  setStatusHint(t('face.overlayHint'));
+}
 $('decal-cancel').addEventListener('click', cancelDecal);
 $('decal-input').addEventListener('change', async (e) => {
   const f = e.target.files[0];
@@ -1628,6 +2301,8 @@ const LASSO_TOOLS = new Set(['lasso', 'lasso-poly']);
 function setTool(tool) {
   // Незамкнутый контур другому инструменту ни к чему.
   if (tool !== state.tool) cancelLasso();
+  // Ушли с аппликации посреди наложения на лицо — выражение как было.
+  if (tool !== 'decal' && decal.face) cancelDecal();
   state.tool = tool;
   document.querySelectorAll('.tool').forEach((b) => b.classList.toggle('active', b.dataset.tool === tool));
   // Сдвиг уже умеет OrbitControls — тем же переключателем, что и пробел.
@@ -1783,27 +2458,38 @@ UI.renderSwatches($('quick-mats'), (hex) => setMaterial({
 /* ── Слои ──────────────────────────────────────────────────────── */
 
 function syncLayers() {
-  const вариант = state.variants.find((v) => v.id === state.activeVariant);
-  UI.renderLayers($('layer-list'), activeTarget(),
-    { activeIndex: state.activeLayer },
-    {
-      // Слои других вариантов не показываются: в них сейчас не красят.
-      hidden: (L) => !слойВВарианте(L),
-      variantTip: вариант ? (L) => t(L.variant == null ? 'layers.common' : 'layers.own', имяВарианта(вариант)) : null,
-      onToggleVariant: toggleLayerVariant,
-      onSelect: setActiveLayer,
-      onToggleVisible: (i) => {
-        const vis = !refLayers()[i].visible;
-        eachTarget((t) => { t.layers[i].visible = vis; t.compositeRect(null); });
-        syncLayers(); refreshUV();
-      },
-      onRename: (i, name) => { eachTarget((t) => { t.layers[i].name = name; t.layers[i].auto = null; }); syncLayers(); },
-    });
+  const L = refLayers() || [];
+  const слои = (id) => L.map((x, i) => ({ L: x, i })).filter(({ L: x }) => !x.slot && x.variant === id);
+  UI.renderMapTree($('map-tree'), {
+    maps: state.variants.map((v) => ({
+      id: v.id, name: имяВарианта(v), count: слои(v.id).length,
+      on: v.id === state.activeVariant, open: state.mapsOpen.has(v.id),
+      drawThumb: (c) => нарисоватьМиниатюру(v.id, c),
+    })),
+    layersOf: слои,
+    activeIndex: state.activeLayer,
+  }, {
+    onMap: (id) => { if (id !== state.activeVariant) включитьВариант(id); },
+    onToggle: (id) => { if (state.mapsOpen.has(id)) state.mapsOpen.delete(id); else state.mapsOpen.add(id); syncLayers(); },
+    onRename: renameVariant,
+    onDelete: state.variants.length > 1 ? removeVariant : null,
+    onSelect: (i) => {
+      // Слой другой развёртки — сперва показать её.
+      if (L[i].variant !== state.activeVariant) включитьВариант(L[i].variant, { тихо: true });
+      setActiveLayer(i);
+      viewport.syncTransparency(); drawUVRows(); refreshUV();
+    },
+    onToggleVisible: (i) => {
+      const vis = !refLayers()[i].visible;
+      eachTarget((t) => { t.layers[i].visible = vis; t.compositeRect(null); });
+      syncLayers(); refreshUV();
+    },
+    onRenameLayer: (i, name) => { eachTarget((t) => { t.layers[i].name = name; t.layers[i].auto = null; }); syncLayers(); },
+  });
 
-  const L = refLayers();
-  $('layer-count').textContent = L ? String(L.filter(слойВВарианте).length) : '';
-  if (L) {
-    const cur = L[state.activeLayer];
+  $('layer-count').textContent = state.variants.length > 1 ? String(state.variants.length) : '';
+  const cur = L[state.activeLayer];
+  if (cur) {
     $('layer-opacity').value = Math.round(cur.opacity * 100);
     $('layer-opacity-val').textContent = Math.round(cur.opacity * 100) + '%';
     $('layer-blend').value = cur.blend;
@@ -1831,7 +2517,7 @@ $('layer-blend').addEventListener('change', (e) => setBlend(e.target.value));
 
 /* ── История ───────────────────────────────────────────────────── */
 
-history.onChange = () => { renderHistory(); syncHistoryButtons(); viewport.syncTransparency(); refreshUV(); };
+history.onChange = () => { renderHistory(); syncHistoryButtons(); viewport.syncTransparency(); refreshUV(); if (state.face) { syncFace(); syncLayers(); } };
 
 function renderHistory() {
   const list = $('history-list');
@@ -2256,6 +2942,23 @@ function togglePanel(cls, btn) {
   if (state.uvOpen) uvEditor.resize();
 }
 $('btn-tools-toggle').addEventListener('click', () => togglePanel('no-tools', $('btn-tools-toggle')));
+
+/* Вторая колонка (развёртки и слои, UV объектов) сворачивается в полоску
+   значков, как панели Photoshop; значок раздела разворачивает её и
+   прокручивает к разделу. */
+function свернутьДок(on) {
+  app.classList.toggle('dock-min', on);
+  savePrefs({ dockMin: on });
+  viewport.resize();
+  if (state.uvOpen) uvEditor.resize();
+}
+$('dock-toggle').addEventListener('click', () => свернутьДок(!app.classList.contains('dock-min')));
+document.querySelectorAll('.dock-icon').forEach((b) => b.addEventListener('click', () => {
+  свернутьДок(false);
+  const раздел = document.querySelector(`#dock-body [data-key="${b.dataset.dock}"]`);
+  if (раздел) { раздел.dataset.open = '1'; раздел.scrollIntoView({ block: 'start' }); }
+}));
+if (loadPrefs().dockMin) app.classList.add('dock-min');
 $('btn-side-toggle').addEventListener('click', () => togglePanel('no-side', $('btn-side-toggle')));
 
 function toggleAllPanels() {
@@ -2518,7 +3221,30 @@ function rebuildOverlappingUV() {
       const target = targets.get(mesh);
       if (!вышло || !target) continue;
       островов += вышло.islands;
+      // Выражения лица лежат вырезками по старой развёртке — переносим их
+      // через полный слой и режем заново по новому прямоугольнику лица.
+      const f = state.face?.mesh === mesh ? state.face : null;
+      const вырезки = [];
+      if (f) {
+        for (const slot of SLOTS) зафиксировать(slot);
+        for (const slot of SLOTS) for (const [id, c] of f.exprs[slot]) {
+          const L = new Layer(target.size, null, null);
+          putCrop(L, target.size, f.rect, c);
+          вырезки.push({ slot, id, L });
+        }
+      }
       for (const L of target.layers) remapLayer(L, target.size, вышло.from, вышло.to);
+      if (f) {
+        const { mask, rect } = faceMaskOf(вышло.to, target.size, f.tris);
+        if (rect) {
+          target.faceMask = mask;
+          f.rect = rect;
+          for (const в of вырезки) {
+            remapLayer(в.L, target.size, вышло.from, вышло.to);
+            f.exprs[в.slot].set(в.id, cropLayer(в.L, target.size, rect));
+          }
+        }
+      }
       target.selection = null;
       target.compositeRect(null);
       target.updateTransparency?.();
@@ -2560,7 +3286,7 @@ function afterModelLoaded(report, key) {
   lastReport = report;
 
   renderUVList();
-  syncVariants();
+  syncFace();
   syncLayers();
   syncBrushLabels();
   renderHistory();
@@ -2875,6 +3601,16 @@ function картыДляЭкспорта(сВариантами = false) {
   const карты = new Map();
   const варианты = сВариантами && state.variants.length > 1 ? state.variants : null;
   for (const [mesh, t] of targets) {
+    // Меш с лицом уходит одним видом — показанным; его грани лица — «Face».
+    if (state.face?.mesh === mesh) {
+      карты.set(mesh, {
+        colorCanvas: t.canvas,
+        ormCanvas: hasMaterialPaint(t) ? t.ormCanvas : null,
+        transparent: !!mesh.material?.transparent,
+        face: { whole: лицоЦелымМешем(), tris: state.face.tris },
+      });
+      continue;
+    }
     if (варианты) {
       // Каждый вариант — своими картами. Карта материала — у всех, если
       // поверхностью красили хоть в одном: материалы вариантов должны быть
@@ -2913,6 +3649,12 @@ async function saveAs(формат) {
 
   if (формат === 'png') return saveTextures();
   if (формат === 'project') return saveProject(true);
+  if (формат === 'face') {
+    if (!state.face) { setStatusHint(t('face.noneToSave')); return 0; }
+    const сколько = 2 + (нарисованные('eyes').length ? 1 : 0) + (state.face.mouth && нарисованные('mouth').length ? 1 : 0)
+      + (нарисованные('full').length ? 1 : 0);
+    return сохранитьФайлы(основа, сколько, () => файлыЛица(), 'busy.save', основа);
+  }
 
   const карты = картыДляЭкспорта();
 
@@ -3000,7 +3742,35 @@ async function собратьПроект() {
     brush: { ...state.brush }, sizePct: state.sizePct, frontOnly: state.frontOnly,
     variants: state.variants, activeVariant: state.activeVariant,
   };
-  return packProject({ modelGLB, meta, meshes, app: APP_VERSION });
+  // Лицо: грани, выражения вырезками. Рабочие слои «Глаза» и «Рот» лежат
+  // среди слоёв; показанное выражение сперва уходит в свою вырезку.
+  const files = {};
+  const f = state.face;
+  if (f) {
+    for (const slot of SLOTS) зафиксировать(slot);
+    files['face/tris.bin'] = f.tris;
+    const выражения = {};
+    for (const slot of SLOTS) {
+      выражения[slot] = {};
+      let k = 0;
+      for (const [id, c] of f.exprs[slot]) {
+        const путь = `face/${slot}/${k++}/`;
+        выражения[slot][id] = {};
+        for (const ключ of ['rgba', 'rough', 'metal', 'opac']) {
+          files[путь + ключ + '.bin'] = new Uint8Array(c[ключ].buffer, c[ключ].byteOffset, c[ключ].byteLength);
+          выражения[slot][id][ключ] = путь + ключ + '.bin';
+        }
+      }
+    }
+    meta.face = {
+      mesh: viewport.paintables.findIndex((p) => p.mesh === f.mesh),
+      source: f.source, materialName: f.materialName, rect: f.rect, mouth: f.mouth,
+      shown: f.shown, tris: 'face/tris.bin', expressions: выражения,
+      list: f.list, current: f.current,
+      overlays: наложенияВПроект(f, files),
+    };
+  }
+  return packProject({ modelGLB, meta, meshes, app: APP_VERSION, files });
 }
 
 /**
@@ -3075,6 +3845,8 @@ async function openProject(buffer, fileName) {
           const слой = new Layer(tg.size, L.name, L.auto);
           слой.visible = L.visible; слой.opacity = L.opacity; слой.blend = L.blend;
           слой.variant = L.variant ?? null;
+          слой.slot = L.slot ?? null;
+          if (L.slot) слой.expr = L.expr;
           for (const [ключ, путь] of Object.entries(L.files)) {
             const байты = file(путь);
             if (!байты) continue;
@@ -3088,10 +3860,33 @@ async function openProject(buffer, fileName) {
         tg.compositeRect(null);
       });
       state.activeLayer = Math.min(meta.activeLayer ?? 0, (пары.length ? targets.get(пары[0].mesh).layers.length : 1) - 1);
-      state.variants = Array.isArray(meta.variants) ? meta.variants : [];
-      state.activeVariant = state.variants.length ? (meta.activeVariant ?? state.variants[0].id) : null;
+      // Развёртки. Старый проект: развёрток нет — одна; общие слои (из 0.8.6)
+      // кладутся копией в каждую развёртку — так каждая выглядит как была.
+      state.variants = Array.isArray(meta.variants) && meta.variants.length ? meta.variants : [{ id: 1, name: null, auto: 1 }];
+      state.activeVariant = state.variants.some((v) => v.id === meta.activeVariant) ? meta.activeVariant : state.variants[0].id;
       state.nextVariant = state.variants.reduce((n, v) => Math.max(n, v.id + 1), 1);
+      state.mapsOpen = new Set([state.activeVariant]);
+      state.mapThumbs = new Map();
+      пары.forEach(({ mesh }) => {
+        const tg = targets.get(mesh);
+        tg.layers = tg.layers.flatMap((L) => {
+          if (L.slot || L.variant != null) return [L];
+          return state.variants.map((v, k) => {
+            const копия = k === 0 ? L : Object.assign(new Layer(tg.size, L.name, L.auto), {
+              visible: L.visible, opacity: L.opacity, blend: L.blend,
+              rgba: L.rgba.slice(), rough: L.rough.slice(), metal: L.metal.slice(), opac: L.opac.slice(),
+              mask: L.mask ? L.mask.slice() : null,
+            });
+            копия.variant = v.id;
+            return копия;
+          });
+        });
+        tg.variant = state.activeVariant;
+        tg.compositeRect(null);
+      });
+      if (пары.length) state.activeLayer = Math.min(state.activeLayer, targets.get(пары[0].mesh).layers.length - 1);
       поправитьАктивныйСлой();
+      if (meta.face) лицоИзПроекта(meta.face, file);
 
       if (meta.pose) { viewport.setPose(meta.pose); savePose(meta.pose); }
       viewport.setViewState(meta.view);
@@ -3105,7 +3900,7 @@ async function openProject(buffer, fileName) {
       if (typeof meta.frontOnly === 'boolean') { state.frontOnly = meta.frontOnly; $('brush-frontface').checked = meta.frontOnly; }
 
       viewport.syncTransparency();
-      syncBrushLabels(); syncVariants(); syncLayers(); syncPoseUI(); syncViewUI();
+      syncBrushLabels(); syncLayers(); syncFace(); syncPoseUI(); syncViewUI();
       drawUVRows(); refreshUV();
       history.clear(); renderHistory(); syncHistoryButtons();
       state.painted = false;
@@ -3121,6 +3916,113 @@ async function openProject(buffer, fileName) {
       return false;
     }
   }, fileName);
+}
+
+/**
+ * Выгрузка лица для игры: `<имя>.glb` с материалом «Face» и нейтральным
+ * выражением, атласы `<имя>_face_eyes.png`, `<имя>_face_mouth.png` и
+ * `<имя>_face_full.png` (всё лицо одной картинкой), описание
+ * `<имя>_face.json`. Анимации и имена материалов уходят в GLB как обычно.
+ */
+async function файлыЛица() {
+  const f = state.face;
+  const основа = safeName(имяМодели().replace(/\.[^.]+$/, '') || 'model');
+  остановитьРазговор();
+  const было = { ...f.shown };
+  // В GLB — нейтральное: глаза и рот, а если их нет — всё лицо.
+  for (const slot of SLOTS) зафиксировать(slot);
+  const есть = (slot) => f.exprs[slot].has('neutral');
+  const отдельно = есть('eyes') || есть('mouth');
+  for (const slot of SLOTS) {
+    const нужно = (slot === 'full' ? !отдельно : true) && есть(slot) ? 'neutral' : null;
+    показатьВыражение(slot, нужно, { тихо: true });
+  }
+  let glb;
+  try {
+    glb = await viewport.inFileSpace(() => exportGLTF(viewport.model, картыДляЭкспорта(true), true));
+  } finally {
+    for (const slot of SLOTS) показатьВыражение(slot, было[slot], { тихо: true });
+  }
+  const атлас = (slot) => {
+    const ids = нарисованные(slot);
+    if (!ids.length) return null;
+    return { ...buildAtlas(f.exprs[slot], ids, f.rect), ids, file: `${основа}_face_${slot}.png` };
+  };
+  const глаза = атлас('eyes');
+  const рот = f.mouth ? атлас('mouth') : null;
+  const всё = атлас('full');
+  const описание = faceDescription({ name: основа, size: targets.get(f.mesh).size, rect: f.rect, eyes: глаза, mouth: рот, full: всё });
+  const файлы = [{ name: `${основа}.glb`, blob: glb }];
+  for (const а of [глаза, рот, всё]) if (а) файлы.push({ name: а.file, blob: await canvasBlob(а.canvas) });
+  файлы.push({ name: `${основа}_face.json`, blob: new Blob([JSON.stringify(описание, null, 2)], { type: 'application/json' }) });
+  return файлы;
+}
+
+/** Наложения — в файлы проекта: картинка как была, основа сырыми байтами. */
+function наложенияВПроект(f, files) {
+  const out = {};
+  for (const slot of SLOTS) {
+    out[slot] = {};
+    let k = 0;
+    for (const [id, ov] of f.overlays[slot]) {
+      const путь = `face/overlay/${slot}/${k++}/`;
+      files[путь + 'image'] = ov.bytes;
+      const base = {};
+      if (ov.base) for (const ключ of ['rgba', 'rough', 'metal', 'opac']) {
+        files[путь + 'base-' + ключ + '.bin'] = new Uint8Array(ov.base[ключ].buffer, ov.base[ключ].byteOffset, ov.base[ключ].byteLength);
+        base[ключ] = путь + 'base-' + ключ + '.bin';
+      }
+      out[slot][id] = { image: путь + 'image', quad: ov.quad, view: ov.view, sum: ov.sum, base: ov.base ? base : null };
+    }
+  }
+  return out;
+}
+function наложенияИзПроекта(м, file, w, h) {
+  const out = { full: new Map(), eyes: new Map(), mouth: new Map() };
+  for (const slot of SLOTS) {
+    for (const [id, ov] of Object.entries(м?.[slot] || {})) {
+      const bytes = file(ov.image);
+      if (!bytes) continue;
+      let base = null;
+      if (ov.base) {
+        base = { rgba: new Uint8ClampedArray(w * h * 4), rough: new Uint8Array(w * h), metal: new Uint8Array(w * h), opac: new Uint8Array(w * h) };
+        for (const ключ of Object.keys(base)) { const b = file(ov.base[ключ]); if (b && b.length === base[ключ].length) base[ключ].set(b); }
+      }
+      out[slot].set(id, { bytes: new Uint8Array(bytes), img: null, quad: ov.quad, view: ov.view, base, sum: ov.sum });
+    }
+  }
+  return out;
+}
+
+/** Лицо из проекта: грани, маска, вырезки выражений. Рабочие слои уже на месте. */
+function лицоИзПроекта(м, file) {
+  const пара = viewport.paintables[м.mesh];
+  const байты = file(м.tris);
+  if (!пара || !байты) return;
+  const tg = targets.get(пара.mesh);
+  const tris = new Uint8Array(байты);
+  const { mask, rect } = faceMaskOf(пара.cache, tg.size, tris);
+  if (!rect) return;
+  tg.faceMask = mask;
+  const exprs = { full: new Map(), eyes: new Map(), mouth: new Map() };
+  const w = rect.x1 - rect.x0 + 1, h = rect.y1 - rect.y0 + 1;
+  for (const slot of SLOTS) {
+    for (const [id, пути] of Object.entries(м.expressions?.[slot] || {})) {
+      const c = { rgba: new Uint8ClampedArray(w * h * 4), rough: new Uint8Array(w * h), metal: new Uint8Array(w * h), opac: new Uint8Array(w * h) };
+      for (const ключ of Object.keys(c)) { const b = file(пути[ключ]); if (b && b.length === c[ключ].length) c[ключ].set(b); }
+      exprs[slot].set(id, c);
+    }
+  }
+  state.face = {
+    mesh: пара.mesh, tris, source: м.source, materialName: м.materialName, rect, mouth: м.mouth !== false,
+    shown: { full: м.shown?.full ?? null, eyes: м.shown?.eyes ?? null, mouth: м.shown?.mouth ?? null }, exprs,
+    // Проект 0.9.0 списка не знал — строки по нарисованному.
+    list: Array.isArray(м.list) ? м.list : SLOTS.flatMap((slot) => [...exprs[slot].keys()].map((id) => ({ slot, id }))),
+    current: м.current || null,
+    overlays: наложенияИзПроекта(м.overlays, file, w, h),
+  };
+  // В проекте 0.9.0 не было слоя «Всё лицо» — дописываем недостающие.
+  eachTarget(слоиЛица);
 }
 
 /** Все карты всех мешей — одной папкой, если их больше одной. */
@@ -3412,7 +4314,7 @@ onLangChange(() => {
 
   syncBrushLabels();
   syncMaterialChip();
-  syncVariants();      // автоимена «Вариант N» переводятся вместе с интерфейсом
+  syncFace();
   syncLayers();
   renderHistory();
   syncStatusModel();
@@ -3480,4 +4382,12 @@ window.__paint = { viewport, uvEditor, viewCube, menuBar, brushModal, materialMo
   // Для проверок (`tests/`): тот же путь, что «Сохранить как ▸ GLB», без окна сохранения.
   exportGLB: () => viewport.inFileSpace(() => exportGLTF(viewport.model, картыДляЭкспорта(true), true)),
   projectBytes: () => собратьПроект(),
-  addVariant, включитьВариант, toggleLayerVariant };
+  // Лицо — те же функции, что у кнопок панели «Лицо».
+  faceFromSelection: лицоИзВыделения, faceFromMaterial: лицоПоМатериалу, removeFace: убратьЛицо,
+  faceAdd: добавитьВыражение, faceSelect: выбратьВыражение, faceDelete: удалитьВыражение, showExpression: показатьВыражение,
+  faceOverlay: наложитьСпереди, faceOverlayEdit: поправитьНаложение, faceClear: стеретьВыражение, decal, cancelDecal, applyDecal, faceFiles: файлыЛица, faceCommit: () => SLOTS.forEach(зафиксировать), setMouth: включитьРот, blink: моргнуть, talk: говорить,
+  selectTris: (mesh, tris) => {
+    const tg = targets.get(mesh);
+    applySelection(new Map([[tg, faceMaskOf(mesh.userData.paintCache, tg.size, tris).mask]]), 'new');
+  },
+  addVariant, включитьВариант };

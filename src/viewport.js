@@ -883,6 +883,59 @@ export class Viewport {
     this.controls.update();
   }
 
+  /** Рамка набора граней в мире (tris — 1 у нужной грани). */
+  trisBox(mesh, cache, tris) {
+    const box = new THREE.Box3();
+    const v = new THREE.Vector3();
+    const { pos, idx } = cache;
+    mesh.updateMatrixWorld(true);
+    for (let t = 0; t < cache.triCount; t++) {
+      if (!tris[t]) continue;
+      for (let k = 0; k < 3; k++) {
+        const i = idx[t * 3 + k] * 3;
+        box.expandByPoint(v.set(pos[i], pos[i + 1], pos[i + 2]).applyMatrix4(mesh.matrixWorld));
+      }
+    }
+    return box;
+  }
+
+  /** Рамка набора граней на экране — в пикселях холста, как углы аппликации. */
+  trisScreenBox(mesh, cache, tris) {
+    const c = this.renderer.domElement;
+    const v = new THREE.Vector3();
+    const { pos, idx } = cache;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    mesh.updateMatrixWorld(true);
+    for (let t = 0; t < cache.triCount; t++) {
+      if (!tris[t]) continue;
+      for (let k = 0; k < 3; k++) {
+        const i = idx[t * 3 + k] * 3;
+        v.set(pos[i], pos[i + 1], pos[i + 2]).applyMatrix4(mesh.matrixWorld).project(this.camera);
+        const x = (v.x + 1) / 2 * c.clientWidth, y = (1 - v.y) / 2 * c.clientHeight;
+        if (x < x0) x0 = x; if (x > x1) x1 = x;
+        if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+    }
+    return { x0, y0, x1, y1 };
+  }
+
+  /**
+   * Прямой вид спереди в ортографии на рамку: так рисунок лица переносится
+   * без перспективы — как он лежит на листе выражений.
+   */
+  frameFront(box) {
+    this.setProjection('ortho');
+    const c = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    this.controls.target.copy(c);
+    this.camera.up.set(0, 1, 0);
+    this.camera.position.copy(c).add(new THREE.Vector3(0, 0, Math.max(1, (this.modelSize || 1) * 2)));
+    this.camera.lookAt(c);
+    this.orthoCamera.zoom = 1;
+    this._updateOrthoFrustum(Math.max(size.x, size.y, 1e-3) * 1.8);
+    this.controls.update();
+  }
+
   /** Имя стандартного вида, если камера стоит ровно на нём. */
   currentViewName() {
     const d = this.camera.position.clone().sub(this.controls.target).normalize();

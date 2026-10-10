@@ -41,6 +41,11 @@ export class Layer {
     // общий и виден во всех вариантах. Так «разные лица» живут на одной
     // развёртке: общие слои — тело и одежда, у каждого варианта — своё лицо.
     this.variant = null;
+    // Слой лица: 'eyes' | 'mouth' | null. Такой слой — рабочий холст
+    // выражения: в нём лежит показанное выражение, остальные хранятся
+    // вырезками по прямоугольнику лица (`face.js`). Красится только по
+    // граням лица (`PaintTarget.faceMask`).
+    this.slot = null;
   }
 
   ensureMask(size) {
@@ -67,6 +72,9 @@ export class PaintTarget {
     // Включённый вариант покраски: в сборку идут общие слои и слои этого
     // варианта. null — вариантов нет, собираются все слои.
     this.variant = null;
+    // Маска текселей лица (Uint8Array S×S, 255 — лицо) — у меша, где лицо
+    // задано. По ней мазок в слоях «Глаза» и «Рот» не выходит за лицо.
+    this.faceMask = null;
     // Выделение лассо: маска текселей, где разрешено красить, либо null —
     // тогда красится всё. Живёт у цели, а не у слоя: смена слоя его не снимает.
     this.selection = null;
@@ -102,7 +110,9 @@ export class PaintTarget {
   inVariant(L) { return L.variant == null || L.variant === this.variant; }
 
   addLayer(name, variant = null) {
-    const l = new Layer(this.size, name || null, name ? null : this.layers.length + 1);
+    // Номер в имени — по слоям своей развёртки: в каждой счёт с единицы.
+    const номер = this.layers.filter((x) => x.variant === variant && !x.slot).length + 1;
+    const l = new Layer(this.size, name || null, name ? null : номер);
     l.variant = variant;
     this.layers.splice(this.activeIndex + 1, 0, l);
     this.activeIndex += 1;
@@ -285,6 +295,9 @@ export class History {
     this.entries = [];
     this.index = -1;          // -1 = исходное состояние, до первой правки
     this.onChange = null;
+    // Перед применением шага: правка выражения лица лежит в рабочем слое,
+    // и прежде чем её откатить, надо показать то выражение, которое правили.
+    this.beforeRestore = null;
   }
 
   push(entry) {
@@ -298,6 +311,7 @@ export class History {
 
   undo() {
     if (!this.canUndo) return false;
+    this.beforeRestore?.(this.entries[this.index]);
     restore(this.entries[this.index], 'before');
     this.index -= 1;
     this._changed();
@@ -307,6 +321,7 @@ export class History {
   redo() {
     if (!this.canRedo) return false;
     this.index += 1;
+    this.beforeRestore?.(this.entries[this.index]);
     restore(this.entries[this.index], 'after');
     this._changed();
     return true;
@@ -315,8 +330,8 @@ export class History {
   /** Перейти к состоянию после шага i (-1 — исходное). */
   goto(i) {
     const target = Math.max(-1, Math.min(this.entries.length - 1, i));
-    while (this.index > target) { restore(this.entries[this.index], 'before'); this.index -= 1; }
-    while (this.index < target) { this.index += 1; restore(this.entries[this.index], 'after'); }
+    while (this.index > target) { this.beforeRestore?.(this.entries[this.index]); restore(this.entries[this.index], 'before'); this.index -= 1; }
+    while (this.index < target) { this.index += 1; this.beforeRestore?.(this.entries[this.index]); restore(this.entries[this.index], 'after'); }
     this._changed();
   }
 
