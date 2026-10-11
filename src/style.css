@@ -548,11 +548,35 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 }
 #model-info:empty { display: none; }
 
+/* Полоса задания LevelMaker: над строкой вида, строка вида и размеры —
+   ниже на её высоту. */
+#lm-bar {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+  z-index: 21;
+  display: flex; gap: 8px; align-items: center;
+  max-width: calc(100% - 28px);
+  background: var(--panel-3);
+  border: 1px solid var(--accent-btn-line);
+  border-radius: 12px;
+  padding: 5px 6px 5px 12px;
+  white-space: nowrap;
+  font-size: 12px; color: var(--text-2);
+}
+#lm-bar[hidden] { display: none; }
+#lm-bar .lm-label { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+#lm-bar .lm-sent { color: var(--text-dim); }
+#lm-bar .lm-sent:empty { display: none; }
+#lm-bar .btn { height: 26px; flex: none; }
+#viewport.lm-on #view-bar { top: 58px; }
+#viewport.lm-on #model-info { top: 108px; }
+.ask-text { max-width: 440px; line-height: 1.5; font-size: 13px; color: var(--text); padding: 4px 0; }
+
 /* Узкий вьюпорт (открыта развёртка): строка уходит влево, чтобы не лечь
    на куб ориентации, а подписи режимов ужимаются. */
 @container viewport (max-width: 760px) {
   #view-bar { left: 12px; transform: none; gap: 5px; }
   #model-info { left: 12px; transform: none; }
+  #lm-bar { left: 12px; transform: none; max-width: calc(100% - 140px); }
   .vseg button { padding: 5px 7px; }
 }
 

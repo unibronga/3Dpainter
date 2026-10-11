@@ -16,7 +16,8 @@ import { floodFaces, OVERLAP_LIMIT } from './mesh-cache.js';
 import * as UI from './ui.js';
 import { createBrushModal, createMaterialModal, createHelpModal,
          createSaveAsModal, createSettingsModal, createViewPngModal, createAboutModal,
-         createEffectModal } from './modals.js';
+         createEffectModal, createAskSaveModal } from './modals.js';
+import { createLevelMaker } from './levelmaker.js';
 import { LEVELS_OFF } from './effects.js';
 import { createMcpTools } from './mcp.js';
 import значокПрограммы from './app-icon.png';
@@ -55,6 +56,8 @@ const inside = (node, target) => target instanceof Node && node.contains(target)
 
 const state = {
   tool: 'brush',
+  // Есть изменения, которые не ушли ни в проект, ни в LevelMaker.
+  unsaved: false,
   // Материал, которым красим: цвет плюс поверхность. Кисть несёт его целиком,
   // поэтому «покрасить железом» делает железной только закрашенную область.
   color: [200, 86, 60],
@@ -225,7 +228,7 @@ function buildTargets(paintables, имя = null) {
   // Выделение жило у прежних целей и ушло вместе с ними.
   uvEditor.setSelectionOutline(null);
   history.clear();
-  state.painted = false;
+  state.painted = state.unsaved = false;
   return { size, downgraded, upgraded };
 }
 
@@ -1141,7 +1144,7 @@ function dabAtScreen(x, y) {
   if (!hit || hit.mesh !== strokeMesh) return;
   stroke.dab(hit.local, brushRadiusWorld() / hit.scale, hit.viewDir,
              state.brush, state.frontOnly, hit.basis);
-  state.painted = true;
+  state.painted = state.unsaved = true;
 }
 
 /**
@@ -1197,7 +1200,7 @@ function uvMove(tx, ty) {
     stroke.dab2D(jitter(tx), jitter(ty), r, state.brush);
   }
   lastTexel = { x: tx, y: ty };
-  state.painted = true;
+  state.painted = state.unsaved = true;
 }
 
 function uvEnd() { endStroke(); }
@@ -1241,7 +1244,7 @@ function uvShape(a, b, shift) {
   const entry = s.end(toolLabel());
   if (entry) history.push(entry);
   if (entry) warnHiddenPaint();
-  state.painted = true;
+  state.painted = state.unsaved = true;
 
   renderHistory();
   syncHistoryButtons();
@@ -1283,7 +1286,7 @@ function runFill(target, cache, faceIndex) {
   const entry = s.end(toolLabel());
   if (entry) history.push(entry);
   if (entry) warnHiddenPaint();
-  state.painted = true;
+  state.painted = state.unsaved = true;
   viewport.syncTransparency();
   refreshUV();
 }
@@ -1393,7 +1396,7 @@ function applyShape3D(mesh, a, b) {
   if (entry) history.push(entry);
   if (entry) warnHiddenPaint();
   else setStatusHint(t('status.shapeMissed'));
-  state.painted = true;
+  state.painted = state.unsaved = true;
   viewport.syncTransparency();
   refreshUV();
 }
@@ -2045,7 +2048,7 @@ function applyDecal() {
   if (decal.face) наложениеВпечатано();
   else history.push(entries.length === 1 ? entries[0] : { label: 'act.decal', group: entries });
   warnHiddenPaint();
-  state.painted = true;
+  state.painted = state.unsaved = true;
   cancelDecal();
   viewport.syncTransparency();
   refreshUV();
@@ -3058,7 +3061,7 @@ function aiFill(mesh, set, { color, roughness, metalness, alpha }, layer) {
   const entry = s.end('act.aiFill');
   if (entry) history.push(entry);
   target.activeIndex = state.activeLayer;
-  state.painted = true;
+  state.painted = state.unsaved = true;
   viewport.syncTransparency();
   refreshUV();
   drawUVRow(mesh);
@@ -3252,7 +3255,7 @@ function rebuildOverlappingUV() {
     }
     viewport.syncTransparency();
     history.clear();
-    state.painted = true;      // геометрия другая — проект стоит сохранить
+    state.painted = state.unsaved = true;      // геометрия другая — проект стоит сохранить
     selectionChanged();
     renderUVList();
     if (state.uvOpen) { uvEditor.setTarget(null, null); refreshUV(); uvEditor.fit(); uvEditor.draw(); }
@@ -3720,8 +3723,9 @@ function картыМеша(mesh, t, всеВарианты = false) {
  */
 let projectHandle = null;
 
-/** Всё, что нужно, чтобы открыть работу ровно такой, какой её оставили. */
-async function собратьПроект() {
+/** Всё, что нужно, чтобы открыть работу ровно такой, какой её оставили.
+    @param {object} [доп] свои поля описания (задание LevelMaker — подпись модели) */
+async function собратьПроект(доп = null) {
   const modelGLB = await viewport.inFileSpace(() => exportGeometryGLB(viewport.model));
   const meshes = viewport.paintables.map(({ mesh, cache }) => {
     const tg = targets.get(mesh);
@@ -3741,6 +3745,7 @@ async function собратьПроект() {
     },
     brush: { ...state.brush }, sizePct: state.sizePct, frontOnly: state.frontOnly,
     variants: state.variants, activeVariant: state.activeVariant,
+    ...(доп || {}),
   };
   // Лицо: грани, выражения вырезками. Рабочие слои «Глаза» и «Рот» лежат
   // среди слоёв; показанное выражение сперва уходит в свою вырезку.
@@ -3805,6 +3810,7 @@ async function saveProject(какНовый = false) {
       } else {
         downloadBlob(blob, имя);
       }
+      state.unsaved = false;
       setStatusHint(t('project.saved', место?.name || имя, UI.formatBytes(blob.size)));
       return 1;
     } catch (err) {
@@ -3903,7 +3909,7 @@ async function openProject(buffer, fileName) {
       syncBrushLabels(); syncLayers(); syncFace(); syncPoseUI(); syncViewUI();
       drawUVRows(); refreshUV();
       history.clear(); renderHistory(); syncHistoryButtons();
-      state.painted = false;
+      state.painted = state.unsaved = false;
       projectHandle = null;
       welcome.hide();
       setStatusHint(t('project.opened', fileName));
@@ -3924,9 +3930,8 @@ async function openProject(buffer, fileName) {
  * `<имя>_face_full.png` (всё лицо одной картинкой), описание
  * `<имя>_face.json`. Анимации и имена материалов уходят в GLB как обычно.
  */
-async function файлыЛица() {
+async function файлыЛица(основа = safeName(имяМодели().replace(/\.[^.]+$/, '') || 'model')) {
   const f = state.face;
-  const основа = safeName(имяМодели().replace(/\.[^.]+$/, '') || 'model');
   остановитьРазговор();
   const было = { ...f.shown };
   // В GLB — нейтральное: глаза и рот, а если их нет — всё лицо.
@@ -4166,6 +4171,37 @@ const releaseSpace = () => {
 window.addEventListener('keyup', (e) => { if (e.code === 'Space') releaseSpace(); });
 window.addEventListener('blur', releaseSpace);
 
+/* ── Покраска из LevelMaker ────────────────────────────────────── */
+
+/**
+ * Задание LevelMaker: модель открывается сама, «Сохранить и вернуть» пишет
+ * результат туда, где его ждут (`src/levelmaker.js`, `electron/levelmaker.cjs`).
+ * Выдача — те же файлы, что «Сохранить как»: GLB, а с лицом — набор лица.
+ */
+const askSaveModal = createAskSaveModal();
+const levelmaker = createLevelMaker({
+  viewport,
+  isUnsaved: () => !!state.unsaved,
+  markSaved: () => { state.unsaved = false; },
+  saveProject: () => saveProject(false),
+  askSave: (имя) => askSaveModal.ask(имя),
+  openBuffer: (буфер, имя) => openBuffer(буфер, имя),
+  hint: (текст) => setStatusHint(текст),
+  build: async (основа, levelmakerMeta) => {
+    if (!targets.size || !viewport.model) throw new Error(t('save.nothing'));
+    const файлы = state.face
+      ? await файлыЛица(основа)
+      : [{ name: `${основа}.glb`, blob: await viewport.inFileSpace(() => exportGLTF(viewport.model, картыДляЭкспорта(true), true)) }];
+    const байты = async (b) => new Uint8Array(await b.arrayBuffer());
+    const [модель, ...спутники] = файлы;
+    return {
+      model: await байты(модель.blob),
+      extras: await Promise.all(спутники.map(async (f) => ({ name: f.name, bytes: await байты(f.blob) }))),
+      project: levelmakerMeta ? await собратьПроект({ levelmaker: levelmakerMeta }) : null,
+    };
+  },
+});
+
 /* ── Меню программы ────────────────────────────────────────────── */
 
 const MOD = navigator.userAgent.includes('Mac') ? '⌘' : 'Ctrl+';
@@ -4180,6 +4216,7 @@ const menuBar = new MenuBar($('menubar'), [
     { label: () => t('file.saveProject'), hint: MOD + 'S', disabled: () => !targets.size, action: () => saveProject(false) },
     { label: () => t('file.saveProjectAs'), hint: '⇧' + MOD + 'S', disabled: () => !targets.size, action: () => saveProject(true) },
     '-',
+    { label: () => t('lm.return', levelmaker.caller()), hidden: () => !levelmaker.active(), action: () => levelmaker.send() },
     { label: () => t('file.saveAs'), disabled: () => !targets.size, action: () => saveAsModal.open() },
     { label: () => t('file.savePng'), disabled: () => !targets.size, action: saveTextures },
     '-',
@@ -4390,4 +4427,14 @@ window.__paint = { viewport, uvEditor, viewCube, menuBar, brushModal, materialMo
     const tg = targets.get(mesh);
     applySelection(new Map([[tg, faceMaskOf(mesh.userData.paintCache, tg.size, tris).mask]]), 'new');
   },
-  addVariant, включитьВариант };
+  addVariant, включитьВариант, levelmaker };
+
+// Оболочка: файлы, которыми открыли программу (задание LevelMaker — в
+// levelmaker.js, модель или проект — как перетаскиванием). Страница готова —
+// можно присылать.
+if (window.painterHost?.host) {
+  window.painterHost.host.onOpenFile(({ name, bytes }) => {
+    openBuffer(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), name);
+  });
+  window.painterHost.host.ready();
+}

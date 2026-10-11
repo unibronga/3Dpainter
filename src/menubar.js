@@ -3,7 +3,7 @@
  * действия панелей, и держать их в одном списке дешевле, чем разносить по
  * коду и потом искать, где какой отстал.
  *
- * Пункт: { label, hint, action, checked?, radio?, disabled? }
+ * Пункт: { label, hint, action, checked?, radio?, disabled?, hidden? }
  * Разделитель: строка '-'
  *
  * `title` и `label` бывают функциями: так надписи переживают смену языка —
@@ -119,6 +119,7 @@ export class MenuBar {
         row.classList.toggle('radio', !!item.radio);
         row.querySelector('.mark').textContent = on ? (item.radio ? '•' : '✓') : '';
         row.classList.toggle('disabled', item.disabled ? !!item.disabled() : false);
+        row.hidden = item.hidden ? !!item.hidden() : false;
       }
     }
   }

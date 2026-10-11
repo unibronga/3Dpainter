@@ -555,6 +555,8 @@ export class Viewport {
    * а что нет — меш без развёртки красить нечем, об этом надо сказать вслух.
    */
   setModel(object3D, name = t('model.default')) {
+    // Новая модель — значит, прежняя работа закрыта (задание LevelMaker в том числе).
+    this.onModelReplaced?.();
     this.clearModel();
 
     this.model = object3D;

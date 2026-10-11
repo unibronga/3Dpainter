@@ -209,6 +209,17 @@ work. The server
 listens on `127.0.0.1` only, requires a key and is off by default; every AI
 fill is an ordinary undo step.
 
+**Painting from LevelMaker.** LevelMaker, the level editor of the game
+ELTARAX, opens its models in 3DPainter with one click: it writes a small job
+file (`<name>.levelmaker.json`) and opens the app with it. 3DPainter loads the
+model (or the saved project of the same model), shows a **From LevelMaker** bar
+and its **Save and return to LevelMaker** button writes the painted GLB — the
+same file as *Save as ▸ GLB*, face atlases next to it — exactly where
+LevelMaker expects it, without dialogs, then answers with a status file. Files
+are written atomically (`.part`, then rename); a second launch hands the job to
+the running window. The contract is described in `electron/levelmaker.cjs`;
+`tests/levelmaker-roundtrip.cjs` runs it end to end.
+
 **Round trip.** A model saved with its paint opens with it again — GLB, or
 OBJ together with its `.mtl` and `.png` — and you keep painting where you
 left off. Multi-file saves go into one folder, chosen once.

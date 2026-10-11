@@ -87,3 +87,17 @@ export function unpackProject(буфер) {
   if (!файлы['model.glb']) throw new Error('в проекте нет модели');
   return { meta, modelGLB: файлы['model.glb'], file: (путь) => файлы[путь] || null };
 }
+
+/**
+ * Только описание проекта, без слоёв: чтобы решить, тот ли это проект,
+ * незачем распаковывать сотни мегабайт карт.
+ * @returns {object|null} описание или null, если это не проект 3DPainter
+ */
+export function readProjectMeta(буфер) {
+  try {
+    const файлы = unzipSync(буфер instanceof Uint8Array ? буфер : new Uint8Array(буфер),
+      { filter: (f) => f.name === 'project.json' });
+    const meta = файлы['project.json'] && JSON.parse(strFromU8(файлы['project.json']));
+    return meta && meta.format === FORMAT ? meta : null;
+  } catch { return null; }
+}

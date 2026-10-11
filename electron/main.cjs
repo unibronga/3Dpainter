@@ -8,6 +8,7 @@
 const { app, BrowserWindow, Menu, shell, ipcMain, session, dialog } = require('electron');
 const path = require('node:path');
 const { McpServer } = require('./mcp.cjs');
+const lm = require('./levelmaker.cjs');
 
 // Путь к собранной странице. В разработке можно подсунуть адрес Vite:
 //   PAINT_TOOL_DEV_URL=http://localhost:5273 npm run desktop:dev
@@ -19,6 +20,102 @@ let win = null;
 // Своя папка данных — для проверок: иначе тестовый запуск делит настройки
 // (и ключ MCP) с установленной программой.
 if (process.env.PAINT_TOOL_USER_DATA) app.setPath('userData', process.env.PAINT_TOOL_USER_DATA);
+
+/* ── Файлы, которыми открывают программу ───────────────────────────
+ *
+ * Задание LevelMaker, проект или модель приходят тремя путями: событием
+ * `open-file` (macOS, и холодный старт, и уже открытая программа), строкой
+ * запуска (Windows и разработка) и от второго экземпляра (`second-instance`).
+ * Пока страница не поднялась, файлы ждут в очереди.
+ *
+ * 🔴 `open-file` вешается до `ready`: при холодном старте macOS шлёт его
+ * раньше, и без обработчика файл потерялся бы.
+ */
+const очередь = [];
+let страницаГотова = false;
+
+app.on('open-file', (e, файл) => {
+  e.preventDefault();
+  принятьФайл(файл);
+});
+
+/**
+ * Второй копии быть не должно: Windows на каждый «Разукрасить» запускает
+ * 3DPainter.exe заново, и задание должно прийти в уже открытое окно.
+ * Для проверок (своя папка данных) замок тоже ставится — у каждой своя.
+ * Разработка без своей папки живёт без замка, иначе `electron .` молча
+ * уходил бы в установленную программу.
+ */
+const нуженЗамок = !process.env.PAINT_TOOL_SELFTEST && (app.isPackaged || !!process.env.PAINT_TOOL_USER_DATA);
+if (нуженЗамок && !app.requestSingleInstanceLock({ argv: process.argv, cwd: process.cwd() })) {
+  app.exit(0);
+} else {
+  app.on('second-instance', (_e, argv, cwd, доп) => {
+    // Свои argv и cwd второй экземпляр передаёт сам: на Windows строка
+    // запуска первой копии может быть урезана.
+    const a = Array.isArray(доп?.argv) ? доп.argv : argv;
+    for (const f of lm.filesFromArgv(a.slice(1), доп?.cwd || cwd)) принятьФайл(f);
+    вперёд();
+  });
+  for (const f of lm.filesFromArgv(process.argv.slice(1))) очередь.push(f);
+}
+
+/** Окно — вперёд: задание пришло, человек должен увидеть модель. */
+function вперёд() {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  if (process.platform === 'darwin') app.focus({ steal: true });
+}
+
+function принятьФайл(файл) {
+  очередь.push(файл);
+  if (app.isReady() && (!win || win.isDestroyed())) createWindow();
+  разобратьОчередь();
+}
+
+/* Задания, которые знает оболочка. Страница видит их по номеру и читает
+   только их файлы: задание называет пути, а произвольного чтения мы не даём. */
+const задания = new Map();
+let номерЗадания = 0;
+
+async function разобратьОчередь() {
+  if (!страницаГотова || !win || win.isDestroyed()) return;
+  while (очередь.length) {
+    const файл = очередь.shift();
+    вперёд();
+    if (!lm.isJobFile(файл)) {
+      // Проект или модель — как при перетаскивании.
+      try {
+        const bytes = new Uint8Array(await require('node:fs/promises').readFile(файл));
+        win.webContents.send('host:open-file', { name: path.basename(файл), bytes });
+      } catch (e) { console.error('[paint-tool] не открыть', файл, e.message); }
+      continue;
+    }
+    let job;
+    try {
+      job = lm.readJob(файл);
+    } catch (e) {
+      console.error('[paint-tool] задание LevelMaker:', e.message);
+      if (e.job?.status) await lm.writeStatus(e.job, 'failed', { message: e.message, version: app.getVersion() }).catch(() => {});
+      const ru = /^(ru|uk|be)/i.test(app.getLocale());
+      dialog.showMessageBox(win, {
+        type: 'warning',
+        message: ru ? 'Задание LevelMaker не открыто' : 'LevelMaker job was not opened',
+        detail: e.message,
+      });
+      continue;
+    }
+    job.id = ++номерЗадания;
+    задания.set(job.id, job);
+    // Странице — только то, что ей нужно показать и сравнить.
+    win.webContents.send('job:incoming', {
+      id: job.id, label: job.label, caller: job.caller,
+      model: job.model, returnTo: job.return_to, hasProject: !!job.project,
+    });
+  }
+}
 
 /**
  * 🔴 Сохранение набором в папку и «закрытые» папки.
@@ -58,6 +155,7 @@ function разрешитьПапкиПользователя(сессия) {
 }
 
 function createWindow() {
+  страницаГотова = false;
   win = new BrowserWindow({
     width: 1500,
     height: 950,
@@ -70,7 +168,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      // Мостик на три вызова — только для галки «Разрешить ИИ» (MCP).
+      // Мостик: галка «Разрешить ИИ» (MCP), соседи .obj, задания LevelMaker.
       preload: path.join(__dirname, 'preload.cjs'),
       // Своя папка для localStorage: настройки панелей не смешиваются с
       // тем, что инструмент запомнил в браузере.
@@ -122,6 +220,7 @@ function createWindow() {
     }
     app.quit();
   });
+  win.webContents.on('did-start-navigation', (d) => { if (d.isMainFrame && !d.isSameDocument) страницаГотова = false; });
   win.webContents.on('did-fail-load', (_e, code, desc, url) => {
     console.error('[paint-tool] страница не загрузилась:', code, desc, url);
   });
@@ -236,6 +335,53 @@ app.whenReady().then(async () => {
   ipcMain.handle('mcp:set-enabled', (_e, on) => mcp.setEnabled(on));
   ipcMain.handle('mcp:new-key', () => mcp.newKey());
   ipcMain.handle('model:companions', (_e, p) => companionsOf(p));
+
+  // Покраска из LevelMaker (`levelmaker.cjs`).
+  ipcMain.on('host:ready', (e) => {
+    if (!win || e.sender !== win.webContents) return;
+    страницаГотова = true;
+    разобратьОчередь();
+  });
+  ipcMain.handle('job:read', async (_e, id, что) => {
+    const job = задания.get(id);
+    const файл = job && (что === 'model' ? job.model : что === 'project' ? job.project : null);
+    if (!файл) return null;
+    try {
+      return { name: path.basename(файл), bytes: new Uint8Array(await require('node:fs/promises').readFile(файл)) };
+    } catch (e) {
+      if (что === 'project' && e.code === 'ENOENT') return null;     // проекта ещё нет — это нормально
+      throw new Error(`${файл}: ${e.code === 'ENOENT' ? 'файла нет' : e.message}`);
+    }
+  });
+  ipcMain.handle('job:status', async (_e, id, state, код, подробно) => {
+    const job = задания.get(id);
+    if (!job || !['opened', 'cancelled', 'failed'].includes(state)) return false;
+    const message = [lm.ПРИЧИНЫ[код] || '', подробно || ''].filter(Boolean).join(': ');
+    await lm.writeStatus(job, state, { message, version: app.getVersion() });
+    if (state !== 'opened') задания.delete(id);
+    return true;
+  });
+  ipcMain.handle('job:return', async (_e, id, что) => {
+    const job = задания.get(id);
+    if (!job) throw new Error('задание уже закрыто');
+    try {
+      await lm.deliver(job, что);
+    } catch (e) {
+      await lm.writeStatus(job, 'failed', { message: `${lm.ПРИЧИНЫ['save-failed']}: ${e.message}`, version: app.getVersion() }).catch(() => {});
+      throw e;
+    }
+    const st = await lm.writeStatus(job, 'saved', { version: app.getVersion() });
+    // Вернуть человека в LevelMaker: на Mac — его же приложением; на Windows
+    // окно сворачивается, LevelMaker выйдет вперёд сам, увидев `saved`.
+    if (process.platform === 'darwin') {
+      if (job.return_app) require('node:child_process').execFile('open', ['-a', job.return_app], (err) => {
+        if (err) console.error('[paint-tool] не вернуть в', job.return_app, err.message);
+      });
+    } else if (win && !win.isDestroyed()) {
+      win.minimize();
+    }
+    return { time: st.time };
+  });
   if (mcp.cfg.enabled && !process.env.PAINT_TOOL_SELFTEST) await mcp.start();
   createWindow();
 

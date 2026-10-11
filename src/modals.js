@@ -909,6 +909,43 @@ export function createSaveAsModal(api) {
   return { open: () => { синхронизировать(); m.open(); }, modal: m };
 }
 
+/* ── Вопрос о несохранённой работе ─────────────────────────────── */
+
+/**
+ * «Сохранить / Не сохранять / Отмена» перед тем, как открыть другое (задание
+ * LevelMaker). Закрытие мимо окна и Esc — отмена: ничего не теряется.
+ * @returns {{ask: (имя: string) => Promise<'save'|'discard'|'cancel'>}}
+ */
+export function createAskSaveModal() {
+  const m = new Modal('ask.title');
+  const текст = el('div', 'ask-text');
+  m.body.appendChild(текст);
+  let имя = '';
+  let ответить = null;
+  const синхронизировать = () => { текст.textContent = t('ask.text', имя); };
+  onLangChange(синхронизировать);
+
+  const кнопка = (ключ, cls, ответ) => {
+    const b = elT('button', cls, ключ);
+    b.addEventListener('click', () => { const f = ответить; ответить = null; m.close(); f?.(ответ); });
+    return b;
+  };
+  m.foot.append(el('div', 'foot-hint'), кнопка('ask.cancel', 'btn', 'cancel'), кнопка('ask.discard', 'btn', 'discard'),
+    кнопка('ask.save', 'btn accent', 'save'));
+  m.onCancel = () => { const f = ответить; ответить = null; f?.('cancel'); };
+
+  return {
+    ask: (что) => new Promise((ok) => {
+      ответить?.('cancel');
+      ответить = ok;
+      имя = что;
+      синхронизировать();
+      m.open();
+    }),
+    modal: m,
+  };
+}
+
 /* ── Окно «Вид в PNG» ──────────────────────────────────────────── */
 
 /** Сколько пикселей снимка держим в памяти за раз (с учётом сглаживания):
