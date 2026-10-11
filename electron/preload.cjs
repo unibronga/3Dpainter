@@ -22,6 +22,14 @@ contextBridge.exposeInMainWorld('painterHost', {
     ready: () => ipcRenderer.send('host:ready'),
     onOpenFile: (cb) => { ipcRenderer.on('host:open-file', (_e, f) => cb(f)); },
   },
+  // Сохранение: место выбирает человек системным окном, страница пишет по номеру.
+  files: {
+    pickFolder: () => ipcRenderer.invoke('files:pick-folder'),
+    writeFolder: (id, folderName, files) => ipcRenderer.invoke('files:write-folder', id, folderName, files),
+    pickFile: (name, type) => ipcRenderer.invoke('files:pick-file', name, type || ''),
+    writeFile: (id, bytes) => ipcRenderer.invoke('files:write-file', id, bytes),
+    reveal: (id) => ipcRenderer.invoke('files:reveal', id),
+  },
   job: {
     onIncoming: (cb) => { ipcRenderer.on('job:incoming', (_e, j) => cb(j)); },
     read: (id, what) => ipcRenderer.invoke('job:read', id, what),

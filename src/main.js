@@ -31,7 +31,8 @@ import { addRecent, recentId, setThumb } from './recent.js';
 import { withBusy, busyNote } from './busy.js';
 import { rasterPolygon, projectCover, combine, isEmpty, outline } from './selection.js';
 import { initTooltips } from './tooltip.js';
-import { canSaveToFolder, pickFolder, writeToFolder, downloadBlob, canvasBlob, safeName } from './savefiles.js';
+import { canSaveToFolder, pickFolder, writeToFolder, pickFile, writeFile, canReveal, reveal, downloadBlob, canvasBlob, safeName } from './savefiles.js';
+import { showSaved, showSaveFailed, toastState } from './toast.js';
 import { EXPRESSIONS, SLOTS, faceMaskOf, trisFromSelection, cropLayer, putCrop, cropIsEmpty, buildAtlas, faceDescription } from './face.js';
 
 // Сбор ошибок с самого начала загрузки: в консоли браузера вперемешку лежат
@@ -3564,35 +3565,59 @@ function setTexSize(next) {
  * каждое «скачивание» показывает своё окно сохранения, и OBJ с материалом и
  * картой спрашивал три раза подряд. Место выбирается сразу по нажатию — до
  * экспорта под индикатором, иначе браузер уже не даст открыть окно выбора.
+ * Один файл — окном «Сохранить как» с готовым именем.
  *
- * @param {string} имяПапки папка, которая будет создана в выбранном месте
- * @param {number} сколько сколько файлов будет — решает, нужна ли папка
- * @param {() => Promise<{name: string, blob: Blob}[]>} собрать
+ * @param {object} о
+ * @param {string} о.папка папка, которая будет создана в выбранном месте
+ * @param {number} о.сколько сколько файлов будет — решает, нужна ли папка
+ * @param {string} [о.имя] имя файла, если он один (предлагается в окне)
+ * @param {() => Promise<{name: string, blob: Blob}[]>} о.собрать
+ * @param {[string, ...any]} о.занятость ключ надписи индикатора и подстановки
  * @returns {Promise<number>} сколько файлов сохранено
  */
-async function сохранитьФайлы(имяПапки, сколько, собрать, ключЗанятости, ...значения) {
-  let место;                            // undefined — папкой не сохраняем
-  if (сколько > 1 && canSaveToFolder()) {
-    try { место = await pickFolder(); } catch (err) { console.warn(err); }
-    if (место === null) { setStatusHint(t('save.cancelled')); return 0; }
-  }
-  return withBusy(ключЗанятости, async () => {
+async function сохранитьФайлы({ папка: имяПапки, сколько, имя, собрать, занятость }) {
+  let место;                            // undefined — спросить нечем, скачиванием
+  try {
+    место = сколько > 1 ? (canSaveToFolder() ? await pickFolder() : undefined) : await pickFile(имя);
+  } catch (err) { console.warn(err); }
+  if (место === null) { setStatusHint(t('save.cancelled')); return 0; }
+  const [ключ, ...значения] = занятость;
+  return withBusy(ключ, async () => {
     try {
       const файлы = await собрать();
-      if (место) {
-        const папка = await writeToFolder(место, имяПапки, файлы);
-        setStatusHint(t('save.toFolder', файлы.length, папка));
+      let итог;
+      if (сколько > 1 && место) {
+        итог = await writeToFolder(место, имяПапки, файлы);
+        setStatusHint(t('save.toFolder', файлы.length, итог.name));
+      } else if (файлы.length === 1) {
+        итог = await writeFile(место, файлы[0].blob, файлы[0].name);
+        setStatusHint(t('save.done', 1));
       } else {
         for (const { name, blob } of файлы) downloadBlob(blob, name);
+        итог = { name: имяПапки, count: файлы.length, download: true };
         setStatusHint(t('save.done', файлы.length));
       }
+      сообщитьОСохранении(итог);
       return файлы.length;
     } catch (err) {
-      setStatusHint(t('save.failed', err.message));
-      console.error(err);
+      провалСохранения(err);
       return 0;
     }
   }, ...значения);
+}
+
+/** Итог — заметной плашкой; в приложении с кнопкой «Показать в Finder». */
+function сообщитьОСохранении(итог) {
+  showSaved(итог, canReveal(итог) ? () => reveal(итог) : null);
+}
+function провалСохранения(err) {
+  const сырой = String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  // Системные коды — словами: путь к .part человеку ничего не скажет.
+  const текст = /EACCES|EPERM|EROFS|NotAllowedError/.test(сырой) ? t('save.errAccess')
+    : /ENOSPC|QuotaExceeded/.test(сырой) ? t('save.errSpace') : сырой;
+  setStatusHint(t('save.failed', текст));
+  showSaveFailed(текст);
+  console.error(err);
 }
 
 /**
@@ -3656,7 +3681,7 @@ async function saveAs(формат) {
     if (!state.face) { setStatusHint(t('face.noneToSave')); return 0; }
     const сколько = 2 + (нарисованные('eyes').length ? 1 : 0) + (state.face.mouth && нарисованные('mouth').length ? 1 : 0)
       + (нарисованные('full').length ? 1 : 0);
-    return сохранитьФайлы(основа, сколько, () => файлыЛица(), 'busy.save', основа);
+    return сохранитьФайлы({ папка: основа, сколько, собрать: () => файлыЛица(), занятость: ['busy.save', основа] });
   }
 
   const карты = картыДляЭкспорта();
@@ -3664,15 +3689,15 @@ async function saveAs(формат) {
   // В файл — в исходных координатах: поворот модели нужен для работы, а не
   // для чужого пайплайна.
   if (формат === 'glb' || формат === 'gltf') {
-    return сохранитьФайлы(основа, 1, async () => [{
+    return сохранитьФайлы({ сколько: 1, имя: `${основа}.${формат}`, собрать: async () => [{
       name: `${основа}.${формат}`,
       blob: await viewport.inFileSpace(() => exportGLTF(viewport.model, картыДляЭкспорта(true), формат === 'glb')),
-    }], 'busy.save', `${основа}.${формат}`);
+    }], занятость: ['busy.save', `${основа}.${формат}`] });
   }
 
   // OBJ — три файла: геометрия, материал и карта. OBJ ссылается на карту по
   // имени, поэтому все три должны лечь рядом — одной папкой.
-  return сохранитьФайлы(основа, 3, async () => {
+  return сохранитьФайлы({ папка: основа, сколько: 3, занятость: ['busy.save', `${основа}.obj`], собрать: async () => {
     const { obj, mtl } = await viewport.inFileSpace(() => exportOBJ(viewport.model, карты, основа));
     const [, первая] = [...targets][0];
     return [
@@ -3680,7 +3705,7 @@ async function saveAs(формат) {
       { name: `${основа}.mtl`, blob: mtl },
       { name: `${основа}.png`, blob: await canvasBlob(первая.canvas) },
     ];
-  }, 'busy.save', `${основа}.obj`);
+  } });
 }
 
 /** Есть ли на карте материала хоть что-то, кроме подложки. */
@@ -3787,35 +3812,21 @@ async function saveProject(какНовый = false) {
   if (!targets.size || !viewport.model) { setStatusHint(t('save.nothing')); return 0; }
   const имя = `${safeName(имяМодели().replace(/\.[^.]+$/, '') || 'model')}.${PROJECT_EXT}`;
   let место = какНовый ? null : projectHandle;
-  if (!место && typeof window.showSaveFilePicker === 'function') {
-    try {
-      место = await window.showSaveFilePicker({
-        suggestedName: имя, id: '3dpainter-project',
-        types: [{ description: t('save.projectType'), accept: { 'application/octet-stream': ['.' + PROJECT_EXT] } }],
-      });
-    } catch (err) {
-      if (err?.name === 'AbortError') { setStatusHint(t('save.cancelled')); return 0; }
-      console.warn(err);
-      место = null;                     // не вышло — отдадим обычным скачиванием
-    }
+  if (!место) {
+    место = await pickFile(имя, t('save.projectType'));
+    if (место === null) { setStatusHint(t('save.cancelled')); return 0; }
   }
   return withBusy('busy.project', async () => {
     try {
       const blob = new Blob([await собратьПроект()], { type: 'application/octet-stream' });
-      if (место) {
-        const поток = await место.createWritable();
-        await поток.write(blob);
-        await поток.close();
-        projectHandle = место;
-      } else {
-        downloadBlob(blob, имя);
-      }
+      const итог = await writeFile(место, blob, имя);
+      if (!итог.download) projectHandle = место;
       state.unsaved = false;
-      setStatusHint(t('project.saved', место?.name || имя, UI.formatBytes(blob.size)));
+      setStatusHint(t('project.saved', итог.name, UI.formatBytes(blob.size)));
+      сообщитьОСохранении(итог);
       return 1;
     } catch (err) {
-      setStatusHint(t('save.failed', err.message));
-      console.error(err);
+      провалСохранения(err);
       return 0;
     }
   }, имя);
@@ -4035,9 +4046,8 @@ async function saveTextures() {
   if (!targets.size) return 0;
   const base = safeName(имяМодели().replace(/\.[^.]+$/, '') || 'model');
   const все = [...targets].flatMap(([mesh, t]) => картыМеша(mesh, t, true));
-  return сохранитьФайлы(`${base} — карты`, все.length,
-    async () => Promise.all(все.map(async (к) => ({ name: к.name, blob: await canvasBlob(к.canvas) }))),
-    'busy.maps');
+  return сохранитьФайлы({ папка: `${base} — карты`, сколько: все.length, имя: все[0]?.name, занятость: ['busy.maps'],
+    собрать: async () => Promise.all(все.map(async (к) => ({ name: к.name, blob: await canvasBlob(к.canvas) }))) });
 }
 
 /** Имя файла для карт меша: у составной модели к имени модели — имя меша. */
@@ -4056,9 +4066,8 @@ function saveUVPng() {
   const target = activeTarget();
   if (!state.uvOpen || !target) return;
   const карты = картыМеша(activeMesh, target);
-  return сохранитьФайлы(имяКарты(activeMesh), карты.length,
-    async () => Promise.all(карты.map(async (к) => ({ name: к.name, blob: await canvasBlob(к.canvas) }))),
-    'busy.maps');
+  return сохранитьФайлы({ папка: имяКарты(activeMesh), сколько: карты.length, имя: карты[0]?.name, занятость: ['busy.maps'],
+    собрать: async () => Promise.all(карты.map(async (к) => ({ name: к.name, blob: await canvasBlob(к.canvas) }))) });
 }
 $('btn-uv-png').addEventListener('click', saveUVPng);
 $('btn-uv-rebuild').addEventListener('click', rebuildOverlappingUV);
@@ -4069,18 +4078,25 @@ const aboutModal = createAboutModal({ version: APP_VERSION, icon: значокП
 const viewPngModal = createViewPngModal({
   viewSize: () => viewport.viewSize(),
   maxSide: () => viewport.maxRenderSide(),
-  save: ({ w, h, ss }) => withBusy('busy.view', () => new Promise((готово) => {
-    const картинка = viewport.renderView(w, h, ss);
-    const холст = document.createElement('canvas');
-    холст.width = w; холст.height = h;
-    холст.getContext('2d').putImageData(картинка, 0, 0);
-    холст.toBlob((blob) => {
-      const base = safeName(имяМодели().replace(/\.[^.]+$/, '') || 'model');
-      if (blob) downloadBlob(blob, `${base}_view.png`);
-      setStatusHint(t('status.viewSaved', w, h));
-      готово();
-    }, 'image/png');
-  }), w, h),
+  save: async ({ w, h, ss }) => {
+    const имя = `${safeName(имяМодели().replace(/\.[^.]+$/, '') || 'model')}_view.png`;
+    let место;
+    try { место = await pickFile(имя); } catch (err) { console.warn(err); }
+    if (место === null) { setStatusHint(t('save.cancelled')); return; }
+    return withBusy('busy.view', async () => {
+      try {
+        const картинка = viewport.renderView(w, h, ss);
+        const холст = document.createElement('canvas');
+        холст.width = w; холст.height = h;
+        холст.getContext('2d').putImageData(картинка, 0, 0);
+        const итог = await writeFile(место, await canvasBlob(холст), имя);
+        setStatusHint(t('status.viewSaved', w, h));
+        сообщитьОСохранении(итог);
+      } catch (err) {
+        провалСохранения(err);
+      }
+    }, w, h);
+  },
 });
 $('btn-view-png').addEventListener('click', () => {
   if (!targets.size) { setStatusHint(t('status.noModel')); return; }
@@ -4427,7 +4443,7 @@ window.__paint = { viewport, uvEditor, viewCube, menuBar, brushModal, materialMo
     const tg = targets.get(mesh);
     applySelection(new Map([[tg, faceMaskOf(mesh.userData.paintCache, tg.size, tris).mask]]), 'new');
   },
-  addVariant, включитьВариант, levelmaker };
+  addVariant, включитьВариант, levelmaker, toastState };
 
 // Оболочка: файлы, которыми открыли программу (задание LevelMaker — в
 // levelmaker.js, модель или проект — как перетаскиванием). Страница готова —

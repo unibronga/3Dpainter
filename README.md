@@ -236,7 +236,9 @@ screens), the default texture size and whether the start screen appears on
 launch.
 
 **Long operations** — opening a model, saving, rebuilding textures — run
-under a busy indicator, so it is clear the program is working.
+under a busy indicator, so it is clear the program is working. Every save ends
+with a **Saved** card: what was written and where, with **Show in Finder**
+(Explorer on Windows) in the desktop app; a failed save shows why.
 
 **Languages.** The whole interface speaks English, Russian, German, Spanish,
 French, Dutch and Ukrainian, and switches

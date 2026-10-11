@@ -579,6 +579,8 @@ export default {
   'save.toFolder': 'saved {0} files to the folder “{1}”',
   'save.cancelled': 'saving cancelled',
   'save.failed': 'could not save: {0}',
+  'save.errAccess': 'No permission to write to this folder.',
+  'save.errSpace': 'Not enough disk space.',
   'view.title': 'View to PNG',
   'view.size': 'Size',
   'view.size1': 'As in the viewport',
@@ -594,6 +596,13 @@ export default {
   'view.clamped': 'clamped to the GPU limit of {0} px',
   'view.lowered': 'smoothing lowered to {0} × {0}',
   'save.done': 'files saved: {0}',
+  'saved.title': 'Saved',
+  'saved.failedTitle': 'Not saved',
+  'saved.inFolder': 'in the folder “{0}”',
+  'saved.count': 'files: {0}',
+  'saved.download': 'to the browser’s Downloads',
+  'saved.revealMac': 'Show in Finder',
+  'saved.revealWin': 'Show in Explorer',
   'save.nothing': 'nothing to save: no model is open',
 
   /* ── Settings ────────────────────────────────────────────────── */

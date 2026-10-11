@@ -578,6 +578,8 @@ export default {
   'save.toFolder': 'сохранено файлов: {0} — в папку «{1}»',
   'save.cancelled': 'сохранение отменено',
   'save.failed': 'не удалось сохранить: {0}',
+  'save.errAccess': 'Нет прав на запись в эту папку.',
+  'save.errSpace': 'На диске не хватает места.',
   'view.title': 'Вид в PNG',
   'view.size': 'Размер',
   'view.size1': 'Как во вьюпорте',
@@ -593,6 +595,13 @@ export default {
   'view.clamped': 'урезано до предела видеокарты {0} px',
   'view.lowered': 'сглаживание понижено до {0} × {0}',
   'save.done': 'сохранено файлов: {0}',
+  'saved.title': 'Сохранено',
+  'saved.failedTitle': 'Не сохранено',
+  'saved.inFolder': 'в папке «{0}»',
+  'saved.count': 'файлов: {0}',
+  'saved.download': 'в «Загрузки» браузера',
+  'saved.revealMac': 'Показать в Finder',
+  'saved.revealWin': 'Показать в Проводнике',
   'save.nothing': 'нечего сохранять: модель не открыта',
 
   /* ── Настройки ───────────────────────────────────────────────── */

@@ -336,6 +336,83 @@ app.whenReady().then(async () => {
   ipcMain.handle('mcp:new-key', () => mcp.newKey());
   ipcMain.handle('model:companions', (_e, p) => companionsOf(p));
 
+  /*
+   * Сохранение из приложения: окна выбора и запись — здесь, у оболочки.
+   *
+   * Окно File System Access пути странице не отдаёт, а без пути итог
+   * сохранения нельзя показать в Finder. Поэтому в приложении место выбирает
+   * человек системным окном, страница получает его номер (не путь) и пишет
+   * по номеру. Писать можно только туда, что выбрал сам человек.
+   */
+  const места = new Map();          // номер → { path, kind: 'folder'|'file'|'written' }
+  let номерМеста = 0;
+  const местоПоНомеру = (id, kind) => {
+    const м = места.get(id);
+    if (!м || (kind && м.kind !== kind)) throw new Error('место сохранения забыто — выберите заново');
+    return м;
+  };
+  const запомнить = (p, kind) => { const id = ++номерМеста; места.set(id, { path: p, kind }); return id; };
+  // Последняя папка — чтобы окно открывалось там же, где сохраняли в прошлый раз.
+  const файлПапок = path.join(app.getPath('userData'), 'save-places.json');
+  const последние = (() => { try { return JSON.parse(require('node:fs').readFileSync(файлПапок, 'utf8')); } catch { return {}; } })();
+  const запомнитьПапку = (ключ, папка) => {
+    последние[ключ] = папка;
+    require('node:fs/promises').writeFile(файлПапок, JSON.stringify(последние)).catch(() => {});
+  };
+  const чистоеИмя = (имя) => String(имя).replace(/[\\/:*?"<>|]+/g, '_').replace(/^\.+/, '').trim() || 'model';
+  // Для проверок: системное окно скриптом не нажать — место «выбирается» само,
+  // а «Показать в Finder» отвечает путём, не открывая окон.
+  const ТЕСТ = process.env.PAINT_TOOL_TEST_PICK || '';
+  const вернутьИтог = (p, kind) => ({ id: запомнить(p, 'written'), name: path.basename(p), parent: path.basename(path.dirname(p)), kind });
+
+  ipcMain.handle('files:pick-folder', async (e) => {
+    if (ТЕСТ) return { id: запомнить(ТЕСТ, 'folder'), name: path.basename(ТЕСТ) };
+    const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), {
+      properties: ['openDirectory', 'createDirectory'],
+      defaultPath: последние.folder || app.getPath('documents'),
+    });
+    if (r.canceled || !r.filePaths[0]) return null;
+    запомнитьПапку('folder', r.filePaths[0]);
+    return { id: запомнить(r.filePaths[0], 'folder'), name: path.basename(r.filePaths[0]) };
+  });
+  ipcMain.handle('files:write-folder', async (_e, id, имяПапки, файлы) => {
+    const fsp = require('node:fs/promises');
+    const { path: корень } = местоПоНомеру(id, 'folder');
+    // Папка с таким именем уже есть — «имя 2», «имя 3»: чужое не перезаписываем.
+    const основа = чистоеИмя(имяПапки);
+    let папка = path.join(корень, основа);
+    for (let n = 2; await fsp.stat(папка).then(() => true, () => false); n++) папка = path.join(корень, `${основа} ${n}`);
+    await fsp.mkdir(папка, { recursive: true });
+    for (const { name, bytes } of файлы) await lm.writeAtomic(path.join(папка, чистоеИмя(name)), bytes);
+    return { ...вернутьИтог(папка, 'folder'), count: файлы.length };
+  });
+  ipcMain.handle('files:pick-file', async (e, имя, тип) => {
+    const ext = path.extname(String(имя)).slice(1);
+    if (ТЕСТ) return { id: запомнить(path.join(ТЕСТ, чистоеИмя(имя)), 'file'), name: чистоеИмя(имя) };
+    const r = await dialog.showSaveDialog(BrowserWindow.fromWebContents(e.sender), {
+      defaultPath: path.join(последние.file || app.getPath('documents'), чистоеИмя(имя)),
+      filters: ext ? [{ name: тип || ext.toUpperCase(), extensions: [ext] }] : [],
+    });
+    if (r.canceled || !r.filePath) return null;
+    запомнитьПапку('file', path.dirname(r.filePath));
+    return { id: запомнить(r.filePath, 'file'), name: path.basename(r.filePath) };
+  });
+  ipcMain.handle('files:write-file', async (_e, id, bytes) => {
+    const { path: файл } = местоПоНомеру(id, 'file');
+    await lm.writeAtomic(файл, bytes);
+    return { ...вернутьИтог(файл, 'file'), count: 1 };
+  });
+  ipcMain.handle('files:reveal', async (_e, id) => {
+    const { path: p } = местоПоНомеру(id, 'written');
+    // Папку — открыть (видно, что внутри), файл — показать выделенным.
+    const st = await require('node:fs/promises').stat(p).catch(() => null);
+    if (!st) throw new Error('файла уже нет');
+    if (ТЕСТ) return p;
+    if (st.isDirectory()) { const err = await shell.openPath(p); if (err) throw new Error(err); }
+    else shell.showItemInFolder(p);
+    return true;
+  });
+
   // Покраска из LevelMaker (`levelmaker.cjs`).
   ipcMain.on('host:ready', (e) => {
     if (!win || e.sender !== win.webContents) return;

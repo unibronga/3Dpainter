@@ -11,11 +11,9 @@
  * Пути — с кириллицей, пробелами и скобками: такие и пишет LevelMaker.
  */
 
-const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const ELECTRON = require('electron');
 const lm = require('../electron/levelmaker.cjs');
 
 const ROOT = path.join(__dirname, '..');
@@ -88,51 +86,7 @@ function сводкаGLB(файл) {
 
 /* ── Программа и CDP ── */
 
-let порт = 9400 + Math.floor(Math.random() * 400);
-function запустить(аргументы, { ждатьОкно = true } = {}) {
-  const p = spawn(ELECTRON, [ROOT, ...аргументы, `--remote-debugging-port=${порт}`], {
-    env: { ...process.env, PAINT_TOOL_USER_DATA: path.join(tmp, 'user'), ELECTRON_RUN_AS_NODE: '' },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  p.лог = '';
-  p.stdout.on('data', (d) => { p.лог += d; });
-  p.stderr.on('data', (d) => { p.лог += d; });
-  p.вышел = new Promise((r) => p.on('exit', (код) => r(код)));
-  return p;
-}
-
-async function страница() {
-  for (let i = 0; i < 100; i++) {
-    try {
-      const список = await (await fetch(`http://127.0.0.1:${порт}/json/list`)).json();
-      const p = список.find((x) => x.type === 'page' && x.webSocketDebuggerUrl);
-      if (p) return p.webSocketDebuggerUrl;
-    } catch { /* ещё не поднялась */ }
-    await пауза(150);
-  }
-  throw new Error('страница не поднялась');
-}
-
-async function cdp() {
-  const ws = new WebSocket(await страница());
-  await new Promise((ok, нет) => { ws.onopen = ok; ws.onerror = нет; });
-  let n = 0;
-  const ждут = new Map();
-  ws.onmessage = (m) => {
-    const d = JSON.parse(m.data);
-    if (d.id && ждут.has(d.id)) { ждут.get(d.id)(d); ждут.delete(d.id); }
-  };
-  const js = async (код) => {
-    const id = ++n;
-    ws.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression: код, awaitPromise: true, returnByValue: true } }));
-    const d = await new Promise((r) => ждут.set(id, r));
-    if (d.result?.exceptionDetails) throw new Error(d.result.exceptionDetails.exception?.description || 'ошибка в странице');
-    return d.result?.result?.value;
-  };
-  // Ждём, пока программа поднимется.
-  for (let i = 0; i < 100 && !(await js('!!window.__paint').catch(() => false)); i++) await пауза(100);
-  return { js, close: () => ws.close() };
-}
+const { запустить, cdp } = require('./live.cjs')({ tmp });
 
 /** Дождаться состояния `st` в файле состояния (новее `после`). */
 async function ждатьСостояние(job, st, после = '', мс = 20000) {
