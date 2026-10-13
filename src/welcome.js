@@ -2,7 +2,7 @@
  * Начальный экран.
  *
  * Первое, что видит человек: с чего начать — открыть свою модель или взять
- * демо-хижину и красить прямо сейчас. Рядом — то, что уже открывали.
+ * демо-дракона с логотипа и красить прямо сейчас. Рядом — то, что уже открывали.
  *
  * Экран накрывает всё окно, но программа под ним живая и готовая: закрыть
  * его можно в любой момент, и ничего не потеряется.
@@ -96,7 +96,8 @@ export function createWelcome(api) {
   }
 
   const ЗНАЧОК_ОТКРЫТЬ = '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.5h7A1.5 1.5 0 0 1 19 10v7.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 3 17.5z"/><path d="M12 11v5M9.5 13.5 12 11l2.5 2.5"/></svg>';
-  const ЗНАЧОК_ДЕМО = '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5 12 5l8 5.5V19a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M9.5 20v-6h5v6"/></svg>';
+  // Демо — тот же дракон, что на значке программы.
+  const ЗНАЧОК_ДЕМО = `<img src="${значокПрограммы}" width="32" height="32" alt="">`;
 
   const картОткрыть = карточка(ЗНАЧОК_ОТКРЫТЬ, 'welcome.open', 'welcome.openHint', () => api.pickFile());
   const картДемо = карточка(ЗНАЧОК_ДЕМО, 'welcome.demo', 'welcome.demoHint', () => { api.openDemo(); скрыть(); });

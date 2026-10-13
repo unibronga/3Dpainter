@@ -12,7 +12,7 @@ import { PaintTarget, History, bleedLayer, remapLayer, Layer } from './layers.js
 import { Stroke, rectStencil, ellipseStencil, imageStencil } from './painter.js';
 import { loadDecalImage, decalStencil, DecalOverlay, quadFromDrag, hitQuad, dragQuad, quadBounds, quadInverse } from './decal.js';
 import * as THREE from 'three';
-import { floodFaces, OVERLAP_LIMIT } from './mesh-cache.js';
+import { floodFaces, OVERLAP_LIMIT, queryGrid } from './mesh-cache.js';
 import * as UI from './ui.js';
 import { createBrushModal, createMaterialModal, createHelpModal,
          createSaveAsModal, createSettingsModal, createViewPngModal, createAboutModal,
@@ -1006,6 +1006,58 @@ history.beforeRestore = (e) => {
 
 /* ── Размеры кисти ─────────────────────────────────────────────── */
 
+/** Верхний предел кисти, % габарита модели. */
+const КИСТЬ_МАКС = 40;
+const текселиМешей = new WeakMap();
+
+/**
+ * Сторона медианного текселя меша в мировых метрах при стороне текстуры S.
+ * Медиана отношения площадей грани и её следа в развёртке — плотность, какую
+ * встречает кисть на большей части модели.
+ */
+function текселМира(mesh, cache, S) {
+  const было = текселиМешей.get(cache);
+  if (было && было.S === S) return было.w;
+  const { pos, uv, idx, triCount } = cache;
+  const r = new Float32Array(triCount);
+  let n = 0;
+  for (let t = 0; t < triCount; t++) {
+    const a = idx[t * 3], b = idx[t * 3 + 1], c = idx[t * 3 + 2];
+    const uA = Math.abs((uv[b * 2] - uv[a * 2]) * (uv[c * 2 + 1] - uv[a * 2 + 1])
+      - (uv[c * 2] - uv[a * 2]) * (uv[b * 2 + 1] - uv[a * 2 + 1]));
+    if (uA < 1e-12) continue;
+    const e1x = pos[b * 3] - pos[a * 3], e1y = pos[b * 3 + 1] - pos[a * 3 + 1], e1z = pos[b * 3 + 2] - pos[a * 3 + 2];
+    const e2x = pos[c * 3] - pos[a * 3], e2y = pos[c * 3 + 1] - pos[a * 3 + 1], e2z = pos[c * 3 + 2] - pos[a * 3 + 2];
+    const A = Math.hypot(e1y * e2z - e1z * e2y, e1z * e2x - e1x * e2z, e1x * e2y - e1y * e2x);
+    r[n++] = A / uA;            // обе площади удвоены — множитель сокращается
+  }
+  if (!n) return 0;
+  const отн = r.subarray(0, n).sort();
+  const s = mesh.getWorldScale(mesh.position.clone());
+  const w = Math.sqrt(отн[n >> 1]) / S * (Math.max(s.x, s.y, s.z) || 1);
+  текселиМешей.set(cache, { S, w });
+  return w;
+}
+
+/**
+ * Нижний предел кисти, % габарита: полтора текселя самого плотного меша.
+ * Кисть в тексель рвёт линию на точки — в её шар попадает не всякий центр
+ * текселя. Замер на Kian (тексель 1,25 мм), доля краски в худшей точке
+ * вдоль мазка с фильтрацией видеокарты: 1 тексель — 0,06 (обрывы),
+ * 1,2 — 0,49 на диагонали (бусы), 1,5 — 0,62, 2 — 0,88.
+ */
+function минКисти() {
+  const S = activeTarget()?.size;
+  if (!S || !viewport.modelSize) return 0.3;
+  let w = Infinity;
+  for (const { mesh, cache } of viewport.paintables) {
+    const x = текселМира(mesh, cache, S);
+    if (x > 0 && x < w) w = x;
+  }
+  if (!Number.isFinite(w)) return 0.3;
+  return Math.min(1, Math.max(0.01, +(1.5 * w / viewport.modelSize * 100).toPrecision(2)));
+}
+
 function brushRadiusWorld() {
   return ((viewport.modelSize || 1) * state.sizePct) / 200;
 }
@@ -1805,7 +1857,7 @@ window.addEventListener('pointermove', (e) => {
     decalPointer('view', 'move', e);
     return;
   }
-  if (!over && !stroke) { viewport.hideCursor(); return; }
+  if (!over && !stroke) { viewport.hideCursor(); показатьВРазвёртке(null); return; }
 
   if (shapeDrag) {
     const cr = viewport.renderer.domElement.getBoundingClientRect();
@@ -1842,12 +1894,47 @@ window.addEventListener('pointermove', (e) => {
   // Кольцо кисти показывает, куда ляжет краска. У выбора объекта краски
   // нет, и кольцо только врало бы про размер мазка.
   const безКисти = state.tool === 'select' || VIEW_TOOLS.has(state.tool) || LASSO_TOOLS.has(state.tool);
+  // Луч нужен кольцу кисти и, при открытой развёртке, отметке в ней.
+  const hit = over && (!безКисти || state.uvOpen) ? viewport.pick(e.clientX, e.clientY) : null;
   if (over && !безКисти) {
-    viewport.showCursor(viewport.pick(e.clientX, e.clientY), brushRadiusWorld());
+    viewport.showCursor(hit, brushRadiusWorld());
   } else if (безКисти) {
     viewport.showCursor(null, 0);
   }
+  показатьВРазвёртке(hit);
 });
+
+/**
+ * Что под курсором на модели — отметкой в развёртке: какие треугольники
+ * заденет кисть и где сама точка. Мелочь вроде пуговиц Kian, приваренных к
+ * мундиру, лежит в атласе пятном в десяток текселей посреди чужого острова:
+ * наведи на неё на модели — и видно, где она в развёртке.
+ * Отбор — как у отпечатка кисти (`Stroke.dab`): по оболочке треугольника и
+ * лицом к камере. У прочих инструментов — один треугольник под курсором.
+ */
+let отметкаЕсть = false;
+function показатьВРазвёртке(hit) {
+  if (!state.uvOpen || !hit?.uv || hit.mesh !== activeMesh) {
+    if (отметкаЕсть) { uvEditor.setProbe(null); отметкаЕсть = false; }
+    return;
+  }
+  const tris = [];
+  if (state.tool === 'brush' || state.tool === 'eraser') {
+    const r = brushRadiusWorld() / hit.scale;
+    const { centroid, triRadius, faceNormal, grid } = hit.cache;
+    const c = hit.local, d = hit.viewDir;
+    queryGrid(grid, c.x, c.y, c.z, r, (t) => {
+      const gx = centroid[t * 3] - c.x, gy = centroid[t * 3 + 1] - c.y, gz = centroid[t * 3 + 2] - c.z;
+      const reach = r + triRadius[t];
+      if (gx * gx + gy * gy + gz * gz > reach * reach) return;
+      if (state.frontOnly && faceNormal[t * 3] * d.x + faceNormal[t * 3 + 1] * d.y + faceNormal[t * 3 + 2] * d.z >= 0) return;
+      tris.push(t);
+    });
+  }
+  if (!tris.length && hit.faceIndex != null) tris.push(hit.faceIndex);
+  uvEditor.setProbe({ tris, u: hit.uv.x, v: hit.uv.y });
+  отметкаЕсть = true;
+}
 
 window.addEventListener('pointerup', () => {
   if (decal.drag?.pane === 'view') decalPointer('view', 'up');
@@ -2339,16 +2426,23 @@ document.querySelectorAll('.tool').forEach((b) => {
 /* ── Кисть и цвет ──────────────────────────────────────────────── */
 
 function syncBrushLabels() {
+  // Предел зависит от текстуры и развёртки — после их смены кисть могла
+  // оказаться мельче текселя.
+  const мин = минКисти();
+  state.sizePct = Math.min(КИСТЬ_МАКС, Math.max(мин, state.sizePct));
   const d = (viewport.modelSize || 1) * state.sizePct / 100;
   $('brush-size-val').textContent = UI.formatSize(d);
   $('brush-hardness-val').textContent = Math.round(state.brush.hardness * 100) + '%';
   $('brush-flow-val').textContent = Math.round(state.brush.flow * 100) + '%';
-  $('brush-size').value = state.sizePct;
+  $('brush-size').value = UI.sizeToPos(state.sizePct, мин, КИСТЬ_МАКС);
   $('brush-hardness').value = Math.round(state.brush.hardness * 100);
   $('brush-flow').value = Math.round(state.brush.flow * 100);
 }
 
-$('brush-size').addEventListener('input', (e) => { state.sizePct = +e.target.value; syncBrushLabels(); uvEditor.draw(); });
+$('brush-size').addEventListener('input', (e) => {
+  state.sizePct = UI.posToSize(+e.target.value, минКисти(), КИСТЬ_МАКС);
+  syncBrushLabels(); uvEditor.draw();
+});
 $('brush-hardness').addEventListener('input', (e) => { state.brush.hardness = +e.target.value / 100; syncBrushLabels(); });
 $('brush-flow').addEventListener('input', (e) => { state.brush.flow = +e.target.value / 100; syncBrushLabels(); });
 $('brush-frontface').addEventListener('change', (e) => { state.frontOnly = e.target.checked; });
@@ -2399,6 +2493,11 @@ function setColor(rgb) { setMaterial({ color: rgb, name: () => t('mat.paint') })
  * Сменить материал кисти целиком или частями.
  * @param {object} patch {color, color2, pattern, roughness, metalness, opacity, alpha, name}
  */
+/** Демо-модель — из меню и с начального экрана. */
+async function открытьДемо() {
+  afterModelLoaded(await viewport.loadDemo());
+}
+
 /** Имя модели: у файла это его имя, у демо — подпись, зависящая от языка. */
 function имяМодели() {
   return typeof modelName === 'function' ? modelName() : modelName;
@@ -2817,7 +2916,7 @@ document.querySelectorAll('#view-flyout button').forEach((b) => {
  * запоминается по модели (имя + размер, как у недавних), и в следующий раз
  * она открывается уже стоящей как надо.
  */
-let modelKey = 'demo';
+let modelKey = 'dragon';
 const POSES = 'paint-tool.poses';
 function loadPoses() {
   try { return JSON.parse(localStorage.getItem(POSES) || '{}'); } catch { return {}; }
@@ -3008,9 +3107,10 @@ const brushModal = createBrushModal({
   getBrush: () => state.brush,
   setBrush: (patch) => { Object.assign(state.brush, patch); syncBrushLabels(); },
   getColor: () => state.color,
-  getSizePct: () => state.sizePct,
-  setSizePct: (v) => { state.sizePct = v; syncBrushLabels(); },
-  sizeLabel: (v) => UI.formatSize((viewport.modelSize || 1) * v / 100),
+  // Ползунок окна — в положениях, как и в боковой панели.
+  getSizePos: () => UI.sizeToPos(state.sizePct, минКисти(), КИСТЬ_МАКС),
+  setSizePos: (p) => { state.sizePct = UI.posToSize(p, минКисти(), КИСТЬ_МАКС); syncBrushLabels(); },
+  sizeLabel: (p) => UI.formatSize((viewport.modelSize || 1) * UI.posToSize(p, минКисти(), КИСТЬ_МАКС) / 100),
 });
 
 const materialModal = createMaterialModal({
@@ -3168,7 +3268,7 @@ for (const [имя, fx] of Object.entries(EFFECTS)) {
 const welcome = createWelcome({
   openFile: (файл) => openFile(файл),
   openBuffer: (буфер, имя, соседи) => openBuffer(буфер, имя, соседи),
-  openDemo: () => afterModelLoaded(viewport.loadDemo()),
+  openDemo: открытьДемо,
   pickFile: () => $('file-input').click(),
   getShowOnStartup: () => loadPrefs().showWelcome !== false,
   setShowOnStartup: (v) => savePrefs({ showWelcome: v }),
@@ -3270,11 +3370,11 @@ function rebuildOverlappingUV() {
 /**
  * @param {object} report что сообщил загрузчик
  * @param {string} [key] чем модель помечена для запомненного положения:
- *        файл — именем и размером, демо — 'demo'; при пересборке текстур
+ *        файл — именем и размером, демо — 'dragon'; при пересборке текстур
  *        (та же модель) остаётся прежним
  */
 function afterModelLoaded(report, key) {
-  modelKey = key ?? (typeof report.name === 'function' ? 'demo' : modelKey);
+  modelKey = key ?? (typeof report.name === 'function' ? 'dragon' : modelKey);
   cancelDecal();       // углы стояли над прежней моделью
   // Положение, в которое эту модель уже ставили, — сразу, до кадрирования.
   const поза = loadPoses()[modelKey];
@@ -3356,7 +3456,7 @@ function syncModelInfo() {
   const d = b.getSize(new THREE.Vector3());
   const tris = viewport.paintables.reduce((n, p) => n + p.cache.triCount, 0);
   const i = modelKey.lastIndexOf(':');
-  const ext = modelKey === 'demo' ? t('info.demo') : (modelKey.slice(0, i > 0 ? i : undefined).split('.').pop() || '').toUpperCase();
+  const ext = modelKey === 'dragon' ? t('info.demo') : (modelKey.slice(0, i > 0 ? i : undefined).split('.').pop() || '').toUpperCase();
   box.textContent = [
     t('info.size', d.x.toFixed(2), d.z.toFixed(2), d.y.toFixed(2)),
     t('info.tris', tris.toLocaleString(getLang())),
@@ -4168,10 +4268,8 @@ window.addEventListener('keydown', (e) => {
   if (VIEW_KEYS[k]) { applyView(VIEW_KEYS[k]); return; }
 
   if (e.key === '[' || e.key === ']') {
-    state.sizePct = Math.min(40, Math.max(0.3,
-      +(state.sizePct * (e.key === ']' ? 1.25 : 0.8)).toFixed(2)));
-    $('brush-size').value = state.sizePct;
-    syncBrushLabels();
+    state.sizePct = +(state.sizePct * (e.key === ']' ? 1.25 : 0.8)).toPrecision(3);
+    syncBrushLabels();      // прижмёт к пределам и поставит ползунок
     uvEditor.draw();
   }
 });
@@ -4227,7 +4325,7 @@ const menuBar = new MenuBar($('menubar'), [
     { label: () => t('file.start'), action: () => welcome.show() },
     '-',
     { label: () => t('file.open'), action: () => $('file-input').click() },
-    { label: () => t('file.demo'), action: () => afterModelLoaded(viewport.loadDemo()) },
+    { label: () => t('file.demo'), action: открытьДемо },
     '-',
     { label: () => t('file.saveProject'), hint: MOD + 'S', disabled: () => !targets.size, action: () => saveProject(false) },
     { label: () => t('file.saveProjectAs'), hint: '⇧' + MOD + 'S', disabled: () => !targets.size, action: () => saveProject(true) },
@@ -4414,7 +4512,9 @@ setGrid(true);
   viewport.setLight(state.light);
 }
 applyShading();
-afterModelLoaded(viewport.loadDemo());
+// Ждём дракона до всего остального: файл из Finder или задание LevelMaker,
+// пришедшие следом, должны лечь поверх демо, а не под него.
+try { afterModelLoaded(await viewport.loadDemo()); } catch (e) { bootErrors.push(String(e?.stack || e)); }
 setPivot(loadPrefs().pivot || 'local');
 syncViewUI();
 

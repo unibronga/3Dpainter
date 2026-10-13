@@ -10,7 +10,7 @@
 import { drawBrushSample } from './painter.js';
 import { drawMaterialBall } from './matball.js';
 import { PATTERNS, drawPatternSample } from './patterns.js';
-import { PALETTE } from './ui.js';
+import { PALETTE, SIZE_STEPS } from './ui.js';
 import { rgbToHex, hexToRgb } from './ui.js';
 import { t, onLangChange, LANGS } from './i18n.js';
 
@@ -269,7 +269,7 @@ export function createBrushModal(api) {
   const tweak = (patch) => { api.setBrush(patch); redraw(); };
 
   const syncs = [];
-  syncs.push(slider(colA, 'brush.size', 0.3, 40, 0.1, api.getSizePct, (v) => { api.setSizePct(v); redraw(); }, (v) => api.sizeLabel(v)));
+  syncs.push(slider(colA, 'brush.size', 0, SIZE_STEPS, 1, api.getSizePos, (p) => { api.setSizePos(p); redraw(); }, (p) => api.sizeLabel(p)));
   syncs.push(slider(colA, 'brush.hardness', 0, 100, 1, () => Math.round(b().hardness * 100), (v) => tweak({ hardness: v / 100 }), (v) => v + '%'));
   syncs.push(slider(colA, 'brush.flow', 1, 100, 1, () => Math.round(b().flow * 100), (v) => tweak({ flow: v / 100 }), (v) => v + '%'));
   syncs.push(slider(colB, 'brush.grain', 0, 100, 1, () => Math.round((b().grain || 0) * 100), (v) => tweak({ grain: v / 100 }), (v) => v + '%'));

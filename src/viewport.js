@@ -55,7 +55,7 @@ function sourceGroups(mesh, triCount) {
   }
   return out;
 }
-import { buildDemoMesh } from './demo.js';
+import демоДракон from './assets/dragon.glb?inline';
 import { PixelArt, Anime, makeToon, HELPER_LAYER } from './effects.js';
 
 /** Служебное — на свой слой: эффекты вида его не трогают. */
@@ -527,10 +527,18 @@ export class Viewport {
 
   /* ── Модель ──────────────────────────────────────────────────── */
 
-  loadDemo() {
-    const g = new THREE.Group();
-    g.add(buildDemoMesh());
-    return this.setModel(g, () => t('model.demo'));
+  /**
+   * Демо-модель — дракон с логотипа, чистый, с развёрткой без наложения.
+   * Лежит в сборке строкой data: — собранную страницу Electron открывает через
+   * file://, а туда `fetch` не ходит.
+   */
+  async loadDemo() {
+    const b64 = демоДракон.slice(демоДракон.indexOf(',') + 1);
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const gltf = await new GLTFLoader().parseAsync(bytes.buffer, '');
+    return this.setModel(gltf.scene, () => t('model.demo'));
   }
 
   async loadGLB(arrayBuffer, name) {

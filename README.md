@@ -4,7 +4,7 @@
 
 [Русская версия](README.ru.md) · [MIT License](LICENSE)
 
-![The tool with a painted demo cabin](docs/screenshot.png)
+![The tool with the painted demo dragon](docs/screenshot.png)
 
 Open a model, spin it around, and paint. No UV wrangling, no texture editor,
 no round trip to another program: you click on the roof, and the roof gets
@@ -23,7 +23,9 @@ seam that cuts your stroke in half.
 This tool is built for exactly that narrow job, and it makes three promises:
 
 - **The brush is the same size everywhere on the model** — because it is a
-  sphere in model space, not a circle on the texture.
+  sphere in model space, not a circle on the texture. It goes down to one and
+  a half texels (about 2 mm on a 1.7 m character at 2048), so a button or a
+  rivet can be painted on the model itself.
 - **Seams do not exist for you.** A stroke that crosses a UV seam simply
   continues; the tool paints both sides at once.
 - **A fill stops where the shape stops.** "Fill the roof" does not leak onto
@@ -50,7 +52,7 @@ npm run dev
 ```
 
 Open `http://localhost:5273`. A start screen offers two ways in: open your
-own model, or begin with the demo cabin and paint right away. Below that are
+own model, or begin with the demo dragon from the logo and paint right away. Below that are
 the ten models you opened last: a row gets selected, its preview shows on the
 right, and the Open button sits under it. You can also drop a file straight
 onto the viewport.
@@ -174,7 +176,9 @@ one at a time.
 
 **A UV editor** on half the screen, where the whole toolset works directly on
 the unwrap — brush, fills, eyedropper, shapes, text and lasso. Handy when a face is
-too small or hidden on the model itself.
+too small or hidden on the model itself. Hover over the model and the editor
+marks the same spot in the unwrap: a ring at the point and the triangles the
+brush would touch — a button welded to a jacket is found in the atlas in a second.
 
 **Output.** A PNG of the color map, plus a second `<name>_material.png` when
 you actually painted with surface properties (roughness in green, metalness

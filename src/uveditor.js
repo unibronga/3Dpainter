@@ -47,6 +47,15 @@ export class UVEditor {
     container.appendChild(this.canvas);
     this.ctx = this.canvas.getContext('2d');
 
+    // Отметка того, что под курсором на модели (setProbe), — своим холстом
+    // поверх полотна: она бежит за мышью каждый кадр, а полная перерисовка
+    // полотна стоит десятки миллисекунд.
+    this.probeCanvas = document.createElement('canvas');
+    this.probeCanvas.className = 'uv-probe';
+    container.appendChild(this.probeCanvas);
+    this.pctx = this.probeCanvas.getContext('2d');
+    this.probe = null;
+
     this.target = null;
     this.cache = null;
     this.showWire = true;
@@ -76,7 +85,7 @@ export class UVEditor {
     // 🔴 Сетку сбрасываем только при смене меша. setTarget зовётся и по
     // другим поводам — на каждый её пересчёт уходит около секунды на
     // модели в 19 тысяч треугольников, и мазок снова шёл бы рывками.
-    if (first) this._dropWire();
+    if (first) { this._dropWire(); this.probe = null; }   // номера треугольников — прежнего меша
     this.target = target;
     this.cache = cache;
     if (first || !(this.view.scale > 1)) this.fit();
@@ -87,6 +96,12 @@ export class UVEditor {
 
   /** Контур выделения активного меша (см. selection.outline) или null. */
   setSelectionOutline(segs) { this.selSegs = segs && segs.length ? segs : null; this.draw(); }
+
+  /**
+   * Что под курсором на модели: треугольники, которые заденет кисть, и точка
+   * попадания. `{ tris, u, v }` (u, v — координаты развёртки) или null.
+   */
+  setProbe(probe) { this.probe = probe; this._drawProbe(); }
 
   /** Бросить незамкнутое лассо — при смене инструмента или по Esc. */
   cancelLasso() {
@@ -169,6 +184,11 @@ export class UVEditor {
     this.canvas.style.width = w + 'px';
     this.canvas.style.height = h + 'px';
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.probeCanvas.width = this.canvas.width;
+    this.probeCanvas.height = this.canvas.height;
+    this.probeCanvas.style.width = w + 'px';
+    this.probeCanvas.style.height = h + 'px';
+    this.pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // Панель могли открыть до того, как у неё появился размер: тогда
     // вписывание посчиталось по нулю и полотно осталось пустым. Как только
@@ -238,6 +258,53 @@ export class UVEditor {
     }
     // Слои поверх полотна (углы аппликации) следуют за сдвигом и зумом.
     this.hooks.afterDraw?.();
+    this._drawProbe();
+  }
+
+  /**
+   * Отметка точки с модели. Треугольники под кистью — заливкой с контуром;
+   * точка — кольцом постоянного размера с усами: деталь вроде пуговицы,
+   * приваренной к мундиру, лежит в атласе пятном в десяток текселей, и на
+   * общем виде без кольца её не найти.
+   */
+  _drawProbe() {
+    const ctx = this.pctx;
+    const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
+    ctx.clearRect(0, 0, w, h);
+    const p = this.probe;
+    if (!p || !this.target || !this.cache) return;
+    const { ox, oy, scale } = this.view;
+    const { uv, idx } = this.cache;
+
+    ctx.save();
+    ctx.beginPath();
+    for (const t of p.tris) {
+      const i0 = idx[t * 3], i1 = idx[t * 3 + 1], i2 = idx[t * 3 + 2];
+      ctx.moveTo(ox + uv[i0 * 2] * scale, oy + (1 - uv[i0 * 2 + 1]) * scale);
+      ctx.lineTo(ox + uv[i1 * 2] * scale, oy + (1 - uv[i1 * 2 + 1]) * scale);
+      ctx.lineTo(ox + uv[i2 * 2] * scale, oy + (1 - uv[i2 * 2 + 1]) * scale);
+      ctx.closePath();
+    }
+    ctx.fillStyle = 'rgba(255, 206, 46, 0.38)';
+    ctx.fill();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255, 206, 46, 0.95)';
+    ctx.stroke();
+
+    const x = ox + p.u * scale, y = oy + (1 - p.v) * scale;
+    ctx.beginPath();
+    ctx.arc(x, y, 9, 0, Math.PI * 2);
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      ctx.moveTo(x + dx * 13, y + dy * 13);
+      ctx.lineTo(x + dx * 24, y + dy * 24);
+    }
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.75)';
+    ctx.stroke();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = '#ffce2e';
+    ctx.stroke();
+    ctx.restore();
   }
 
   /**

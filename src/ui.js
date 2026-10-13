@@ -199,7 +199,6 @@ function сеткаПревью(cache, S, dpr) {
   return слой;
 }
 
-/** Подпись размера кисти в метрах или сантиметрах — масштаб проекта метровый. */
 /** Размер файла: B, KB, MB — символы единиц, одинаковые на любом языке. */
 export function formatBytes(байты) {
   if (байты > 1024 * 1024) return (байты / 1024 / 1024).toFixed(1) + ' MB';
@@ -207,7 +206,33 @@ export function formatBytes(байты) {
   return байты + ' B';
 }
 
+/**
+ * Подпись размера кисти — масштаб проекта метровый. Мельче сантиметра —
+ * миллиметрами: иначе всё от 5 до 14 мм выходило одним «1 см».
+ */
 export function formatSize(metres) {
   if (metres >= 1) return metres.toFixed(2).replace(/0$/, '') + ' ' + t('unit.m');
-  return Math.round(metres * 100) + ' ' + t('unit.cm');
+  const дробь = (x) => (Math.round(x * 10) / 10).toString();
+  if (metres >= 0.1) return Math.round(metres * 100) + ' ' + t('unit.cm');
+  if (metres >= 0.0095) return дробь(metres * 100) + ' ' + t('unit.cm');
+  const мм = metres * 1000;
+  return (мм < 5 ? дробь(мм) : Math.round(мм)) + ' ' + t('unit.mm');
+}
+
+/*
+ * Ползунок размера кисти — логарифмический. Нужны и миллиметры для пуговиц,
+ * и полметра для заливки стены; при линейном все размеры мельче сантиметра
+ * умещались в первые два процента хода, и рука их не находила.
+ */
+export const SIZE_STEPS = 1000;
+
+/** Размер кисти (% габарита) → положение ползунка. */
+export function sizeToPos(pct, min, max) {
+  const k = Math.log(Math.min(max, Math.max(min, pct)) / min) / Math.log(max / min);
+  return Math.round(k * SIZE_STEPS);
+}
+
+/** Положение ползунка → размер кисти (% габарита), три значащие цифры. */
+export function posToSize(pos, min, max) {
+  return +(min * Math.pow(max / min, pos / SIZE_STEPS)).toPrecision(3);
 }

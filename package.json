@@ -1,6 +1,6 @@
 {
   "name": "3dpainter",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "description": "3DPainter — ручная покраска low-poly моделей по поверхности",

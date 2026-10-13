@@ -548,7 +548,7 @@ export default {
   'welcome.open': 'Open a model',
   'welcome.openHint': 'GLB, OBJ, FBX, DAE, 3MF, STL, PLY and more',
   'welcome.demo': 'Start with the demo model',
-  'welcome.demoHint': 'A cabin with a clean unwrap — paint right away',
+  'welcome.demoHint': 'The dragon from the logo — blank, with a clean unwrap: paint right away',
   'welcome.recent': 'Recent',
   'welcome.recentEmpty': 'Models you open will show up here',
   'welcome.openSelected': 'Open',
@@ -680,12 +680,13 @@ export default {
   'load.overlap': 'overlapping UVs ({0}%) — strokes will be duplicated: {1}',
   'load.ok': '{0} · meshes: {1} · tris: {2}',
 
-  'model.demo': 'Demo: cabin',
+  'model.demo': 'Dragon',
   'model.default': 'model',
   'model.unnamed': 'unnamed',
 
   /* ── Units ───────────────────────────────────────────────────── */
   'unit.m': 'm',
   'unit.cm': 'cm',
+  'unit.mm': 'mm',
   'unit.px': 'px',
 };

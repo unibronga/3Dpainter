@@ -582,7 +582,7 @@ export function createMcpTools(api) {
 
   function requireModel() {
     if (!viewport.model || !viewport.paintables.length) {
-      throw new Error('No model is open in 3DPainter. Ask the user to open one (or the demo cabin).');
+      throw new Error('No model is open in 3DPainter. Ask the user to open one (or the demo dragon).');
     }
   }
 

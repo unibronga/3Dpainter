@@ -547,7 +547,7 @@ export default {
   'welcome.open': 'Открыть модель',
   'welcome.openHint': 'GLB, OBJ, FBX, DAE, 3MF, STL, PLY и другие',
   'welcome.demo': 'Начать с демо-модели',
-  'welcome.demoHint': 'Хижина с честной развёрткой — можно красить сразу',
+  'welcome.demoHint': 'Дракон с логотипа — белый, с чистой развёрткой: можно красить сразу',
   'welcome.recent': 'Недавние',
   'welcome.recentEmpty': 'Здесь появятся модели, которые вы открывали',
   'welcome.openSelected': 'Открыть',
@@ -679,12 +679,13 @@ export default {
   'load.overlap': 'развёртка с наложением ({0}%) — мазок будет дублироваться: {1}',
   'load.ok': '{0} · мешей: {1} · трис: {2}',
 
-  'model.demo': 'Демо: хижина',
+  'model.demo': 'Дракон',
   'model.default': 'модель',
   'model.unnamed': 'без имени',
 
   /* ── Единицы ─────────────────────────────────────────────────── */
   'unit.m': 'м',
   'unit.cm': 'см',
+  'unit.mm': 'мм',
   'unit.px': 'px',
 };

@@ -252,6 +252,7 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 
 #uv-body { flex: 1 1 auto; position: relative; min-height: 0; }
 .uv-canvas { position: absolute; inset: 0; cursor: crosshair; }
+.uv-probe { position: absolute; inset: 0; pointer-events: none; }
 
 /* ── Правая панель ────────────────────────────────────────────── */
 
