@@ -94,7 +94,7 @@ const state = {
   showWire: true,
   viewMode: 'material',   // показ модели: material | clay | wire | normals
   unlit: false,            // «Без света»: цвета ровно как в текстуре
-  facets: false,           // «Грани»: плоские грани, как в low-poly
+  facets: true,            // «Грани»: плоские грани, как в low-poly
   light: { power: 1, angle: 0 },
   grid: true,
   uvOpen: false,
@@ -4507,7 +4507,7 @@ setProjection('persp');
 setGrid(true);
 {
   const p = loadPrefs();
-  state.facets = !!p.facets;
+  state.facets = p.facets !== false;   // по умолчанию включены: low-poly видно гранями
   if (p.light) Object.assign(state.light, p.light);
   viewport.setLight(state.light);
 }

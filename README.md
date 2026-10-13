@@ -4,7 +4,7 @@
 
 [Русская версия](README.ru.md) · [MIT License](LICENSE)
 
-![The tool with the painted demo dragon](docs/screenshot.png)
+![The tool with the low-poly demo dragon and its unwrap](docs/screenshot.png)
 
 Open a model, spin it around, and paint. No UV wrangling, no texture editor,
 no round trip to another program: you click on the roof, and the roof gets

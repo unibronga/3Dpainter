@@ -528,7 +528,8 @@ export class Viewport {
   /* ── Модель ──────────────────────────────────────────────────── */
 
   /**
-   * Демо-модель — дракон с логотипа, чистый, с развёрткой без наложения.
+   * Демо-модель — дракон с логотипа, чистый. Развёртка своя (по деталям,
+   * 46 островов) и уже лежит в файле: строить её на старте — 1,7 с.
    * Лежит в сборке строкой data: — собранную страницу Electron открывает через
    * file://, а туда `fetch` не ходит.
    */
@@ -538,7 +539,14 @@ export class Viewport {
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     const gltf = await new GLTFLoader().parseAsync(bytes.buffer, '');
-    return this.setModel(gltf.scene, () => t('model.demo'));
+    const report = this.setModel(gltf.scene, () => t('model.demo'));
+    // Слева и чуть спереди, поближе — дракон в профиль, мордой вправо, как на
+    // картинке в README.
+    this.setViewDirection(new THREE.Vector3(-1, 0.38, 0.55));
+    const цель = this.controls.target;
+    this.camera.position.sub(цель).multiplyScalar(0.85).add(цель);
+    this.controls.update();
+    return report;
   }
 
   async loadGLB(arrayBuffer, name) {
