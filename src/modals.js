@@ -700,6 +700,7 @@ export const HELP = [
   { key: 'help.tools', rows: [
     ['B', 'help.tools.brush'],
     ['E', 'help.tools.eraser'],
+    ['K', 'help.tools.blur'],
     ['I', 'help.tools.eyedropper'],
     ['F', 'help.tools.fillFaces'],
     ['G', 'help.tools.fillIsland'],

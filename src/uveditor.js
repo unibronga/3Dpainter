@@ -19,7 +19,7 @@ const SHAPE_TOOLS = new Set(['rect', 'ellipse', 'text']);
  * раньше мазком было всё, что не пипетка, не заливка и не фигура, — и выбор
  * объекта с инструментами вида красили кистью.
  */
-const BRUSH_TOOLS = new Set(['brush', 'eraser']);
+const BRUSH_TOOLS = new Set(['brush', 'eraser', 'blur']);
 
 export class UVEditor {
   /**
