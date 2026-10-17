@@ -2098,9 +2098,15 @@ el.addEventListener('pointerdown', (e) => {
 window.addEventListener('pointermove', (e) => {
   // Луч бьём только когда курсор над вьюпортом: поиск попадания на каждое
   // движение мыши по всему окну — лишняя работа на ровном месте.
+  // 🔴 Мало попасть в прямоугольник вьюпорта: поверх него лежат выпавшее
+  // меню, окна, подсказки. Курсор над пунктом «Размер текстуры» попадал в
+  // дракона — кольцо кисти и отметка в развёртке шли за мышью по меню. Над
+  // вьюпортом — только когда под курсором он сам (при захвате указателя
+  // цель — его же холст).
   const r = el.getBoundingClientRect();
   const over = e.clientX >= r.left && e.clientX <= r.right
             && e.clientY >= r.top && e.clientY <= r.bottom
+            && inside(el, e.target)
             && !inside($('view-overlay'), e.target);
   if (lasso && (over || !lasso.poly)) { lassoMove(e); return; }
   if (state.tool === 'decal' && (over || decal.drag)) {
