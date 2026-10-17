@@ -213,6 +213,10 @@ run('Зоны и выгрузка «Для игры»', async ({ js, check, open
   check(прим.every((p) => p.position === прим[0].position) && вершин === вершинИсх,
     `вершины общие на примитивы, ${вершин} = исходник ${вершинИсх}`);
   check(j.skins?.length === 1 && j.skins[0].joints.length === исходник.skins[0].joints.length, `скелет: ${j.skins?.[0]?.joints.length} кости`);
+  // Имя меша — имя объекта: по нему загрузчики называют части меша.
+  check(JSON.stringify(j.meshes.map((m) => m.name)) === '["Kid"]', `имя меша в GLB: ${JSON.stringify(j.meshes.map((m) => m.name))}`);
+  const pjИмя = glbJSON(Buffer.from(spawnSync('unzip', ['-p', файлПроекта, 'model.glb'], { encoding: 'buffer' }).stdout)).meshes.map((m) => m.name);
+  check(JSON.stringify(pjИмя) === '["Kid"]', `имя меша в model.glb проекта: ${JSON.stringify(pjИмя)}`);
   const клипыИгры = клипыGLB(j);
   check(JSON.stringify(клипыИгры) === JSON.stringify(клипыИсходника),
     `клипы «Для игры» после проекта ${JSON.stringify(клипыИгры)} = kid.glb`);
@@ -223,6 +227,12 @@ run('Зоны и выгрузка «Для игры»', async ({ js, check, open
   const опис = игра.json;
   check(опис.format === '3dpainter-face' && опис.version === 1 && опис.material === 'Face', `описание: ${опис.format} v${опис.version}, материал ${опис.material}`);
   check(JSON.stringify(опис.zones) === '["Kid_Crystal","Kid_Stone"]', `описание: zones ${JSON.stringify(опис.zones)}`);
+
+  // Выгрузка «Для игры» открыта снова: части меша названы по нему, а не mesh_0_1.
+  check(await open(игра.b64['kid.glb'], 'kid-game.glb'), 'выгрузка «Для игры» открылась снова');
+  const частиИмена = await js('window.__paint.viewport.paintables.map((p) => p.mesh.name)');
+  check(частиИмена.length === 4 && частиИмена.every((n) => n.startsWith('Kid')), `части меша после открытия: ${частиИмена.join(', ')}`);
+  check(await open(проект, 'kid.3dpaint'), 'проект открыт снова');
 
   // 9. OBJ — группы материалов с именами зон.
   const obj = await js(`(async () => { const { obj, mtl } = await window.__paint.exportOBJ('kid');

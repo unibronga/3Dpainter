@@ -249,7 +249,9 @@ export async function exportGeometryGLB(модель) {
     o.material = простой;
   });
   try {
-    const результат = await new GLTFExporter().parseAsync(модель, { binary: true, animations: модель.animations || [] });
+    const экспортёр = new GLTFExporter();
+    экспортёр.register(писательИмёнМешей);
+    const результат = await экспортёр.parseAsync(модель, { binary: true, animations: модель.animations || [] });
     return new Uint8Array(результат);
   } finally {
     прежние.forEach((м, o) => { o.material = м; });
@@ -257,6 +259,22 @@ export async function exportGeometryGLB(модель) {
     простые.forEach((м) => м.dispose());
   }
 }
+
+/**
+ * Имя меша в файле — имя объекта.
+ *
+ * 🔴 GLTFExporter пишет имя только узлу, меш в glTF у него безымянный. Пока
+ * меш был одним примитивом, этого никто не видел: загрузчик называет объект
+ * по узлу. Но меш с лицом и зонами — несколько примитивов, и загрузчик
+ * называет их по имени МЕША: без него в списках выходили «mesh_0»,
+ * «mesh_0_1», «mesh_0_2» вместо «Kian», «Kian_1», «Kian_2». Blender пишет имя
+ * меша сам — терялось оно у нас, при первом же сохранении проекта.
+ */
+const писательИмёнМешей = () => ({
+  writeMesh(mesh, meshDef) {
+    if (mesh.name && !meshDef.name) meshDef.name = mesh.name;
+  },
+});
 
 /* ── Варианты покраски: KHR_materials_variants ───────────────────
  *
@@ -547,6 +565,7 @@ export async function exportGLTF(модель, карты, двоичный = tr
 
   try {
     const экспортёр = new GLTFExporter();
+    экспортёр.register(писательИмёнМешей);
     if (варианты) экспортёр.register(варианты);
     // Клипы — те, с которыми модель открылась: скелет и скин экспортёр
     // пишет сам, а дорожки анимации берёт только из этой опции.
