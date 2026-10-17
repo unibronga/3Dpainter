@@ -1,4 +1,5 @@
-/* Тёмная тема инструмента: вьюпорт и развёртка в центре, панели по краям. */
+/* Инструмент: вьюпорт и развёртка в центре, панели по краям. Темы — токенами:
+   тёмная по умолчанию, светлая — поправкой [data-theme="light"] (src/theme.js). */
 
 :root {
   /* Палитра — общая с 3DModelist (соседний проект): сланцево-синий фон, не
@@ -25,11 +26,77 @@
   --accent-btn:      #374274;   /* главная кнопка */
   --accent-btn-line: #5a6dc0;
   --accent-btn-fg:   #dae4ff;
+  --accent-btn-hover:#404d89;
   --danger:    #ff6b8e;
   --glass:     rgba(36, 43, 51, .88);
   --shadow:    0 1px 2px rgba(0, 0, 0, .3), 0 4px 16px rgba(0, 0, 0, .25);
+  --backdrop:  rgba(10, 14, 18, .8);    /* под окнами */
+  --backdrop-soft: rgba(10, 14, 18, .55);
+  /* Холсты рисуются кодом — цвета берут отсюда (themeColor в theme.js). */
+  --stage-1:   #2f3841;   /* фон сцены: середина и край */
+  --stage-2:   #1a2027;
+  --grid-1:    #9aa2ad;   /* сетка пола: оси и линии */
+  --grid-2:    #5a626c;
+  --check-1:   #313a45;   /* шахматка под текстурой в развёртке */
+  --check-2:   #28303a;
+  --thumb-1:   #3a424c;   /* шахматка миниатюр */
+  --thumb-2:   #2c333b;
+  --cube-face: #2f3843;   /* куб ориентации */
+  --cube-line: #4a5463;
+  --cube-text: #edf0f4;
+  --cube-edge: #9199a3;
+  --cube-hover:#8da4ff;
+  color-scheme: dark;
   --uv-width:  46%;
   --ui:        1;     /* масштаб интерфейса, задаётся в настройках */
+}
+
+/* Светлая тема — палитра 3DModelist: тёплый светло-серый фон, белые панели,
+   синий акцент у выбранного. Служебное поверх модели (лассо, отметка под
+   курсором, подсветка зон) одинаково в обеих темах: оно лежит на покраске. */
+:root[data-theme="light"] {
+  --bg:        #eeeeec;
+  --panel:     #ffffff;
+  --panel-2:   #f7f7f5;
+  --panel-3:   #efeeeb;
+  --panel-press:#e8e7e3;
+  --well:      #e7e6e2;
+  --menubar:   #ffffff;
+  --line:      #e6e5e1;
+  --line-strong:#d6d4ce;
+  --text:      #1d1d1b;
+  --text-2:    #5f5e5a;
+  --text-dim:  #8f8d87;
+  --accent:    #3b5bdb;
+  --accent-dim:#edf1ff;
+  --on-line:   #c9d4ff;
+  --on-fg:     #3b5bdb;
+  --on-fg-dim: #6f84dc;
+  --hover-bg:  #f0f2fa;
+  --hover-fg:  #2f4bc4;
+  --accent-btn:      #3b5bdb;
+  --accent-btn-line: #3b5bdb;
+  --accent-btn-fg:   #ffffff;
+  --accent-btn-hover:#2f4bc4;
+  --danger:    #d6336c;
+  --glass:     rgba(255, 255, 255, .9);
+  --shadow:    0 1px 2px rgba(20, 20, 18, .06), 0 4px 16px rgba(20, 20, 18, .08);
+  --backdrop:  rgba(20, 20, 18, .38);
+  --backdrop-soft: rgba(20, 20, 18, .25);
+  --stage-1:   #f6f6f4;
+  --stage-2:   #d9d8d4;
+  --grid-1:    #a3a19b;
+  --grid-2:    #c9c7c1;
+  --check-1:   #e4e3df;
+  --check-2:   #d6d5d0;
+  --thumb-1:   #e4e3df;
+  --thumb-2:   #d6d5d0;
+  --cube-face: #ffffff;
+  --cube-line: #d6d4ce;
+  --cube-text: #1d1d1b;
+  --cube-edge: #a3a19b;
+  --cube-hover:#3b5bdb;
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -139,7 +206,7 @@ body { zoom: var(--ui); }
 .btn:disabled { opacity: .38; cursor: default; }
 .btn:disabled:hover { background: var(--panel-2); }
 .btn.accent { background: var(--accent-btn); border-color: var(--accent-btn-line); color: var(--accent-btn-fg); }
-.btn.accent:hover { background: #404d89; }
+.btn.accent:hover { background: var(--accent-btn-hover); }
 .btn.on { background: var(--accent-dim); border-color: var(--on-line); color: var(--on-fg); }
 .btn.icon { width: 26px; padding: 0; display: grid; place-items: center; }
 .btn.icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
@@ -866,7 +933,7 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
   position: fixed; inset: 0;
   display: none;
   align-items: center; justify-content: center;
-  background: rgba(10, 14, 18, .8);
+  background: var(--backdrop);
   z-index: 200;
 }
 .modal-back.open { display: flex; }
@@ -1222,7 +1289,7 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
   width: 34px; height: 24px;
   border-radius: 4px;
   border: 1px solid var(--line);
-  background: repeating-conic-gradient(#3a424c 0 25%, #2c333b 0 50%) 0 0 / 8px 8px;
+  background: repeating-conic-gradient(var(--thumb-1) 0 25%, var(--thumb-2) 0 50%) 0 0 / 8px 8px;
   object-fit: contain;
 }
 #decal-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1287,7 +1354,7 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
   display: none;
   align-items: center;
   justify-content: center;
-  background: rgba(10, 14, 18, .82);
+  background: var(--backdrop);
   backdrop-filter: blur(3px);
 }
 .welcome-back.open { display: flex; }
@@ -1502,12 +1569,62 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 
 /* ── Окно настроек ─────────────────────────────────────────────── */
 
+/* Как в 3DModelist: шапка с подзаголовком, слева меню разделов, справа один
+   раздел. Высота постоянная — переход между разделами не дёргает рамку. */
+.modal.settings-modal {
+  width: 760px;
+  height: min(520px, calc((100vh - 64px) / var(--ui)));
+}
+.settings-modal > .modal-head { display: none; }
+.set-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 14px 16px 14px 20px; border-bottom: 1px solid var(--line); flex: none;
+}
+.set-title { font-size: 15px; font-weight: 600; }
+.set-sub { color: var(--text-dim); font-size: 11.5px; margin-top: 2px; }
+.btn.ghost { background: none; border-color: transparent; }
+.btn.ghost:hover { background: var(--hover-bg); color: var(--hover-fg); }
+.settings-modal > .modal-body {
+  padding: 0; overflow: hidden;
+  display: grid; grid-template-columns: 186px minmax(0, 1fr);
+}
+.set-nav {
+  display: flex; flex-direction: column; gap: 2px; padding: 10px 8px;
+  border-right: 1px solid var(--line); background: var(--panel-2); overflow-y: auto;
+}
+.set-nav-btn {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border-radius: 7px;
+  border: 1px solid transparent; background: none; color: var(--text-2); font-size: 12.5px; text-align: start; cursor: pointer;
+}
+.set-nav-btn:hover { background: var(--hover-bg); color: var(--hover-fg); }
+.set-nav-btn.on { background: var(--accent-dim); border-color: var(--on-line); color: var(--on-fg); font-weight: 600; }
+.set-nav-ico { display: grid; flex: none; }
+.set-nav-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-pages { overflow-y: auto; padding: 4px 22px 20px; }
+.set-page[hidden] { display: none; }
+.set-page-t { font-size: 15px; font-weight: 600; margin: 16px 0 6px; }
+.set-text { color: var(--text-2); line-height: 1.5; margin: 6px 0 10px; }
+.set-note { color: var(--text-dim); }
+.settings-modal .set-block {
+  display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: start; gap: 4px 14px;
+  padding: 10px 0;
+}
+.settings-modal .set-label { color: var(--text-2); padding-top: 5px; }
+.set-control { min-width: 0; display: flex; flex-direction: column; }
+/* Окно эффектов — по-старому: подпись и управление в строку. */
 .set-block { padding: 11px 0; border-bottom: 1px solid var(--line); }
 .set-block:last-of-type { border-bottom: 0; }
-.set-row { display: flex; align-items: center; gap: 12px; }
+.settings-modal .set-block { border-bottom: 1px solid var(--line); }
+.settings-modal .set-block:last-of-type { border-bottom: 0; }
 .set-label { flex: 1; }
+.set-control > .set-select { width: 100%; }
+.set-seg { flex: none; width: 100%; border-radius: 7px; }
+.set-seg button { height: 28px; }
+.set-checkrow { display: flex; align-items: center; gap: 8px; min-height: 26px; cursor: pointer; }
+.set-100 { height: 24px; padding: 0 8px; }
+.set-row { display: flex; align-items: center; gap: 12px; }
 .set-scale { display: flex; align-items: center; gap: 8px; }
-.set-scale .set-range { width: 160px; }
+.set-scale .set-range { flex: 1; min-width: 0; }
 .set-scale .val { width: 38px; text-align: right; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .set-hint { color: var(--text-dim); font-size: 11px; margin-top: 4px; line-height: 1.45; }
 
@@ -1619,7 +1736,7 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
   z-index: 300;       /* выше окон (200): долгая работа идёт и из окна «Сохранить как» */
   display: grid;
   place-items: center;
-  background: rgba(10, 14, 18, .55);
+  background: var(--backdrop-soft);
   backdrop-filter: blur(2px);
   opacity: 0;
   visibility: hidden;

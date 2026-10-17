@@ -10,6 +10,7 @@
  */
 
 import { findTriangleAtUV } from './mesh-cache.js';
+import { themeColor } from './theme.js';
 
 /** Инструменты, которые тянутся рамкой, а не мажут по пути. */
 const SHAPE_TOOLS = new Set(['rect', 'ellipse', 'text']);
@@ -213,7 +214,7 @@ export class UVEditor {
     const ctx = this.ctx;
     const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = '#1a2027';
+    ctx.fillStyle = themeColor('--well', '#1a2027');
     ctx.fillRect(0, 0, w, h);
     if (!this.target) return;
 
@@ -475,9 +476,9 @@ export class UVEditor {
     ctx.beginPath();
     ctx.rect(ox, oy, scale, scale);
     ctx.clip();
-    ctx.fillStyle = '#28303a';
+    ctx.fillStyle = themeColor('--check-2', '#28303a');
     ctx.fillRect(ox, oy, scale, scale);
-    ctx.fillStyle = '#313a45';
+    ctx.fillStyle = themeColor('--check-1', '#313a45');
     for (let y = 0; y < scale; y += step) {
       for (let x = ((y / step) | 0) % 2 ? step : 0; x < scale; x += step * 2) {
         ctx.fillRect(ox + x, oy + y, step, step);

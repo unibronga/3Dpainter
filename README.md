@@ -243,10 +243,11 @@ face and click **This is the front** (or **This is the top** for models lying
 on their side). The orientation is remembered per model; exported files keep
 the original coordinates.
 
-**Settings** (File ▸ Settings…) hold the interface language, the interface
-scale (80–200%: text, icons, panels and dialogs grow together — for large
-screens), the default texture size and whether the start screen appears on
-launch.
+**Settings** (File ▸ Settings…) are split into sections — Interface,
+Painting, AI — and apply right away: the interface language, the theme
+(light, dark or follow the system), the interface scale (80–200%: text,
+icons, panels and dialogs grow together — for large screens), the default
+texture size and whether the start screen appears on launch.
 
 **Long operations** — opening a model, saving, rebuilding textures — run
 under a busy indicator, so it is clear the program is working. Every save ends

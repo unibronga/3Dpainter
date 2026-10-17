@@ -11,8 +11,18 @@
        — значит, ровно в тот миг, когда он применился. -->
   <style>
     html { background: #191f25; }
+    html[data-theme="light"] { background: #eeeeec; }
     body { visibility: hidden; }
   </style>
+  <!-- Тема — до первой отрисовки, чтобы окно не мигнуло не той темой
+       (дальше её ведёт src/theme.js). -->
+  <script>
+    try {
+      var th = JSON.parse(localStorage.getItem('paint-tool.ui') || '{}').theme;
+      if (th !== 'light' && th !== 'dark') th = th === 'system' && window.matchMedia && !matchMedia('(prefers-color-scheme: dark)').matches ? 'light' : 'dark';
+      document.documentElement.dataset.theme = th;
+    } catch (e) { /* приватный режим */ }
+  </script>
 </head>
 <body>
 <div id="app">

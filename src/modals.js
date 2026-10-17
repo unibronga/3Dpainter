@@ -13,6 +13,7 @@ import { PATTERNS, drawPatternSample } from './patterns.js';
 import { PALETTE, SIZE_STEPS } from './ui.js';
 import { rgbToHex, hexToRgb } from './ui.js';
 import { t, onLangChange, LANGS } from './i18n.js';
+import { themeColor } from './theme.js';
 
 /* ── Библиотека кистей ─────────────────────────────────────────── */
 
@@ -557,9 +558,9 @@ export function createMaterialModal(api) {
       ic.imageSmoothingEnabled = true;
       ic.drawImage(tex.canvas, 0, 0, imgCanvas.width, imgCanvas.height);
     } else {
-      ic.fillStyle = '#242b33';
+      ic.fillStyle = themeColor('--panel', '#242b33');
       ic.fillRect(0, 0, imgCanvas.width, imgCanvas.height);
-      ic.fillStyle = '#9199a3';
+      ic.fillStyle = themeColor('--text-dim', '#9199a3');
       ic.font = '600 15px system-ui';
       ic.textAlign = 'center'; ic.textBaseline = 'middle';
       ic.fillText('+', imgCanvas.width / 2, imgCanvas.height / 2);
@@ -1101,82 +1102,130 @@ export function createViewPngModal(api) {
  * ставит один раз и забывает. Всё, что крутят по ходу работы, остаётся на
  * панелях — иначе за настройками начнут ходить каждую минуту.
  *
- * @param {{getLang, setLang, getTexSize, setTexSize, getStartup, setStartup}} api
+ * @param {{getLang, setLang, getTheme, setTheme, getUiScale, setUiScale, getTexSize, setTexSize,
+ *          getStartup, setStartup, version}} api
  */
 export function createSettingsModal(api) {
-  const m = new Modal('settings.title');
+  // Как в 3DModelist: слева меню разделов, справа один раздел. Всё
+  // применяется сразу — кнопки «Сохранить» нет, «Готово» просто закрывает.
+  const m = new Modal('settings.title', 'settings-modal');
 
-  /** Ряд: подпись слева, управление справа, пояснение под ними. */
-  function ряд(родитель, ключПодписи, ключПояснения, control) {
-    const блок = el('div', 'set-block');
-    const шапка = el('div', 'set-row');
-    const подпись = elT('label', 'set-label', ключПодписи);
-    шапка.append(подпись, control);
-    блок.appendChild(шапка);
-    let пояснение = null;
-    if (ключПояснения) {
-      пояснение = elT('div', 'set-hint', ключПояснения);
-      блок.appendChild(пояснение);
-    }
-    родитель.appendChild(блок);
-    return { подпись, пояснение, ключПодписи, ключПояснения };
+  const шапка = el('div', 'set-head');
+  const заголовок = el('div', 'set-head-t');
+  заголовок.append(elT('div', 'set-title', 'settings.title'), elT('div', 'set-sub', 'settings.sub'));
+  const закрыть = elT('button', 'btn ghost', 'settings.closeBtn');
+  tip(закрыть, 'modal.closeTip');
+  закрыть.addEventListener('click', () => m.close());
+  шапка.append(заголовок, закрыть);
+  m.box.insertBefore(шапка, m.body);
+
+  const меню = el('nav', 'set-nav');
+  const страницы = el('div', 'set-pages');
+  m.body.append(меню, страницы);
+
+  const разделы = new Map();     // id → { кнопка, страница }
+  let открыт = 'ui';
+  function раздел(id, ключ, значок) {
+    const кнопка = el('button', 'set-nav-btn');
+    const ико = el('span', 'set-nav-ico');
+    ико.innerHTML = значок;
+    кнопка.append(ико, elT('span', 'set-nav-t', ключ));
+    кнопка.addEventListener('click', () => показать(id));
+    меню.appendChild(кнопка);
+    const страница = el('section', 'set-page');
+    страница.appendChild(elT('h3', 'set-page-t', ключ));
+    страницы.appendChild(страница);
+    разделы.set(id, { кнопка, страница });
+    return страница;
+  }
+  function показать(id) {
+    открыт = разделы.has(id) ? id : 'ui';
+    разделы.forEach((р, k) => { р.кнопка.classList.toggle('on', k === открыт); р.страница.hidden = k !== открыт; });
   }
 
-  const ряды = [];
+  /** Ряд: подпись слева, управление справа, пояснение под управлением. */
+  function ряд(родитель, ключПодписи, ключПояснения, control) {
+    const блок = el('div', 'set-block');
+    блок.append(elT('label', 'set-label', ключПодписи));
+    const справа = el('div', 'set-control');
+    справа.appendChild(control);
+    if (ключПояснения) справа.appendChild(elT('div', 'set-hint', ключПояснения));
+    блок.appendChild(справа);
+    родитель.appendChild(блок);
+  }
 
-  // Язык
+  /* ── Интерфейс ── */
+  const стрИнтерфейс = раздел('ui', 'settings.secUi', ЗНАЧКИ_НАСТРОЕК.ui);
+
   const выборЯзыка = el('select', 'set-select');
   for (const [код, имя] of Object.entries(LANGS)) {
     const o = el('option', null, имя);
     o.value = код;
     выборЯзыка.appendChild(o);
   }
-  выборЯзыка.value = api.getLang();
   выборЯзыка.addEventListener('change', () => api.setLang(выборЯзыка.value));
-  ряды.push(ряд(m.body, 'settings.language', 'settings.languageHint', выборЯзыка));
+  ряд(стрИнтерфейс, 'settings.language', 'settings.languageHint', выборЯзыка);
 
-  // Масштаб интерфейса: ползунок и число рядом, двойной щелчок — 100%.
+  // Тема: три кнопки одним бруском, как у 3DModelist.
+  const темы = el('div', 'seg set-seg');
+  const кнопкиТем = new Map();
+  for (const [id, ключ] of [['light', 'settings.themeLight'], ['dark', 'settings.themeDark'], ['system', 'settings.themeSystem']]) {
+    const b = elT('button', null, ключ);
+    b.addEventListener('click', () => { api.setTheme(id); синхронизироватьТему(); });
+    темы.appendChild(b);
+    кнопкиТем.set(id, b);
+  }
+  const синхронизироватьТему = () => кнопкиТем.forEach((b, id) => b.classList.toggle('on', id === api.getTheme()));
+  ряд(стрИнтерфейс, 'settings.theme', null, темы);
+
+  // Размер интерфейса: ползунок, число и «100%» рядом; двойной щелчок — тоже 100%.
   const масштаб = el('div', 'set-scale');
   const ползунок = el('input', 'set-range');
   ползунок.type = 'range';
   ползунок.min = 80; ползунок.max = 200; ползунок.step = 5;
   const число = el('span', 'val');
-  масштаб.append(ползунок, число);
+  const сброс = el('button', 'btn ghost set-100', '100%');
+  tip(сброс, 'settings.uiScale100');
+  масштаб.append(ползунок, число, сброс);
   const показатьМасштаб = (k) => { ползунок.value = Math.round(k * 100); число.textContent = Math.round(k * 100) + '%'; };
   // Меняем на лету, пока тянут: видно сразу, каким станет интерфейс.
   ползунок.addEventListener('input', () => показатьМасштаб(api.setUiScale(+ползунок.value / 100)));
   ползунок.addEventListener('dblclick', () => показатьМасштаб(api.setUiScale(1)));
-  ряды.push(ряд(m.body, 'settings.uiScale', 'settings.uiScaleHint', масштаб));
+  сброс.addEventListener('click', () => показатьМасштаб(api.setUiScale(1)));
+  ряд(стрИнтерфейс, 'settings.uiScale', 'settings.uiScaleHint', масштаб);
 
-  // Размер текстуры
+  // Начальный экран.
+  const старт = el('label', 'set-checkrow');
+  const галкаСтарта = el('input', 'set-check');
+  галкаСтарта.type = 'checkbox';
+  галкаСтарта.addEventListener('change', () => api.setStartup(галкаСтарта.checked));
+  старт.append(галкаСтарта, elT('span', null, 'settings.startupShow'));
+  ряд(стрИнтерфейс, 'settings.startup', null, старт);
+
+  /* ── Покраска ── */
+  const стрПокраска = раздел('paint', 'settings.secPaint', ЗНАЧКИ_НАСТРОЕК.paint);
   const выборТекстуры = el('select', 'set-select');
   for (const размер of [512, 1024, 2048]) {
     const o = el('option', null, `${размер} × ${размер}`);
     o.value = размер;
     выборТекстуры.appendChild(o);
   }
-  выборТекстуры.value = api.getTexSize();
   выборТекстуры.addEventListener('change', () => api.setTexSize(+выборТекстуры.value));
-  ряды.push(ряд(m.body, 'settings.texture', 'settings.textureHint', выборТекстуры));
+  ряд(стрПокраска, 'settings.texture', 'settings.textureHint', выборТекстуры);
 
-  // Начальный экран
-  const галкаСтарта = el('input');
-  галкаСтарта.type = 'checkbox';
-  галкаСтарта.className = 'set-check';
-  галкаСтарта.checked = api.getStartup();
-  галкаСтарта.addEventListener('change', () => api.setStartup(галкаСтарта.checked));
-  ряды.push(ряд(m.body, 'settings.startup', null, галкаСтарта));
-  const подписьСтарта = elT('div', 'set-hint', 'settings.startupShow');
-  m.body.appendChild(подписьСтарта);
-
-  // ИИ (MCP) — только в приложении: сервер живёт в оболочке Electron.
+  /* ── ИИ (MCP) — сервер живёт в оболочке Electron, в браузере его нет ── */
+  const стрИИ = раздел('ai', 'settings.secAi', ЗНАЧКИ_НАСТРОЕК.ai);
+  стрИИ.appendChild(elT('p', 'set-text', 'settings.mcpHint'));
   const хост = window.painterHost?.mcp;
   let синхрИИ = () => {};
-  if (хост) {
-    const галкаИИ = el('input');
+  if (!хост) {
+    стрИИ.appendChild(elT('p', 'set-text set-note', 'settings.mcpAppOnly'));
+  } else {
+    const вкл = el('label', 'set-checkrow');
+    const галкаИИ = el('input', 'set-check');
     галкаИИ.type = 'checkbox';
-    галкаИИ.className = 'set-check';
-    ряды.push(ряд(m.body, 'settings.mcp', 'settings.mcpHint', галкаИИ));
+    вкл.append(галкаИИ, elT('span', null, 'settings.mcp'));
+    стрИИ.appendChild(вкл);
     const блокИИ = el('div', 'set-mcp');
     const состояние = el('div', 'set-hint');
     const команда = el('code', 'set-mcp-cmd');
@@ -1185,11 +1234,11 @@ export function createSettingsModal(api) {
     const новыйКлюч = elT('button', 'btn', 'settings.mcpNewKey');
     кнопки.append(копировать, новыйКлюч);
     блокИИ.append(elT('div', 'set-hint', 'settings.mcpCommand'), команда, кнопки, состояние);
-    m.body.appendChild(блокИИ);
+    стрИИ.appendChild(блокИИ);
 
     let st = null;
     const строка = (s) => `claude mcp add --transport http 3dpainter ${s.url} --header "Authorization: Bearer ${s.token}"`;
-    const показать = (s) => {
+    const показатьИИ = (s) => {
       st = s;
       галкаИИ.checked = s.enabled;
       блокИИ.style.display = s.enabled ? '' : 'none';
@@ -1198,8 +1247,8 @@ export function createSettingsModal(api) {
         : s.running ? t('settings.mcpRunning', s.url) : '';
       состояние.classList.toggle('bad', !!s.error);
     };
-    галкаИИ.addEventListener('change', async () => показать(await хост.setEnabled(галкаИИ.checked)));
-    новыйКлюч.addEventListener('click', async () => показать(await хост.newKey()));
+    галкаИИ.addEventListener('change', async () => показатьИИ(await хост.setEnabled(галкаИИ.checked)));
+    новыйКлюч.addEventListener('click', async () => показатьИИ(await хост.newKey()));
     копировать.addEventListener('click', async () => {
       if (!st) return;
       try {
@@ -1208,26 +1257,41 @@ export function createSettingsModal(api) {
         setTimeout(() => { копировать.textContent = t('settings.mcpCopy'); }, 1500);
       } catch { /* буфер недоступен — строку можно выделить руками */ }
     });
-    синхрИИ = async () => показать(await хост.state());
+    синхрИИ = async () => показатьИИ(await хост.state());
   }
 
+  const версия = el('span', 'foot-hint');
   const готово = elT('button', 'btn accent', 'settings.close');
   готово.addEventListener('click', () => m.close());
-  m.foot.append(готово);
+  m.foot.append(версия, готово);
 
   // Надписи переводит applyDOM(); здесь — только значения управления.
   function синхронизировать() {
     синхрИИ();
     выборЯзыка.value = api.getLang();
+    синхронизироватьТему();
     показатьМасштаб(api.getUiScale());
     выборТекстуры.value = api.getTexSize();
     галкаСтарта.checked = api.getStartup();
+    версия.textContent = t('settings.foot', api.version);
   }
 
   onLangChange(синхронизировать);
+  показать('ui');
 
-  return { open: () => { синхронизировать(); m.open(); }, modal: m };
+  return {
+    /** @param {'ui'|'paint'|'ai'} [раздел] открыть сразу на нём; иначе — где были. */
+    open: (id) => { if (id) показать(id); синхронизировать(); m.open(); },
+    modal: m,
+  };
 }
+
+const значок = (d) => `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+const ЗНАЧКИ_НАСТРОЕК = {
+  ui: значок('<rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M12 18v3"/>'),
+  paint: значок('<path d="M14.5 4.5l5 5L10 19H5v-5z"/><path d="M12.5 6.5l5 5"/>'),
+  ai: значок('<path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8"/>'),
+};
 
 /* ── Окно эффекта ──────────────────────────────────────────────── */
 

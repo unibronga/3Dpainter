@@ -5,6 +5,7 @@
  */
 
 import { t } from './i18n.js';
+import { themeColor, onThemeChange } from './theme.js';
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -226,6 +227,20 @@ export class Viewport {
 
     this.scene = new THREE.Scene();
     this.scene.background = stageBackground();
+    // Тема сменилась — фон сцены и сетка пола в её цветах.
+    onThemeChange(() => {
+      this.scene.background?.dispose?.();
+      this.scene.background = stageBackground();
+      if (this.grid) {
+        const старая = this.grid;
+        this.grid = this._makeGrid(старая.userData.span);
+        this.grid.position.copy(старая.position);
+        this.grid.visible = старая.visible;
+        this.scene.remove(старая);
+        старая.geometry.dispose(); старая.material.dispose();
+        this.scene.add(this.grid);
+      }
+    });
 
     // Две камеры живут одновременно, переключение — подмена активной: так
     // ортография не теряет положение, набранное в перспективе.
@@ -778,7 +793,8 @@ export class Viewport {
   /** Сетка пола. Цвета светлее фона настолько, чтобы читались, но не спорили
    *  с моделью: центральные оси ярче остальных линий. */
   _makeGrid(span) {
-    const g = new THREE.GridHelper(span, span, 0x9aa2ad, 0x5a626c);
+    const g = new THREE.GridHelper(span, span, themeColor('--grid-1', '#9aa2ad'), themeColor('--grid-2', '#5a626c'));
+    g.userData.span = span;
     g.material.transparent = true;
     g.material.opacity = 0.85;
     g.material.depthWrite = false;
@@ -1867,8 +1883,8 @@ function stageBackground() {
   c.width = c.height = 512;
   const g = c.getContext('2d');
   const grad = g.createRadialGradient(256, 205, 0, 256, 205, 400);
-  grad.addColorStop(0, '#2f3841');
-  grad.addColorStop(1, '#1a2027');
+  grad.addColorStop(0, themeColor('--stage-1', '#2f3841'));
+  grad.addColorStop(1, themeColor('--stage-2', '#1a2027'));
   g.fillStyle = grad;
   g.fillRect(0, 0, 512, 512);
   const tex = new THREE.CanvasTexture(c);

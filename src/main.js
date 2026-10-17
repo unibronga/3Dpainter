@@ -35,6 +35,7 @@ import { canSaveToFolder, pickFolder, writeToFolder, pickFile, writeFile, canRev
 import { showSaved, showSaveFailed, toastState } from './toast.js';
 import { EXPRESSIONS, SLOTS, faceMaskOf, trisFromSelection, cropLayer, putCrop, cropIsEmpty, buildAtlas, faceDescription } from './face.js';
 import { zoneNameProblem, freeZoneName, countTris, subtractTris } from './zones.js';
+import { getThemePref, setThemePref, onThemeChange, themeColor } from './theme.js';
 
 // Сбор ошибок с самого начала загрузки: в консоли браузера вперемешку лежат
 // сообщения от прошлых версий модулей, и по ней не понять, живая ошибка или
@@ -847,7 +848,7 @@ function миниатюраВыражения(canvas, slot, id) {
   canvas.width = canvas.height = S;
   const g = canvas.getContext('2d');
   for (let y = 0; y < S; y += 8) for (let x = 0; x < S; x += 8) {
-    g.fillStyle = ((x + y) / 8) % 2 ? '#3a424c' : '#2c333b';
+    g.fillStyle = ((x + y) / 8) % 2 ? themeColor('--thumb-1', '#3a424c') : themeColor('--thumb-2', '#2c333b');
     g.fillRect(x, y, 8, 8);
   }
   const c = f.exprs[slot].get(id);
@@ -3398,6 +3399,19 @@ const settingsModal = createSettingsModal({
   setUiScale: (v) => setUiScale(v),
   getStartup: () => loadPrefs().showWelcome !== false,
   setStartup: (v) => savePrefs({ showWelcome: v }),
+  getTheme: getThemePref,
+  setTheme: setThemePref,
+  version: APP_VERSION,
+});
+
+// Тема сменилась — холсты, нарисованные кодом, перерисовать в её цветах.
+onThemeChange(() => {
+  state.mapThumbs = new Map();
+  drawUVRows();
+  if (state.uvOpen) uvEditor.draw();
+  syncFace();
+  syncLayers();
+  syncMaterialChip();
 });
 
 /* ── ИИ: инструменты для MCP ───────────────────────────────────── */

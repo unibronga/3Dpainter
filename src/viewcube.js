@@ -13,6 +13,7 @@
 
 import * as THREE from 'three';
 import { t, onLangChange } from './i18n.js';
+import { themeColor, onThemeChange } from './theme.js';
 
 const SIZE = 92;          // сторона полотна в пикселях
 const EDGE = 0.34;        // от какой доли грани считаем, что задето ребро
@@ -32,13 +33,13 @@ function faceTexture(label) {
   c.width = c.height = 128;
   const x = c.getContext('2d');
 
-  x.fillStyle = '#2f3843';
+  x.fillStyle = themeColor('--cube-face', '#2f3843');
   x.fillRect(0, 0, 128, 128);
-  x.strokeStyle = '#4a5463';
+  x.strokeStyle = themeColor('--cube-line', '#4a5463');
   x.lineWidth = 7;
   x.strokeRect(3.5, 3.5, 121, 121);
 
-  x.fillStyle = '#edf0f4';
+  x.fillStyle = themeColor('--cube-text', '#edf0f4');
   x.font = '600 24px -apple-system, "SF Pro Text", system-ui, sans-serif';
   x.textAlign = 'center';
   x.textBaseline = 'middle';
@@ -82,8 +83,9 @@ export class ViewCube {
     // Рёбра — без них куб в ортографии читается плоским пятном.
     const edges = new THREE.LineSegments(
       new THREE.EdgesGeometry(this.cube.geometry),
-      new THREE.LineBasicMaterial({ color: 0x9199a3 }),
+      new THREE.LineBasicMaterial({ color: themeColor('--cube-edge', '#9199a3') }),
     );
+    this._edges = edges;
     this.cube.add(edges);
 
     this.raycaster = new THREE.Raycaster();
@@ -96,6 +98,8 @@ export class ViewCube {
     // Подписи граней нарисованы в текстурах, поэтому смена языка их
     // перерисовывает: переводом надписи на картинке не заменишь.
     onLangChange(() => this._relabel());
+    // Тема: грани и рёбра куба — в её цветах.
+    onThemeChange(() => { this._relabel(); this._edges.material.color.set(themeColor('--cube-edge', '#9199a3')); });
   }
 
   /** Перерисовать подписи граней под текущий язык. */
@@ -162,7 +166,7 @@ export class ViewCube {
       const idx = r ? r.faceIndex : -1;
       if (idx === this.hovered) return;
       this.hovered = idx;
-      this.materials.forEach((m, i) => m.color.set(i === idx ? 0x8da4ff : 0xffffff));
+      this.materials.forEach((m, i) => m.color.set(i === idx ? themeColor('--cube-hover', '#8da4ff') : 0xffffff));
       el.style.cursor = idx >= 0 ? 'grab' : '';
     });
 

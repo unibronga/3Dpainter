@@ -4,6 +4,7 @@
  */
 
 import { t } from './i18n.js';
+import { themeColor } from './theme.js';
 
 /** Палитра под интерьеры и уровни: земля, зелень, вода, дерево, камень. */
 export const PALETTE = [
@@ -143,7 +144,7 @@ export function drawUVPreview(canvas, target, cache, showWire) {
   const S = canvas.width;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, S, S);
-  ctx.fillStyle = '#1a2027';
+  ctx.fillStyle = themeColor('--well', '#1a2027');
   ctx.fillRect(0, 0, S, S);
   if (!target) return;
 

@@ -9,6 +9,7 @@
  */
 
 import { patternAt, hasPattern } from './patterns.js';
+import { themeColor } from './theme.js';
 
 const norm = (v) => {
   const l = Math.hypot(v[0], v[1], v[2]) || 1;
@@ -25,9 +26,9 @@ const HALF_FILL = norm([FILL[0], FILL[1], FILL[2] + 1]);
 /** Шахматка под шаром: без неё прозрачность материала ничем себя не выдаёт. */
 function drawChecker(ctx, w, h) {
   const step = Math.max(6, Math.round(w / 12));
-  ctx.fillStyle = '#28303a';
+  ctx.fillStyle = themeColor('--check-2', '#28303a');
   ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = '#323b46';
+  ctx.fillStyle = themeColor('--check-1', '#323b46');
   for (let y = 0; y < h; y += step) {
     for (let x = ((y / step) | 0) % 2 ? step : 0; x < w; x += step * 2) {
       ctx.fillRect(x, y, step, step);
