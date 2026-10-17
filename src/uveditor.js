@@ -55,6 +55,7 @@ export class UVEditor {
     container.appendChild(this.probeCanvas);
     this.pctx = this.probeCanvas.getContext('2d');
     this.probe = null;
+    this.highlight = null;       // грани зон с открытым «глазом» (setHighlight)
 
     this.target = null;
     this.cache = null;
@@ -102,6 +103,16 @@ export class UVEditor {
    * попадания. `{ tris, u, v }` (u, v — координаты развёртки) или null.
    */
   setProbe(probe) { this.probe = probe; this._drawProbe(); }
+
+  /**
+   * Подсветить грани (зоны с открытым «глазом») — по номерам треугольников
+   * показанного меша, `Uint8Array` 1 — грань подсвечена, или null.
+   */
+  setHighlight(tris) {
+    this.highlight = tris;
+    this._hlPath = null;
+    this._drawProbe();
+  }
 
   /** Бросить незамкнутое лассо — при смене инструмента или по Esc. */
   cancelLasso() {
@@ -271,6 +282,7 @@ export class UVEditor {
     const ctx = this.pctx;
     const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
     ctx.clearRect(0, 0, w, h);
+    if (this.highlight && this.target && this.cache) this._drawHighlight();
     const p = this.probe;
     if (!p || !this.target || !this.cache) return;
     const { ox, oy, scale } = this.view;
@@ -304,6 +316,41 @@ export class UVEditor {
     ctx.lineWidth = 1.5;
     ctx.strokeStyle = '#ffce2e';
     ctx.stroke();
+    ctx.restore();
+  }
+
+  /**
+   * Подсветка зон под отметкой. Контур собирается один раз в координатах
+   * развёртки (0…1) и кладётся преобразованием: отметка перерисовывается на
+   * каждое движение мыши, а у лица целым мешем граней тысячи.
+   */
+  _drawHighlight() {
+    const ctx = this.pctx;
+    const { uv, idx } = this.cache;
+    const tris = this.highlight;
+    if (!this._hlPath || this._hlCache !== this.cache) {
+      const путь = new Path2D();
+      for (let t = 0; t < this.cache.triCount; t++) {
+        if (!tris[t]) continue;
+        const i0 = idx[t * 3], i1 = idx[t * 3 + 1], i2 = idx[t * 3 + 2];
+        путь.moveTo(uv[i0 * 2], uv[i0 * 2 + 1]);
+        путь.lineTo(uv[i1 * 2], uv[i1 * 2 + 1]);
+        путь.lineTo(uv[i2 * 2], uv[i2 * 2 + 1]);
+        путь.closePath();
+      }
+      this._hlPath = путь;
+      this._hlCache = this.cache;
+    }
+    const { ox, oy, scale } = this.view;
+    ctx.save();
+    // u → ox + u·scale, v → oy + (1 − v)·scale.
+    ctx.translate(ox, oy + scale);
+    ctx.scale(scale, -scale);
+    ctx.fillStyle = 'rgba(255, 206, 46, 0.34)';
+    ctx.fill(this._hlPath);
+    ctx.lineWidth = 1 / scale;
+    ctx.strokeStyle = 'rgba(255, 206, 46, 0.8)';
+    ctx.stroke(this._hlPath);
     ctx.restore();
   }
 

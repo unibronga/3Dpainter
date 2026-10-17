@@ -136,7 +136,7 @@ export function buildAtlas(crops, ids, r) {
  * Описание лица для игры. Прямоугольник — в пикселях картинки GLB (верх у
  * v = 0) и в UV glTF; клетка атласа совпадает с ним по размеру.
  */
-export function faceDescription({ name, size, rect, eyes, mouth, full }) {
+export function faceDescription({ name, size, rect, eyes, mouth, full, zones = [] }) {
   const w = rectW(rect), h = rectH(rect);
   const y = size - 1 - rect.y1;          // верх прямоугольника в ориентации файла
   const slot = (a) => a && {
@@ -156,5 +156,8 @@ export function faceDescription({ name, size, rect, eyes, mouth, full }) {
     mouth: slot(mouth),
     // Всё лицо одной картинкой: игра показывает либо его, либо глаза + рот.
     full: slot(full),
+    // Имена материалов зон в порядке примитивов: игра сверяет, что ждала.
+    // Поле новое — старые читатели формата его просто не замечают.
+    zones,
   };
 }

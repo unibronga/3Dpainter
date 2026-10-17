@@ -178,11 +178,20 @@ function patchSelection(material, u) {
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>' + DECAL_VERT)
       .replace('#include <project_vertex>', '#include <project_vertex>\n  vDecalClip = gl_Position;\n  vDecalPart = decalPart;');
-    sh.fragmentShader = 'uniform sampler2D selMap;\nuniform float selOn;\nuniform float selTime;\n'
+    sh.fragmentShader = 'uniform sampler2D selMap;\nuniform float selOn;\nuniform float selTime;\nuniform sampler2D hlMap;\nuniform float hlOn;\n'
       + sh.fragmentShader
         .replace('#include <common>', '#include <common>' + DECAL_FRAG_HEAD)
         .replace('#include <map_fragment>', '#include <map_fragment>' + DECAL_FRAG_BODY)
         .replace('#include <dithering_fragment>', `#include <dithering_fragment>
+      if (hlOn > 0.5) {
+        // Подсветка зоны («глаз» в панели «Зоны»): грани зоны — тоном поверх
+        // покраски, с полосой по краю. Маска лежит как у выделения.
+        float h = texture2D(hlMap, vec2(vMapUv.x, 1.0 - vMapUv.y)).r;
+        float hw = clamp(fwidth(h), 1e-4, 0.24);
+        float hedge = 1.0 - smoothstep(hw, hw * 2.0, abs(h - 0.5));
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0, 0.81, 0.18), 0.42 * step(0.5, h));
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0, 0.81, 0.18), hedge);
+      }
       if (selOn > 0.5) {
         // Маска лежит строками сверху вниз, как холст покраски, но холст
         // three.js переворачивает при заливке (flipY), а сырые данные — нет.
@@ -1413,6 +1422,7 @@ export class Viewport {
     mesh.userData.flatMaterial = new THREE.MeshBasicMaterial({ map: texture });
     const u = mesh.userData.selUniforms = {
       selMap: { value: this._selDummy }, selOn: { value: 0 }, selTime: this._selTime,
+      hlMap: { value: this._selDummy }, hlOn: { value: 0 },
     };
     patchSelection(mesh.userData.matMaterial, u);
     patchSelection(mesh.userData.flatMaterial, u);
@@ -1454,6 +1464,28 @@ export class Viewport {
       u.selOn.value = 1;
     }
     if (old && old !== this._selDummy && old !== u.selMap.value) old.dispose();
+  }
+
+  /**
+   * Подсветить грани на меше — зоны, у которых в панели открыт «глаз».
+   * @param {Uint8Array|null} mask маска текселей; null — подсветки нет
+   */
+  setHighlight(mesh, mask, size) {
+    const u = mesh.userData.selUniforms;
+    if (!u) return;
+    const old = u.hlMap.value;
+    if (!mask) {
+      u.hlOn.value = 0;
+      u.hlMap.value = this._selDummy;
+    } else {
+      const tex = new THREE.DataTexture(mask, size, size, THREE.RedFormat);
+      tex.magFilter = THREE.LinearFilter;
+      tex.minFilter = THREE.LinearFilter;
+      tex.needsUpdate = true;
+      u.hlMap.value = tex;
+      u.hlOn.value = 1;
+    }
+    if (old && old !== this._selDummy && old !== u.hlMap.value) old.dispose();
   }
 
   /**

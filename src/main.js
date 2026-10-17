@@ -34,6 +34,7 @@ import { initTooltips } from './tooltip.js';
 import { canSaveToFolder, pickFolder, writeToFolder, pickFile, writeFile, canReveal, reveal, downloadBlob, canvasBlob, safeName } from './savefiles.js';
 import { showSaved, showSaveFailed, toastState } from './toast.js';
 import { EXPRESSIONS, SLOTS, faceMaskOf, trisFromSelection, cropLayer, putCrop, cropIsEmpty, buildAtlas, faceDescription } from './face.js';
+import { zoneNameProblem, freeZoneName, countTris, subtractTris } from './zones.js';
 
 // Сбор ошибок с самого начала загрузки: в консоли браузера вперемешку лежат
 // сообщения от прошлых версий модулей, и по ней не понять, живая ошибка или
@@ -225,6 +226,9 @@ function buildTargets(paintables, имя = null) {
   однаРазвёртка();
   остановитьРазговор();
   state.face = null;        // лицо жило на прежних целях
+  state.zones = [];         // зоны — на прежних мешах
+  state.zoneCurrent = null;
+  state.faceEye = false;
   activeMesh = paintables.length ? paintables[0].mesh : null;
   // Выделение жило у прежних целей и ушло вместе с ними.
   uvEditor.setSelectionOutline(null);
@@ -619,8 +623,10 @@ function задатьЛицо(mesh, tris, source, materialName = null) {
   };
   // Слои лица — у всех мешей: номер слоя общий на модель.
   eachTarget(слоиЛица);
+  // Грань — либо в лице, либо в зоне: лицо забирает свои грани из зон.
+  отнятьУЗон(mesh, tris);
   setActiveMesh(mesh);
-  syncLayers(); syncFace(); drawUVRows(); refreshUV();
+  syncLayers(); syncFace(); syncZones(); drawUVRows(); refreshUV();
   let граней = 0;
   for (let i = 0; i < tris.length; i++) граней += tris[i];
   setStatusHint(t('face.set', граней));
@@ -643,8 +649,10 @@ function убратьЛицо(тихо = false) {
   state.activeLayer = Math.min(state.activeLayer, (refLayers()?.length || 1) - 1);
   eachTarget((tg) => { tg.activeIndex = state.activeLayer; });
   поправитьАктивныйСлой();
+  if (state.zoneCurrent === 'face') state.zoneCurrent = null;
+  state.faceEye = false;
   if (тихо) return;
-  syncLayers(); syncFace(); drawUVRows(); refreshUV();
+  syncLayers(); syncFace(); syncZones(); drawUVRows(); refreshUV();
 }
 
 function выбратьСлойЛица(slot) {
@@ -993,7 +1001,7 @@ document.querySelectorAll('#face-part button').forEach((b) => b.addEventListener
 $('face-add-expr').addEventListener('click', начатьВводВыражения);
 $('face-blink').addEventListener('click', моргнуть);
 $('face-talk').addEventListener('click', говорить);
-$('face-export').addEventListener('click', () => saveAs('face'));
+$('face-export').addEventListener('click', () => saveAs('game'));
 
 // Отмена правки выражения: сперва показать то выражение, которое правили.
 history.beforeRestore = (e) => {
@@ -1003,6 +1011,249 @@ history.beforeRestore = (e) => {
     }
   }
 };
+
+/* ── Зоны: именованные наборы граней → материалы в выгрузке ────── */
+
+/*
+ * state.zones = [{ name, mesh, tris }] — порядок списка = порядок
+ * примитивов в выгрузке. Грань — в одной зоне и не в лице (zones.js).
+ * state.zoneCurrent — номер выбранной зоны, 'face' — строка лица, null.
+ * Глаз строки — zone.eye (у лица — state.faceEye): подсветка граней на
+ * модели и в развёртке.
+ */
+state.zones = [];
+state.zoneCurrent = null;
+state.faceEye = false;
+let вводЗоны = null;            // { mode: 'new', mesh, tris } | { mode: 'rename', index }
+
+/** Грани выделения — с того меша, где их больше (как у лица). */
+function граниВыделения() {
+  let лучшее = null;
+  for (const { mesh, cache } of viewport.paintables) {
+    const tg = targets.get(mesh);
+    if (!tg?.selection) continue;
+    const r = trisFromSelection(cache, tg.size, tg.selection);
+    if (r.count && (!лучшее || r.count > лучшее.count)) лучшее = { mesh, ...r };
+  }
+  return лучшее;
+}
+
+/** Убрать грани из всех зон меша; опустевшие зоны уходят. */
+function отнятьУЗон(mesh, tris, кроме = null) {
+  const ушли = [];
+  for (const z of state.zones) {
+    if (z === кроме || z.mesh !== mesh) continue;
+    subtractTris(z.tris, tris);
+    if (!countTris(z.tris)) ушли.push(z);
+  }
+  if (!ушли.length) return [];
+  const выбрана = typeof state.zoneCurrent === 'number' ? state.zones[state.zoneCurrent] : null;
+  state.zones = state.zones.filter((z) => !ушли.includes(z));
+  if (выбрана) state.zoneCurrent = state.zones.includes(выбрана) ? state.zones.indexOf(выбрана) : null;
+  return ушли.map((z) => z.name);
+}
+
+/** Грани для зоны: из выделения, без лица. null — брать нечего (сказано словами). */
+function граниДляЗоны() {
+  const выбор = граниВыделения();
+  if (!выбор) { setStatusHint(t('zones.noSelection')); return null; }
+  let лица = 0;
+  if (state.face?.mesh === выбор.mesh) лица = subtractTris(выбор.tris, state.face.tris);
+  if (!countTris(выбор.tris)) { setStatusHint(t('zones.allFace')); return null; }
+  return { ...выбор, лица };
+}
+
+/** Занятые имена: другие зоны и материалы модели — в файле имена не должны совпасть. */
+function занятыеИмена(кроме = null) {
+  return [...state.zones.filter((z) => z !== кроме).map((z) => z.name),
+    ...viewport.paintables.map((p) => p.mesh.userData.sourceMaterialName)];
+}
+
+/** «+ зона из выделения»: грани берутся сейчас, имя — в строке ввода. */
+function начатьЗонуИзВыделения() {
+  const грани = граниДляЗоны();
+  if (!грани) return false;
+  вводЗоны = { mode: 'new', mesh: грани.mesh, tris: грани.tris, лица: грани.лица };
+  syncZones();
+  return true;
+}
+
+/** Создать зону. Для проверок и MCP — без строки ввода, сразу именем. */
+function создатьЗону(имя, грани = null) {
+  грани = грани || граниДляЗоны();
+  if (!грани) return false;
+  имя = String(имя || '').trim();
+  const беда = zoneNameProblem(имя, занятыеИмена());
+  if (беда) { setStatusHint(t(беда, имя)); return false; }
+  const z = { name: имя, mesh: грани.mesh, tris: грани.tris, eye: false };
+  const ушли = отнятьУЗон(z.mesh, z.tris);
+  state.zones.push(z);
+  state.zoneCurrent = state.zones.length - 1;
+  state.unsaved = true;
+  clearSelection();
+  syncZones(); syncZoneHighlight();
+  const n = countTris(z.tris);
+  setStatusHint(грани.лица ? t('zones.createdNoFace', имя, n, грани.лица)
+    : ушли.length ? t('zones.createdMoved', имя, n, ушли.join(', ')) : t('zones.created', имя, n));
+  return true;
+}
+
+/** «Обновить из выделения»: грани выбранной зоны заменяются выделенными. */
+function обновитьЗону() {
+  const z = state.zones[state.zoneCurrent];
+  if (!z) { setStatusHint(t('zones.pickFirst')); return false; }
+  const грани = граниДляЗоны();
+  if (!грани) return false;
+  if (грани.mesh !== z.mesh) { setStatusHint(t('zones.otherMesh', z.name)); return false; }
+  z.tris = грани.tris;
+  const ушли = отнятьУЗон(z.mesh, z.tris, z);
+  state.zoneCurrent = state.zones.indexOf(z);
+  state.unsaved = true;
+  clearSelection();
+  syncZones(); syncZoneHighlight();
+  setStatusHint(ушли.length ? t('zones.updatedMoved', z.name, countTris(z.tris), ушли.join(', '))
+    : t('zones.updated', z.name, countTris(z.tris)));
+  return true;
+}
+
+/** Выбрать строку: грани зоны (или лица) снова выделяются — добавить или убрать лассо. */
+function выбратьЗону(k) {
+  const часть = k === 'face' ? state.face : state.zones[k];
+  if (!часть) return;
+  state.zoneCurrent = k;
+  setActiveMesh(часть.mesh);
+  const tg = targets.get(часть.mesh);
+  applySelection(new Map([[tg, faceMaskOf(часть.mesh.userData.paintCache, tg.size, часть.tris).mask]]), 'new');
+  syncZones();
+}
+
+function удалитьЗону(k) {
+  const z = state.zones[k];
+  if (!z || !confirm(t('zones.confirmDelete', z.name))) return;
+  state.zones.splice(k, 1);
+  if (state.zoneCurrent === k) state.zoneCurrent = null;
+  else if (typeof state.zoneCurrent === 'number' && state.zoneCurrent > k) state.zoneCurrent -= 1;
+  state.unsaved = true;
+  syncZones(); syncZoneHighlight();
+}
+
+function переименоватьЗону(k, имя) {
+  const z = state.zones[k];
+  if (!z) return false;
+  имя = String(имя || '').trim();
+  if (имя === z.name) return true;
+  const беда = zoneNameProblem(имя, занятыеИмена(z));
+  if (беда) { setStatusHint(t(беда, имя)); return false; }
+  z.name = имя;
+  state.unsaved = true;
+  syncZones();
+  return true;
+}
+
+function глазЗоны(k) {
+  if (k === 'face') state.faceEye = !state.faceEye;
+  else if (state.zones[k]) state.zones[k].eye = !state.zones[k].eye;
+  syncZones(); syncZoneHighlight();
+}
+
+/** Грани с открытым глазом по мешу (Uint8Array) — для модели и развёртки. */
+function подсвеченныеГрани(mesh) {
+  let tris = null;
+  const добавить = (x) => {
+    tris = tris || new Uint8Array(x.length);
+    for (let i = 0; i < x.length; i++) if (x[i]) tris[i] = 1;
+  };
+  if (state.faceEye && state.face?.mesh === mesh) добавить(state.face.tris);
+  for (const z of state.zones) if (z.eye && z.mesh === mesh) добавить(z.tris);
+  return tris;
+}
+
+/** Подсветка на модели и в развёртке — заново по глазам. */
+function syncZoneHighlight() {
+  for (const { mesh, cache } of viewport.paintables) {
+    const tg = targets.get(mesh);
+    if (!tg) continue;
+    const tris = подсвеченныеГрани(mesh);
+    viewport.setHighlight(mesh, tris ? faceMaskOf(cache, tg.size, tris).mask : null, tg.size);
+  }
+  мешПодсветкиUV = activeMesh;
+  uvEditor.setHighlight(activeMesh ? подсвеченныеГрани(activeMesh) : null);
+}
+
+/** Строка ввода имени зоны: новая зона или переименование. */
+function полеЗоны(исходное, готово) {
+  const строка = элемент('div', 'zone-row editing');
+  const поле = элемент('input', 'expr-input');
+  поле.type = 'text';
+  поле.value = исходное;
+  поле.placeholder = t('zones.namePrompt');
+  поле.autocomplete = 'off';
+  поле.spellcheck = false;
+  const подсказка = элемент('div', 'zone-name-hint', t('zones.nameRule'));
+  const закрыть = () => { вводЗоны = null; syncZones(); };
+  поле.addEventListener('keydown', (e) => {
+    e.stopPropagation();          // буквы — в поле, а не инструментам
+    if (e.key === 'Enter') { if (готово(поле.value)) { вводЗоны = null; syncZones(); } }
+    if (e.key === 'Escape') закрыть();
+  });
+  поле.addEventListener('input', () => {
+    const беда = поле.value && !/^[A-Za-z0-9_]*$/.test(поле.value);
+    поле.classList.toggle('bad', !!беда);
+  });
+  поле.addEventListener('blur', () => { if (вводЗоны) setTimeout(() => { if (вводЗоны && !строка.contains(document.activeElement)) закрыть(); }); });
+  строка.append(поле, подсказка);
+  setTimeout(() => { поле.focus(); поле.select(); });   // кадра в свёрнутом окне может не быть
+  return строка;
+}
+
+/** Панель «Зоны»: строка лица, строки зон, кнопки. */
+function syncZones() {
+  const box = $('zone-list');
+  if (!box) return;
+  box.textContent = '';
+  const f = state.face;
+  const строкаЧасти = (k, имя, метка, граней, eye, можноУдалить) => {
+    const on = state.zoneCurrent === k;
+    const строка = элемент('div', 'zone-row' + (on ? ' on' : '') + (k === 'face' ? ' face' : ''));
+    const глаз = элемент('span', 'zone-eye' + (eye ? '' : ' off'));
+    глаз.innerHTML = eye ? UI.EYE_ON : UI.EYE_OFF;
+    глаз.title = t('tip.zoneEye');
+    глаз.addEventListener('click', (e) => { e.stopPropagation(); глазЗоны(k); });
+    const название = элемент('span', 'zone-name', имя);
+    const сколько = элемент('span', 'zone-count', метка ? `${метка} · ${граней}` : String(граней));
+    строка.append(глаз, название, сколько);
+    if (можноУдалить) {
+      const крест = элемент('span', 'expr-del', '×');
+      крест.title = t('zones.delete');
+      крест.addEventListener('click', (e) => { e.stopPropagation(); удалитьЗону(k); });
+      строка.append(крест);
+      название.title = t('tip.zoneRename');
+      название.addEventListener('dblclick', (e) => { e.stopPropagation(); вводЗоны = { mode: 'rename', index: k }; syncZones(); });
+    } else строка.append(элемент('span'));
+    строка.title = t('tip.zoneRow');
+    строка.addEventListener('click', () => выбратьЗону(k));
+    return строка;
+  };
+  if (f) box.appendChild(строкаЧасти('face', 'Face', t('zones.faceTag'), countTris(f.tris), state.faceEye, false));
+  state.zones.forEach((z, k) => {
+    if (вводЗоны?.mode === 'rename' && вводЗоны.index === k) {
+      box.appendChild(полеЗоны(z.name, (имя) => переименоватьЗону(k, имя)));
+      return;
+    }
+    box.appendChild(строкаЧасти(k, z.name, z.mesh.name && viewport.paintables.length > 1 ? z.mesh.name : '', countTris(z.tris), z.eye, true));
+  });
+  if (вводЗоны?.mode === 'new') {
+    const ввод = вводЗоны;
+    box.appendChild(полеЗоны(freeZoneName(занятыеИмена()), (имя) => создатьЗону(имя, ввод)));
+  }
+  if (!f && !state.zones.length && !вводЗоны) box.appendChild(элемент('div', 'face-hint', t('zones.listEmpty')));
+  $('zone-update').disabled = typeof state.zoneCurrent !== 'number';
+  $('zones-count').textContent = state.zones.length ? String(state.zones.length) : '';
+}
+
+$('zone-add').addEventListener('click', начатьЗонуИзВыделения);
+$('zone-update').addEventListener('click', обновитьЗону);
+$('zones-export').addEventListener('click', () => saveAs('game'));
 
 /* ── Размеры кисти ─────────────────────────────────────────────── */
 
@@ -2681,10 +2932,17 @@ function scheduleUV() {
   uvPending = true;
   requestAnimationFrame(() => { uvPending = false; refreshUV(); });
 }
+let мешПодсветкиUV = null;
 function refreshUV() {
   drawUVRow(activeMesh);
   if (!state.uvOpen) return;
   uvEditor.setTarget(activeTarget(), activeMesh?.userData.paintCache);
+  // Подсветка зон — по показанному мешу; пересчёт только при его смене:
+  // refreshUV зовётся каждый кадр мазка.
+  if (мешПодсветкиUV !== activeMesh) {
+    мешПодсветкиUV = activeMesh;
+    uvEditor.setHighlight(activeMesh ? подсвеченныеГрани(activeMesh) : null);
+  }
   $('uv-mesh').textContent = activeMesh?.name ? `· ${activeMesh.name}` : '';
 }
 
@@ -3358,6 +3616,7 @@ function rebuildOverlappingUV() {
     history.clear();
     state.painted = state.unsaved = true;      // геометрия другая — проект стоит сохранить
     selectionChanged();
+    syncZoneHighlight();                       // маска подсветки — по новой развёртке
     renderUVList();
     if (state.uvOpen) { uvEditor.setTarget(null, null); refreshUV(); uvEditor.fit(); uvEditor.draw(); }
     renderHistory();
@@ -3391,6 +3650,7 @@ function afterModelLoaded(report, key) {
 
   renderUVList();
   syncFace();
+  syncZones();
   syncLayers();
   syncBrushLabels();
   renderHistory();
@@ -3650,9 +3910,13 @@ function setTexSize(next) {
   // Выбор человека для этой модели — сильнее правила о плотных моделях.
   state.texSizeManualFor = modelName;
   const tris = $('stat-tris').textContent;
+  // Зоны — по номерам граней, размер карт их не касается: переживают пересборку.
+  const зоны = state.zones;
   withBusy('busy.texSize', () => {
     afterModelLoaded({ name: modelName, meshes: viewport.paintables.length, tris: 0, noUV: [] });
     $('stat-tris').textContent = tris;
+    state.zones = зоны;
+    syncZones(); syncZoneHighlight();
   }, next);
 }
 
@@ -3675,10 +3939,13 @@ function setTexSize(next) {
  * @param {[string, ...any]} о.занятость ключ надписи индикатора и подстановки
  * @returns {Promise<number>} сколько файлов сохранено
  */
-async function сохранитьФайлы({ папка: имяПапки, сколько, имя, собрать, занятость }) {
+async function сохранитьФайлы({ папка: имяПапки, всегдаПапкой = false, сколько, имя, собрать, занятость }) {
   let место;                            // undefined — спросить нечем, скачиванием
+  // Папкой — набор файлов, и выгрузка «Для игры» даже из одного GLB: игра
+  // ждёт его на одном и том же месте, `<имя>/<имя>.glb`.
+  const папкой = сколько > 1 || всегдаПапкой;
   try {
-    место = сколько > 1 ? (canSaveToFolder() ? await pickFolder() : undefined) : await pickFile(имя);
+    место = папкой ? (canSaveToFolder() ? await pickFolder() : undefined) : await pickFile(имя);
   } catch (err) { console.warn(err); }
   if (место === null) { setStatusHint(t('save.cancelled')); return 0; }
   const [ключ, ...значения] = занятость;
@@ -3686,7 +3953,7 @@ async function сохранитьФайлы({ папка: имяПапки, ск
     try {
       const файлы = await собрать();
       let итог;
-      if (сколько > 1 && место) {
+      if (папкой && место) {
         итог = await writeToFolder(место, имяПапки, файлы);
         setStatusHint(t('save.toFolder', файлы.length, итог.name));
       } else if (файлы.length === 1) {
@@ -3729,37 +3996,49 @@ function картыДляЭкспорта(сВариантами = false) {
   const карты = new Map();
   const варианты = сВариантами && state.variants.length > 1 ? state.variants : null;
   for (const [mesh, t] of targets) {
-    // Меш с лицом уходит одним видом — показанным; его грани лица — «Face».
-    if (state.face?.mesh === mesh) {
-      карты.set(mesh, {
-        colorCanvas: t.canvas,
-        ormCanvas: hasMaterialPaint(t) ? t.ormCanvas : null,
-        transparent: !!mesh.material?.transparent,
-        face: { whole: лицоЦелымМешем(), tris: state.face.tris },
-      });
-      continue;
-    }
-    if (варианты) {
-      // Каждый вариант — своими картами. Карта материала — у всех, если
-      // поверхностью красили хоть в одном: материалы вариантов должны быть
-      // одного устройства, иначе переключение меняло бы и блеск.
-      const сборки = варианты.map((v) => ({ v, r: t.renderVariant(v.id) }));
-      const сМатериалом = сборки.some(({ r }) => r.materialPaint);
-      карты.set(mesh, {
-        variants: сборки.map(({ v, r }) => ({
-          name: имяВарианта(v), color: r.color, orm: сМатериалом ? r.orm : null, transparent: r.transparent,
-        })),
-        activeVariant: варианты.findIndex((v) => v.id === state.activeVariant),
-      });
-      continue;
-    }
-    карты.set(mesh, {
+    карты.set(mesh, картыМешаДляЭкспорта(mesh, t, варианты));
+    // Зоны меша — в порядке списка: так они и лягут примитивами.
+    const зоны = state.zones.filter((z) => z.mesh === mesh && countTris(z.tris));
+    if (зоны.length) карты.get(mesh).zones = зоны.map((z) => ({ name: z.name, tris: z.tris }));
+  }
+  return карты;
+}
+
+/** Имена зон в выгрузке — в порядке примитивов: меши по обходу, зоны по списку. */
+function именаЗонВВыгрузке() {
+  return viewport.paintables.flatMap(({ mesh }) =>
+    state.zones.filter((z) => z.mesh === mesh && countTris(z.tris)).map((z) => z.name));
+}
+
+/** Карты одного меша для экспортёра: лицо, варианты или одна сборка. */
+function картыМешаДляЭкспорта(mesh, t, варианты) {
+  // Меш с лицом уходит одним видом — показанным; его грани лица — «Face».
+  if (state.face?.mesh === mesh) {
+    return {
       colorCanvas: t.canvas,
       ormCanvas: hasMaterialPaint(t) ? t.ormCanvas : null,
       transparent: !!mesh.material?.transparent,
-    });
+      face: { whole: лицоЦелымМешем(), tris: state.face.tris },
+    };
   }
-  return карты;
+  if (варианты) {
+    // Каждый вариант — своими картами. Карта материала — у всех, если
+    // поверхностью красили хоть в одном: материалы вариантов должны быть
+    // одного устройства, иначе переключение меняло бы и блеск.
+    const сборки = варианты.map((v) => ({ v, r: t.renderVariant(v.id) }));
+    const сМатериалом = сборки.some(({ r }) => r.materialPaint);
+    return {
+      variants: сборки.map(({ v, r }) => ({
+        name: имяВарианта(v), color: r.color, orm: сМатериалом ? r.orm : null, transparent: r.transparent,
+      })),
+      activeVariant: варианты.findIndex((v) => v.id === state.activeVariant),
+    };
+  }
+  return {
+    colorCanvas: t.canvas,
+    ormCanvas: hasMaterialPaint(t) ? t.ormCanvas : null,
+    transparent: !!mesh.material?.transparent,
+  };
 }
 
 /**
@@ -3777,11 +4056,13 @@ async function saveAs(формат) {
 
   if (формат === 'png') return saveTextures();
   if (формат === 'project') return saveProject(true);
-  if (формат === 'face') {
-    if (!state.face) { setStatusHint(t('face.noneToSave')); return 0; }
-    const сколько = 2 + (нарисованные('eyes').length ? 1 : 0) + (state.face.mouth && нарисованные('mouth').length ? 1 : 0)
-      + (нарисованные('full').length ? 1 : 0);
-    return сохранитьФайлы({ папка: основа, сколько, собрать: () => файлыЛица(), занятость: ['busy.save', основа] });
+  // «Для игры» — одна выгрузка на всё: модель со скелетом и клипами, лицо с
+  // атласами и описанием, зоны материалами. Бывшее «Лицо с выражениями» —
+  // она же (старое имя формата держим для MCP и старых вызовов).
+  if (формат === 'game' || формат === 'face') {
+    const сколько = state.face ? 2 + (нарисованные('eyes').length ? 1 : 0) + (state.face.mouth && нарисованные('mouth').length ? 1 : 0)
+      + (нарисованные('full').length ? 1 : 0) : 1;
+    return сохранитьФайлы({ папка: основа, всегдаПапкой: true, сколько, собрать: () => файлыДляИгры(основа), занятость: ['busy.save', основа] });
   }
 
   const карты = картыДляЭкспорта();
@@ -3900,7 +4181,41 @@ async function собратьПроект(доп = null) {
       overlays: наложенияВПроект(f, files),
     };
   }
+  // Зоны — по номерам граней (1 байт на треугольник, как у лица): геометрия
+  // в проекте своя, порядок граней тот же при любой развёртке.
+  if (state.zones.length) {
+    meta.zones = state.zones.map((z, k) => {
+      files[`zones/${k}/tris.bin`] = z.tris;
+      return { name: z.name, mesh: viewport.paintables.findIndex((p) => p.mesh === z.mesh), tris: `zones/${k}/tris.bin` };
+    });
+  }
   return packProject({ modelGLB, meta, meshes, app: APP_VERSION, files });
+}
+
+/**
+ * Зоны из проекта. Не тот меш или другое число граней — зона не ложится;
+ * класть её наугад нельзя, об этом сказано словами.
+ */
+function зоныИзПроекта(список, file) {
+  const пропущены = [];
+  for (const м of список) {
+    const пара = viewport.paintables[м.mesh];
+    const байты = file(м.tris);
+    if (!пара || !байты || байты.length !== пара.cache.triCount || zoneNameProblem(м.name, state.zones.map((z) => z.name))) {
+      пропущены.push(м.name);
+      continue;
+    }
+    const tris = new Uint8Array(байты);
+    if (state.face?.mesh === пара.mesh) subtractTris(tris, state.face.tris);
+    if (!countTris(tris)) { пропущены.push(м.name); continue; }
+    state.zones.push({ name: м.name, mesh: пара.mesh, tris, eye: false });
+  }
+  if (пропущены.length) {
+    console.warn('зоны не легли на модель проекта:', пропущены);
+    // Строку состояния позже перепишет «Проект открыт» — пусть сообщение
+    // встанет после него.
+    setTimeout(() => setStatusHint(t('zones.notApplied', пропущены.join(', '))), 0);
+  }
 }
 
 /**
@@ -4004,6 +4319,7 @@ async function openProject(buffer, fileName) {
       if (пары.length) state.activeLayer = Math.min(state.activeLayer, targets.get(пары[0].mesh).layers.length - 1);
       поправитьАктивныйСлой();
       if (meta.face) лицоИзПроекта(meta.face, file);
+      if (meta.zones) зоныИзПроекта(meta.zones, file);
 
       if (meta.pose) { viewport.setPose(meta.pose); savePose(meta.pose); }
       viewport.setViewState(meta.view);
@@ -4017,7 +4333,7 @@ async function openProject(buffer, fileName) {
       if (typeof meta.frontOnly === 'boolean') { state.frontOnly = meta.frontOnly; $('brush-frontface').checked = meta.frontOnly; }
 
       viewport.syncTransparency();
-      syncBrushLabels(); syncLayers(); syncFace(); syncPoseUI(); syncViewUI();
+      syncBrushLabels(); syncLayers(); syncFace(); syncZones(); syncZoneHighlight(); syncPoseUI(); syncViewUI();
       drawUVRows(); refreshUV();
       history.clear(); renderHistory(); syncHistoryButtons();
       state.painted = state.unsaved = false;
@@ -4041,6 +4357,17 @@ async function openProject(buffer, fileName) {
  * `<имя>_face_full.png` (всё лицо одной картинкой), описание
  * `<имя>_face.json`. Анимации и имена материалов уходят в GLB как обычно.
  */
+/**
+ * Выгрузка «Для игры»: всегда всё, что есть. С лицом — набор лица (GLB с
+ * «Face» и зонами, атласы, описание с полем `zones`); без лица — один GLB,
+ * тот же, что «GLB — один файл» (с зонами, если они есть). Скелет, скин и
+ * все клипы уходят в GLB в обоих случаях — их пишет exportGLTF.
+ */
+async function файлыДляИгры(основа = safeName(имяМодели().replace(/\.[^.]+$/, '') || 'model')) {
+  if (state.face) return файлыЛица(основа);
+  return [{ name: `${основа}.glb`, blob: await viewport.inFileSpace(() => exportGLTF(viewport.model, картыДляЭкспорта(true), true)) }];
+}
+
 async function файлыЛица(основа = safeName(имяМодели().replace(/\.[^.]+$/, '') || 'model')) {
   const f = state.face;
   остановитьРазговор();
@@ -4067,7 +4394,8 @@ async function файлыЛица(основа = safeName(имяМодели().r
   const глаза = атлас('eyes');
   const рот = f.mouth ? атлас('mouth') : null;
   const всё = атлас('full');
-  const описание = faceDescription({ name: основа, size: targets.get(f.mesh).size, rect: f.rect, eyes: глаза, mouth: рот, full: всё });
+  const описание = faceDescription({ name: основа, size: targets.get(f.mesh).size, rect: f.rect, eyes: глаза, mouth: рот, full: всё,
+    zones: именаЗонВВыгрузке() });
   const файлы = [{ name: `${основа}.glb`, blob: glb }];
   for (const а of [глаза, рот, всё]) if (а) файлы.push({ name: а.file, blob: await canvasBlob(а.canvas) });
   файлы.push({ name: `${основа}_face.json`, blob: new Blob([JSON.stringify(описание, null, 2)], { type: 'application/json' }) });
@@ -4303,9 +4631,7 @@ const levelmaker = createLevelMaker({
   hint: (текст) => setStatusHint(текст),
   build: async (основа, levelmakerMeta) => {
     if (!targets.size || !viewport.model) throw new Error(t('save.nothing'));
-    const файлы = state.face
-      ? await файлыЛица(основа)
-      : [{ name: `${основа}.glb`, blob: await viewport.inFileSpace(() => exportGLTF(viewport.model, картыДляЭкспорта(true), true)) }];
+    const файлы = await файлыДляИгры(основа);
     const байты = async (b) => new Uint8Array(await b.arrayBuffer());
     const [модель, ...спутники] = файлы;
     return {
@@ -4466,6 +4792,7 @@ onLangChange(() => {
   syncBrushLabels();
   syncMaterialChip();
   syncFace();
+  syncZones();
   syncLayers();
   renderHistory();
   syncStatusModel();
@@ -4539,6 +4866,9 @@ window.__paint = { viewport, uvEditor, viewCube, menuBar, brushModal, materialMo
   faceFromSelection: лицоИзВыделения, faceFromMaterial: лицоПоМатериалу, removeFace: убратьЛицо,
   faceAdd: добавитьВыражение, faceSelect: выбратьВыражение, faceDelete: удалитьВыражение, showExpression: показатьВыражение,
   faceOverlay: наложитьСпереди, faceOverlayEdit: поправитьНаложение, faceClear: стеретьВыражение, decal, cancelDecal, applyDecal, faceFiles: файлыЛица, faceCommit: () => SLOTS.forEach(зафиксировать), setMouth: включитьРот, blink: моргнуть, talk: говорить,
+  // Зоны и выгрузка «Для игры» — те же функции, что у кнопок панели «Зоны».
+  zoneFromSelection: (имя) => создатьЗону(имя), zoneUpdate: обновитьЗону, zoneSelect: выбратьЗону, zoneDelete: (k) => { state.zones.splice(k, 1); syncZones(); syncZoneHighlight(); },
+  zoneRename: переименоватьЗону, zoneEye: глазЗоны, gameFiles: файлыДляИгры, exportOBJ: (основа) => viewport.inFileSpace(() => exportOBJ(viewport.model, картыДляЭкспорта(), основа)),
   selectTris: (mesh, tris) => {
     const tg = targets.get(mesh);
     applySelection(new Map([[tg, faceMaskOf(mesh.userData.paintCache, tg.size, tris).mask]]), 'new');

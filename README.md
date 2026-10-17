@@ -163,9 +163,18 @@ procedural patterns are included, or you can load your own image.
 lasso-selected triangles or by a material such as “Face”), keep a list of
 expressions — each for the eyes, the mouth or the whole face — paint them
 or overlay ready drawings from a PNG straight from the front, preview blink
-and talk. Export gives the GLB with a “Face” material, eye, mouth and
-whole-face atlases (equal cells, the face in the same place in each) and a
-JSON description.
+and talk.
+**Zones** — named sets of triangles (a pendant crystal, a glowing gem, any
+part the game recolours or lights up itself). Inside the app a zone paints
+like everything else; on export its triangles become a separate primitive with
+a material named exactly like the zone, on the same UVs and maps. The face is
+the special case with expressions.
+**Export for game** — one export that always carries everything: the GLB with
+skeleton, skin and every animation clip, the “Face” material and the zones as
+their own materials (vertex and triangle counts as in the source), plus the
+eye, mouth and whole-face atlases (equal cells, the face in the same place in
+each) and a JSON description listing the zone names. The same set goes back to
+LevelMaker.
 **Maps and layers** — a second column, collapsible to an icon strip like
 Photoshop panels. A map is a set of layers on the same UVs, shown as a
 folder (different faces, different chests); maps are independent and one is
@@ -293,8 +302,10 @@ collapsible column, each map with its own layers (exported as
 `KHR_materials_variants`); a face with expressions for game characters —
 eyes, mouth or the whole face per expression, painted or placed from a PNG
 from the front and adjustable later, exported as a GLB with a "Face" material,
-atlases and a JSON description. `npm test` checks the round trip, in Blender
-too. Release notes: `docs/releases/v1.0.0.md`. Not yet done:
+atlases and a JSON description. New in 1.3: zones — named triangle sets
+exported as their own materials — and a single “Export for game”. `npm test`
+checks the round trip, in Blender too. Release notes: `docs/releases/`. Not
+yet done:
 
 - AI painting: brush strokes along surface points, brush and material presets.
 

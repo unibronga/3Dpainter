@@ -15,6 +15,8 @@ variants = args[args.index('--variants') + 1].split(',') if '--variants' in args
 clips_arg = args[args.index('--clips') + 1] if '--clips' in args else 'Sway:1.0417,Bend:2.0417'
 wanted = {c.split(':')[0]: float(c.split(':')[1]) for c in clips_arg.split(',')}
 materials = args[args.index('--materials') + 1].split(',') if '--materials' in args else None
+# --zones A,B — зоны: слоты материалов на меше с костями, с картой покраски.
+zones = args[args.index('--zones') + 1].split(',') if '--zones' in args else []
 fails = []
 
 
@@ -96,6 +98,11 @@ if materials is not None:
     skinned = [o for o in meshes if any(m.type == 'ARMATURE' for m in o.modifiers)
                and any(s.material and s.material.name == 'Face' for s in o.material_slots)]
     check(bool(skinned), f'«Face» стоит на меше с костями ({slots})')
+    for name in zones:
+        on_rig = [o for o in meshes if any(m.type == 'ARMATURE' for m in o.modifiers)
+                  and any(s.material and s.material.name == name for s in o.material_slots)]
+        check(bool(on_rig) and base_image(bpy.data.materials.get(name)) is not None,
+              f'зона «{name}» — слот меша с костями, карта подключена')
 elif variants is None:
     mats = [m for m in bpy.data.materials if m.users]
     names = [m.name for m in mats]

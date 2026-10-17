@@ -856,7 +856,7 @@ export function createSaveAsModal(api) {
     { id: 'obj',  kind: 'model', key: 'save.obj' },
     { id: 'png',  kind: 'maps',  key: 'save.png' },
     { id: 'project', kind: 'project', key: 'save.project' },
-    { id: 'face', kind: 'face', key: 'save.face' },
+    { id: 'game', kind: 'game', key: 'save.game' },
   ];
 
   let выбран = 'glb';
@@ -885,7 +885,7 @@ export function createSaveAsModal(api) {
     const ф = ФОРМАТЫ.find((x) => x.id === выбран);
     пояснение.dataset.i18n = ф.kind === 'model' ? 'save.modelHint'
       : ф.kind === 'project' ? 'save.projectHint'
-      : ф.kind === 'face' ? 'save.faceHint' : 'save.mapsHint';
+      : ф.kind === 'game' ? 'save.gameHint' : 'save.mapsHint';
     пояснение.textContent = t(пояснение.dataset.i18n);
   }
 

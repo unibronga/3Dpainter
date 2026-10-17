@@ -322,9 +322,14 @@ function писательВариантов(имена, наборы) {
         номера.set(material, список);
       },
       writeMesh(mesh, meshDef) {
-        const список = номера.get(mesh.material);
-        if (!список) return;
-        for (const примитив of meshDef.primitives) {
+        // Меш с зонами — несколько материалов, примитив на группу по порядку;
+        // у каждого примитива свои материалы вариантов.
+        const группы = Array.isArray(mesh.material) ? mesh.geometry.groups : null;
+        let было = false;
+        meshDef.primitives.forEach((примитив, i) => {
+          const материал = группы ? mesh.material[группы[i]?.materialIndex] : mesh.material;
+          const список = номера.get(материал);
+          if (!список) return;
           // Один материал на несколько вариантов — одной привязкой.
           const поМатериалу = new Map();
           список.forEach((номер, v) => {
@@ -334,8 +339,9 @@ function писательВариантов(имена, наборы) {
           });
           примитив.extensions = { ...(примитив.extensions || {}),
             [ВАРИАНТЫ]: { mappings: [...поМатериалу].map(([material, variants]) => ({ material, variants })) } };
-        }
-        writer.extensionsUsed[ВАРИАНТЫ] = true;
+          было = true;
+        });
+        if (было) writer.extensionsUsed[ВАРИАНТЫ] = true;
       },
       afterParse() {
         if (!номера.size) return;
@@ -357,36 +363,65 @@ export function имяМатериалаВарианта(исходное, ва�
 }
 
 /**
- * Геометрия на время выдачи: сначала грани тела, потом грани лица — двумя
- * группами, экспортёр сделает из них два примитива. Переставляются все
- * атрибуты, включая скин и морфы: модель с костями должна остаться целой.
- * Рабочая геометрия не трогается — порядок граней держит слои и кэш.
+ * Геометрия на время выдачи: сначала грани тела, потом грани каждой части
+ * (лицо, зоны) — группами, экспортёр сделает из них примитивы. Рабочая
+ * геометрия не трогается — порядок граней держит слои и кэш.
  *
- * @param {Uint8Array} лицо 1 — грань лица, по номерам треугольников
+ * 🔴 Вершины не размножаются. У индексированной геометрии переставляется
+ * только индекс: атрибуты общие, примитивы ссылаются на одни и те же
+ * вершины, и число вершин в файле — как в исходнике (раньше лицо уходило
+ * через toNonIndexed: у дракона 3354 вершины становились 10 785). У
+ * неиндексированной переставляются тройки вершин — их число и так 3·граней.
+ * Скин и морфы едут вместе с атрибутами: модель с костями остаётся целой.
+ *
+ * @param {Uint8Array[]} части по номерам треугольников: 1 — грань части;
+ *        грань берёт первая часть, в которую попала
+ * @returns {{ geometry, кто: number[] }} кто — по группам: -1 тело, k — часть
  */
-function разделитьЛицо(geo, лицо) {
-  const src = geo.index ? geo.toNonIndexed() : geo;
-  const n = src.attributes.position.count / 3;
+function разделитьНаЧасти(geo, части) {
+  const n = geo.index ? geo.index.count / 3 : geo.attributes.position.count / 3;
+  const чья = new Int16Array(n).fill(-1);
+  for (let t = 0; t < n; t++) {
+    for (let k = 0; k < части.length; k++) if (части[k][t]) { чья[t] = k; break; }
+  }
   const порядок = [];
-  for (let t = 0; t < n; t++) if (!лицо[t]) порядок.push(t);
-  const тела = порядок.length;
-  for (let t = 0; t < n; t++) if (лицо[t]) порядок.push(t);
-
-  const переставить = (attr) => {
-    const a = attr.isInterleavedBufferAttribute ? attr.clone() : attr;   // clone() снимает чередование
-    const k = a.itemSize;
-    const arr = new a.array.constructor(n * 3 * k);
-    порядок.forEach((t, i) => arr.set(a.array.subarray(t * 3 * k, (t + 1) * 3 * k), i * 3 * k));
-    return new THREE.BufferAttribute(arr, k, a.normalized);
-  };
   const out = new THREE.BufferGeometry();
-  for (const [имя, a] of Object.entries(src.attributes)) out.setAttribute(имя, переставить(a));
-  for (const [имя, список] of Object.entries(src.morphAttributes)) out.morphAttributes[имя] = список.map(переставить);
-  out.morphTargetsRelative = src.morphTargetsRelative;
-  out.addGroup(0, тела * 3, 0);
-  out.addGroup(тела * 3, (n - тела) * 3, 1);
-  if (src !== geo) src.dispose();
-  return out;
+  const кто = [];
+  for (let k = -1; k < части.length; k++) {
+    const начало = порядок.length;
+    for (let t = 0; t < n; t++) if (чья[t] === k) порядок.push(t);
+    if (порядок.length === начало) continue;          // пустая часть — без примитива
+    out.addGroup(начало * 3, (порядок.length - начало) * 3, кто.length);
+    кто.push(k);
+  }
+
+  if (geo.index) {
+    const src = geo.index.array;
+    const idx = new (src.constructor)(n * 3);
+    порядок.forEach((t, i) => { idx[i * 3] = src[t * 3]; idx[i * 3 + 1] = src[t * 3 + 1]; idx[i * 3 + 2] = src[t * 3 + 2]; });
+    for (const [имя, a] of Object.entries(geo.attributes)) out.setAttribute(имя, a);
+    for (const [имя, список] of Object.entries(geo.morphAttributes)) out.morphAttributes[имя] = список;
+    out.setIndex(new THREE.BufferAttribute(idx, 1));
+  } else {
+    const переставить = (attr) => {
+      const a = attr.isInterleavedBufferAttribute ? attr.clone() : attr;   // clone() снимает чередование
+      const k = a.itemSize;
+      const arr = new a.array.constructor(n * 3 * k);
+      порядок.forEach((t, i) => arr.set(a.array.subarray(t * 3 * k, (t + 1) * 3 * k), i * 3 * k));
+      return new THREE.BufferAttribute(arr, k, a.normalized);
+    };
+    for (const [имя, a] of Object.entries(geo.attributes)) out.setAttribute(имя, переставить(a));
+    for (const [имя, список] of Object.entries(geo.morphAttributes)) out.morphAttributes[имя] = список.map(переставить);
+  }
+  out.morphTargetsRelative = geo.morphTargetsRelative;
+  return { geometry: out, кто };
+}
+
+/** Сколько граней в части. */
+function граней(tris) {
+  let n = 0;
+  for (let i = 0; i < tris.length; i++) if (tris[i]) n++;
+  return n;
 }
 
 /**
@@ -411,6 +446,7 @@ function кВыдаче(модель, карты) {
   const наборы = new Map();     // материал по умолчанию → материалы вариантов
   let именаВариантов = null;
   const прежниеГеометрии = new Map();
+  const разметка = new Map();   // меш с частями → группы по порядку: { name (null — тело), count }
 
   модель.traverse((o) => {
     const данные = o.userData;
@@ -455,29 +491,40 @@ function кВыдаче(модель, карты) {
     };
 
     const исходное = данные?.sourceMaterialName || '';
-    // Лицо: целый меш (взят по материалу) — просто зовётся «Face»; часть
-    // меша (выделенные грани) — уходит своим примитивом с материалом «Face».
-    // Развёртка та же, текстура та же картинка: клетка атласа лица ложится
-    // на прямоугольник лица в этой же развёртке.
-    if (набор.face) {
-      const тело = материал(набор.colorCanvas, набор.ormCanvas, набор.transparent, набор.face.whole ? 'Face' : исходное);
-      if (набор.face.whole) { o.material = тело; return; }
-      const лицо = материал(набор.colorCanvas, набор.ormCanvas, набор.transparent, 'Face');
-      прежниеГеометрии.set(o, o.geometry);
-      o.geometry = разделитьЛицо(o.geometry, набор.face.tris);
-      созданные.push(o.geometry);
-      o.material = [тело, лицо];
-      return;
-    }
-    if (набор.variants?.length) {
+    // Лицо целым мешем (взято по материалу) — меш просто зовётся «Face».
+    const имяТела = набор.face?.whole ? 'Face' : исходное;
+
+    // Материал по имени: один — или, если у меша развёртки-варианты, набор
+    // материалов вариантов с этим именем в основе.
+    const сделать = (имя) => {
+      if (!набор.variants?.length) return материал(набор.colorCanvas, набор.ormCanvas, набор.transparent, имя);
       const список = набор.variants.map((v, i) =>
-        материал(v.color, v.orm, v.transparent, имяМатериалаВарианта(исходное, v.name, i)));
-      o.material = список[набор.activeVariant] || список[0];
-      наборы.set(o.material, список);
+        материал(v.color, v.orm, v.transparent, имяМатериалаВарианта(имя, v.name, i)));
+      const м = список[набор.activeVariant] || список[0];
+      наборы.set(м, список);
       именаВариантов = набор.variants.map((v) => v.name);
-    } else {
-      o.material = материал(набор.colorCanvas, набор.ormCanvas, набор.transparent, исходное);
-    }
+      return м;
+    };
+
+    // Части меша — лицо (выделенные грани) и зоны: каждая уходит своим
+    // примитивом с материалом своего имени. Развёртка та же, текстура та же
+    // картинка: игра находит деталь по имени материала.
+    const части = [];
+    if (набор.face && !набор.face.whole) части.push({ name: 'Face', tris: набор.face.tris });
+    for (const з of набор.zones || []) if (граней(з.tris)) части.push(з);
+    if (!части.length) { o.material = сделать(имяТела); return; }
+
+    const { geometry, кто } = разделитьНаЧасти(o.geometry, части.map((ч) => ч.tris));
+    const материалы = кто.map((k) => сделать(k < 0 ? имяТела : части[k].name));
+    // Зона на весь меш (кулон отдельным мешем) — делить нечего, только имя.
+    if (кто.length === 1) { o.material = материалы[0]; return; }
+    // Временную геометрию не освобождаем: её атрибуты — те же объекты, что у
+    // рабочей, и dispose() у отрисованной снял бы их буферы с видеокарты.
+    // Экспортёр её не рисует; уйдёт со сборщиком мусора.
+    прежниеГеометрии.set(o, o.geometry);
+    o.geometry = geometry;
+    o.material = материалы;
+    разметка.set(o, кто.map((k, i) => ({ name: k < 0 ? null : части[k].name, count: geometry.groups[i].count / 3 })));
   });
 
   const откатить = () => {
@@ -486,7 +533,7 @@ function кВыдаче(модель, карты) {
     прежниеДанные.forEach((д, o) => { o.userData = д; });
     созданные.forEach((р) => р.dispose?.());
   };
-  return { откатить, варианты: наборы.size ? писательВариантов(именаВариантов, наборы) : null };
+  return { откатить, разметка, варианты: наборы.size ? писательВариантов(именаВариантов, наборы) : null };
 }
 
 /**
@@ -519,20 +566,46 @@ export async function exportGLTF(модель, карты, двоичный = tr
  */
 export async function exportOBJ(модель, карты, основа) {
   const { OBJExporter } = await import('three/addons/exporters/OBJExporter.js');
-  const { откатить } = кВыдаче(модель, карты);   // OBJ — только включённый вариант
+  const { откатить, разметка } = кВыдаче(модель, карты);   // OBJ — только включённый вариант
 
+  // Что экспортёр пишет объектом «o …» — в его же порядке обхода: по этому
+  // списку строки граней раскладываются на группы материалов.
+  const объекты = [];
+  модель.traverse((o) => { if (o.isMesh || o.isLine || o.isPoints) объекты.push(o); });
   let текст;
   try { текст = new OBJExporter().parse(модель); } finally { откатить(); }
 
-  // Своё имя материала: то, что подставляет экспортёр, к нашему .mtl
-  // отношения не имеет.
-  текст = текст.replace(/^usemtl .*$/gm, 'usemtl painted');
-  if (!/^usemtl /m.test(текст)) текст = текст.replace(/^(o |g )/m, 'usemtl painted\n$1');
-  текст = `mtllib ${основа}.mtl\n${текст}`;
+  // Свои имена материалов: то, что подставляет экспортёр, к нашему .mtl
+  // отношения не имеет. Тело — «painted»; лицо и зоны — своими именами
+  // группами граней: в Blender это слоты материалов с теми же именами.
+  const зоны = new Set();
+  const строки = [];
+  let номер = -1, группы = null, граньВГруппе = 0, группа = 0;
+  const имя = (г) => г.name || 'painted';
+  for (const строка of текст.split('\n')) {
+    if (строка.startsWith('usemtl ')) continue;
+    if (строка.startsWith('o ')) {
+      номер += 1;
+      const о = объекты[номер];
+      группы = о?.isMesh ? (разметка.get(о) || [{ name: null, count: Infinity }]) : null;
+      граньВГруппе = 0; группа = 0;
+      строки.push(строка);
+      continue;
+    }
+    if (группы && строка.startsWith('f ')) {
+      while (группа < группы.length - 1 && граньВГруппе >= группы[группа].count) { группа += 1; граньВГруппе = 0; }
+      if (граньВГруппе === 0) {
+        строки.push('usemtl ' + имя(группы[группа]));
+        if (группы[группа].name) зоны.add(группы[группа].name);
+      }
+      граньВГруппе += 1;
+    }
+    строки.push(строка);
+  }
+  текст = `mtllib ${основа}.mtl\n${строки.join('\n')}`;
 
-  const mtl = [
-    '# Painted material',
-    'newmtl painted',
+  const материалMTL = (название) => [
+    `newmtl ${название}`,
     'Ka 1.000 1.000 1.000',
     'Kd 1.000 1.000 1.000',
     'Ks 0.000 0.000 0.000',
@@ -540,7 +613,8 @@ export async function exportOBJ(модель, карты, основа) {
     'illum 2',
     `map_Kd ${основа}.png`,
     '',
-  ].join('\n');
+  ];
+  const mtl = ['# Painted material', ...материалMTL('painted'), ...[...зоны].flatMap(материалMTL)].join('\n');
 
   return {
     obj: new Blob([текст], { type: 'model/obj' }),
