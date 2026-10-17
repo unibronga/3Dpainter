@@ -263,6 +263,7 @@ export default {
   "tip.zoneEye": "Mettre en évidence les faces sur le modèle et dans le dépliage UV",
   "tip.zoneRow": "Resélectionner les faces : ajouter ou retirer au lasso, puis « Mettre à jour depuis la sélection »",
   "tip.zoneRename": "Double-clic pour renommer",
+  "tip.uvPart": "Dépliage de cette partie : ses îlots en gros plan, ses faces sélectionnées — le pinceau ne peint qu'elles",
   "zones.delete": "Supprimer la zone",
   "zones.faceTag": "visage",
   "zones.listEmpty": "Aucune zone pour l'instant. Sélectionnez des faces au lasso — un pendentif, une gemme, n'importe quelle pièce — puis « + Zone depuis la sélection ».",

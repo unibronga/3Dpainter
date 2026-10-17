@@ -263,6 +263,7 @@ export default {
   "tip.zoneEye": "Flächen auf dem Modell und in der UV-Abwicklung hervorheben",
   "tip.zoneRow": "Flächen erneut auswählen – mit dem Lasso ergänzen oder entfernen, dann „Aus Auswahl aktualisieren“",
   "tip.zoneRename": "Doppelklick zum Umbenennen",
+  "tip.uvPart": "UV-Abwicklung dieses Teils: Inseln groß, Flächen ausgewählt – der Pinsel malt nur sie",
   "zones.delete": "Zone löschen",
   "zones.faceTag": "Gesicht",
   "zones.listEmpty": "Noch keine Zonen. Flächen mit dem Lasso auswählen – Anhänger, Edelstein, beliebiges Teil – und „+ Zone aus Auswahl“ drücken.",

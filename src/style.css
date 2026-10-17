@@ -910,6 +910,15 @@ input[type=range]:hover::-webkit-slider-thumb { background: var(--accent); }
 /* Открытая развёртка отмечена рамкой цвета выделения: по списку видно, что
    именно лежит сейчас в редакторе. */
 .uv-row.open { border-color: var(--accent); }
+/* Части меша — лицо и зоны — строками под ним, с отступом и чертой слева:
+   в выгрузке они свои примитивы того же меша. */
+.uv-row.uv-part { width: calc(100% - 16px); margin-left: 16px; position: relative; }
+.uv-row.uv-part::before {
+  content: ''; position: absolute; left: -9px; top: -2px; bottom: 50%; width: 7px;
+  border-left: 1px solid var(--line-strong); border-bottom: 1px solid var(--line-strong); border-bottom-left-radius: 4px;
+}
+.uv-row.uv-part .uv-thumb { width: 36px; height: 36px; }
+.uv-row.uv-part .uv-row-name { font-family: var(--mono, ui-monospace, monospace); font-size: 11.5px; }
 
 .uv-thumb {
   position: relative;

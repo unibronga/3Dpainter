@@ -162,6 +162,77 @@ export function drawUVPreview(canvas, target, cache, showWire) {
   ctx.restore();
 }
 
+/** Прямоугольник граней в развёртке: { u0, v0, u1, v1 } или null. */
+export function trisUVBox(cache, tris) {
+  const { uv, idx, triCount } = cache;
+  let u0 = Infinity, v0 = Infinity, u1 = -Infinity, v1 = -Infinity;
+  for (let t = 0; t < triCount; t++) {
+    if (!tris[t]) continue;
+    for (let k = 0; k < 3; k++) {
+      const i = idx[t * 3 + k];
+      const u = uv[i * 2], v = uv[i * 2 + 1];
+      if (u < u0) u0 = u; if (u > u1) u1 = u;
+      if (v < v0) v0 = v; if (v > v1) v1 = v;
+    }
+  }
+  return u1 < u0 ? null : { u0, v0, u1, v1 };
+}
+
+/**
+ * Превью зоны (или лица): только её часть развёртки — острова зоны крупно, с
+ * текстурой внутри треугольников и их сеткой. Так зона в списке читается как
+ * отдельный меш, каким она и уходит в выгрузку.
+ */
+export function drawZonePreview(canvas, target, cache, tris, showWire) {
+  const box = canvas.parentElement;
+  const w = Math.max(32, box.clientWidth);
+  const ui = parseFloat(getComputedStyle(document.body).zoom) || 1;
+  const dpr = Math.min((devicePixelRatio || 1) * ui, 4);
+  if (canvas.width !== Math.round(w * dpr)) {
+    canvas.width = canvas.height = Math.round(w * dpr);
+    canvas.style.width = canvas.style.height = w + 'px';
+  }
+  const ctx = canvas.getContext('2d');
+  const S = canvas.width;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, S, S);
+  ctx.fillStyle = themeColor('--well', '#1a2027');
+  ctx.fillRect(0, 0, S, S);
+  const r = target && cache && trisUVBox(cache, tris);
+  if (!r) return;
+
+  // Квадрат вокруг островов с полями: пропорции развёртки не искажаются.
+  const сторона = Math.max(r.u1 - r.u0, r.v1 - r.v0) * 1.12 || 1;
+  const cu = (r.u0 + r.u1) / 2, cv = (r.v0 + r.v1) / 2;
+  const k = S / сторона;
+  const X = (u) => (u - cu) * k + S / 2;
+  const Y = (v) => (cv - v) * k + S / 2;
+  const { uv, idx, triCount } = cache;
+  const путь = new Path2D();
+  for (let t = 0; t < triCount; t++) {
+    if (!tris[t]) continue;
+    const i0 = idx[t * 3], i1 = idx[t * 3 + 1], i2 = idx[t * 3 + 2];
+    путь.moveTo(X(uv[i0 * 2]), Y(uv[i0 * 2 + 1]));
+    путь.lineTo(X(uv[i1 * 2]), Y(uv[i1 * 2 + 1]));
+    путь.lineTo(X(uv[i2 * 2]), Y(uv[i2 * 2 + 1]));
+    путь.closePath();
+  }
+  ctx.save();
+  ctx.clip(путь);
+  ctx.imageSmoothingEnabled = true;
+  const T = target.canvas.width;
+  // Кусок текстуры под квадратом: холст покраски лежит верхом к v = 1.
+  ctx.drawImage(target.canvas, (cu - сторона / 2) * T, (1 - cv - сторона / 2) * T, сторона * T, сторона * T, 0, 0, S, S);
+  ctx.restore();
+  if (!showWire) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'difference';
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+  ctx.lineWidth = Math.max(1, dpr * 0.75);
+  ctx.stroke(путь);
+  ctx.restore();
+}
+
 /** Выше этого числа треугольников сетка в превью не рисуется. */
 const ПОРОГ_СЕТКИ = 8000;
 

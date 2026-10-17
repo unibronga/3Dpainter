@@ -263,6 +263,7 @@ export default {
   "tip.zoneEye": "Resaltar las caras en el modelo y en el mapa UV",
   "tip.zoneRow": "Volver a seleccionar las caras: añadir o quitar con el lazo y luego «Actualizar desde selección»",
   "tip.zoneRename": "Doble clic para renombrar",
+  "tip.uvPart": "Mapa UV de esta parte: sus islas de cerca y sus caras seleccionadas; el pincel solo pinta en ellas",
   "zones.delete": "Eliminar zona",
   "zones.faceTag": "cara",
   "zones.listEmpty": "Aún no hay zonas. Seleccione caras con el lazo —un colgante, una gema, cualquier pieza— y pulse «+ Zona desde selección».",

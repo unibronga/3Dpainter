@@ -162,6 +162,21 @@ run('Зоны и выгрузка «Для игры»', async ({ js, check, open
   check(правка.плохо === false && правка.хорошо && правка.имя === 'Kid_Stone', `переименование: занятое отклонено, стало ${правка.имя}`);
   check(правка.выделено && правка.было === правка.стало, `строка выделяет грани зоны, «Обновить» без правки — те же ${правка.стало}`);
 
+  // Лицо и зоны — строками под мешем в «UV объектов»; щелчок открывает часть.
+  const строки = await js(`(async () => {
+    const P = window.__paint;
+    const имена = () => [...document.querySelectorAll('#uv-list .uv-row')].map((r) => (r.classList.contains('uv-part') ? '  ' : '') + r.querySelector('.uv-row-name').textContent);
+    const r = { список: имена() };
+    [...document.querySelectorAll('#uv-list .uv-part')].find((x) => x.querySelector('.uv-row-name').textContent === 'Kid_Stone').click();
+    await new Promise((ok) => setTimeout(ok, 200));
+    r.открыта = P.uvPart();
+    r.выделено = [...P.targets.values()].some((t) => t.selection);
+    return r;
+  })()`);
+  check(JSON.stringify(строки.список) === JSON.stringify(['Kid', '  Face', '  Kid_Crystal', '  Kid_Stone']),
+    `развёртки: ${строки.список.join(' / ')}`);
+  check(строки.открыта === 'Kid_Stone' && строки.выделено, 'строка зоны открывает её развёртку и выделяет её грани');
+
   const до = await js(ЗОНЫ);
   check(JSON.stringify(до.map((z) => z.name)) === '["Kid_Crystal","Kid_Stone"]', `зоны: ${до.map((z) => `${z.name} (${z.tris})`).join(', ')}`);
 

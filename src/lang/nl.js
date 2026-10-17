@@ -263,6 +263,7 @@ export default {
   "tip.zoneEye": "Vlakken op het model en in de UV-uitslag markeren",
   "tip.zoneRow": "Vlakken opnieuw selecteren — toevoegen of weghalen met de lasso, dan ‘Bijwerken uit selectie’",
   "tip.zoneRename": "Dubbelklik om te hernoemen",
+  "tip.uvPart": "UV-uitslag van dit deel: eilanden van dichtbij, vlakken geselecteerd — het penseel schildert alleen daar",
   "zones.delete": "Zone verwijderen",
   "zones.faceTag": "gezicht",
   "zones.listEmpty": "Nog geen zones. Selecteer vlakken met de lasso — een hanger, een edelsteen, elk onderdeel — en klik op ‘+ Zone uit selectie’.",

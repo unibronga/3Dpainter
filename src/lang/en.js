@@ -286,6 +286,7 @@ export default {
   "tip.zoneEye": "Highlight the faces on the model and in the UV map",
   "tip.zoneRow": "Select the faces again — add or remove with the lasso, then “Update from selection”",
   "tip.zoneRename": "Double-click to rename",
+  "tip.uvPart": "This part’s UV map: its islands up close, its faces selected — the brush paints only them",
   "zones.delete": "Delete zone",
   "zones.faceTag": "face",
   "zones.listEmpty": "No zones yet. Lasso-select faces — a pendant, a gem, any part — and press “+ Zone from selection”.",

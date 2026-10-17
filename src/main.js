@@ -1249,6 +1249,8 @@ function syncZones() {
   }
   if (!f && !state.zones.length && !вводЗоны) box.appendChild(элемент('div', 'face-hint', t('zones.listEmpty')));
   $('zone-update').disabled = typeof state.zoneCurrent !== 'number';
+  // Лицо и зоны — строками и в списке развёрток.
+  renderUVList();
   $('zones-count').textContent = state.zones.length ? String(state.zones.length) : '';
 }
 
@@ -2917,6 +2919,7 @@ $('btn-hist-redo').addEventListener('click', () => history.redo());
 
 function setUVOpen(open) {
   state.uvOpen = open;
+  if (!open) открытаЧасть = null;      // закрыли — в следующий раз откроется меш целиком
   syncUVList();
   app.classList.toggle('uv-open', open);
   savePrefs({ uvOpen: open });
@@ -2966,6 +2969,10 @@ function элемент(тег, класс, текст) {
 // Карта меша → строка списка: по ней перерисовывается только нужная,
 // а не весь список. За мазок это происходит десятки раз.
 const uvRows = new Map();
+/** Строки частей меша — лица и зон — под строкой меша: { mesh, part, row, canvas }. */
+let uvPartRows = [];
+/** Какая часть открыта в развёртке: 'face', объект зоны или null — меш целиком. */
+let открытаЧасть = null;
 
 /**
  * Список развёрток модели — по карте на меш.
@@ -2978,6 +2985,7 @@ function renderUVList() {
   const box = $('uv-list');
   box.textContent = '';
   uvRows.clear();
+  uvPartRows = [];
 
   if (!viewport.paintables.length) {
     box.appendChild(элемент('div', 'uv-empty', t('uv.none')));
@@ -2999,6 +3007,17 @@ function renderUVList() {
     info.append(элемент('div', 'uv-row-name', mesh.name || t('model.unnamed')), мета);
     row.append(thumb, info);
     row.addEventListener('click', () => {
+      // Открыта была часть этого меша — показать меш целиком.
+      if (открытаЧасть != null && activeMesh === mesh) {
+        открытаЧасть = null;
+        state.zoneCurrent = null;
+        clearSelection();
+        syncZones();
+        setActiveMesh(mesh);
+        setUVOpen(true);
+        requestAnimationFrame(() => { uvEditor.fit(); uvEditor.draw(); });
+        return;
+      }
       // Щелчок по уже открытой развёртке закрывает её — как переключатель.
       if (activeMesh === mesh && state.uvOpen) { setUVOpen(false); return; }
       setActiveMesh(mesh);
@@ -3006,6 +3025,7 @@ function renderUVList() {
     });
     box.appendChild(row);
     uvRows.set(mesh, { row, canvas });
+    for (const part of частиМеша(mesh)) box.appendChild(строкаЧасти(mesh, part));
   }
   // Видна всегда, пока есть что перестраивать; красная — при наложении.
   $('btn-uv-rebuild').hidden = !viewport.paintables.length;
@@ -3013,11 +3033,66 @@ function renderUVList() {
   syncUVList();
 }
 
+/**
+ * Части меша для списка развёрток: лицо (выделенными гранями) и зоны — в
+ * выгрузке они уходят своими примитивами, и в списке видны так же, как
+ * отдельные меши выгруженного GLB. Часть на весь меш — это сам меш.
+ */
+function частиМеша(mesh) {
+  const части = [];
+  const весь = (tris) => tris.every((v) => v);
+  if (state.face?.mesh === mesh && !весь(state.face.tris)) части.push({ id: 'face', name: 'Face', tris: state.face.tris, лицо: true });
+  for (const z of state.zones) if (z.mesh === mesh && !весь(z.tris)) части.push({ id: z, name: z.name, tris: z.tris });
+  return части;
+}
+
+/** Номер части в панели «Зоны»: 'face' или номер зоны. */
+const номерЧасти = (part) => (part.id === 'face' ? 'face' : state.zones.indexOf(part.id));
+
+/** Строка части: миниатюра её развёртки, имя, граней. Щелчок — развёртка части. */
+function строкаЧасти(mesh, part) {
+  const row = элемент('button', 'uv-row uv-part');
+  const thumb = элемент('div', 'uv-thumb');
+  const canvas = document.createElement('canvas');
+  thumb.appendChild(canvas);
+  const info = элемент('div', 'uv-row-info');
+  const мета = part.лицо ? `${t('zones.faceTag')} · ${t('uv.rowTris', countTris(part.tris))}` : t('uv.rowTris', countTris(part.tris));
+  info.append(элемент('div', 'uv-row-name', part.name), элемент('div', 'uv-row-meta', мета));
+  row.append(thumb, info);
+  row.title = t('tip.uvPart');
+  row.addEventListener('click', () => {
+    const k = номерЧасти(part);
+    if (k === -1) return;
+    // Щелчок по открытой части закрывает развёртку — как у строки меша.
+    if (state.uvOpen && activeMesh === mesh && открытаЧасть === part.id) { setUVOpen(false); return; }
+    setActiveMesh(mesh);
+    открытаЧасть = part.id;
+    выбратьЗону(k);                 // грани части выделены: кисть красит только их
+    setUVOpen(true);
+    // После того как редактор встанет на меш (setUVOpen перерисовывает в
+    // следующем кадре) — приблизить острова части.
+    requestAnimationFrame(() => {
+      const r = UI.trisUVBox(mesh.userData.paintCache, part.tris);
+      if (r) uvEditor.fitRect(r.u0, r.v0, r.u1, r.v1);
+    });
+  });
+  uvPartRows.push({ mesh, part, row, canvas });
+  return row;
+}
+
 /** Подсветить строку активного меша и обновить её карту. */
 function syncUVList() {
+  // Открыта часть — подсвечена её строка, а не строка меша.
+  if (открытаЧасть && !uvPartRows.some((p) => p.part.id === открытаЧасть && p.mesh === activeMesh)) открытаЧасть = null;
+  const частьОткрыта = открытаЧасть != null;
   for (const [mesh, { row }] of uvRows) {
-    row.classList.toggle('on', mesh === activeMesh);
-    row.classList.toggle('open', mesh === activeMesh && state.uvOpen);
+    row.classList.toggle('on', mesh === activeMesh && !частьОткрыта);
+    row.classList.toggle('open', mesh === activeMesh && state.uvOpen && !частьОткрыта);
+  }
+  for (const { mesh, part, row } of uvPartRows) {
+    const эта = mesh === activeMesh && открытаЧасть === part.id;
+    row.classList.toggle('on', эта);
+    row.classList.toggle('open', эта && state.uvOpen);
   }
   // Выгружается только выделенная (открытая) развёртка — нет её, нечего и
   // выгружать.
@@ -3030,6 +3105,9 @@ function drawUVRow(mesh) {
   const row = mesh && uvRows.get(mesh);
   if (!row) return;
   UI.drawUVPreview(row.canvas, targets.get(mesh), mesh.userData.paintCache, state.showWire);
+  for (const p of uvPartRows) {
+    if (p.mesh === mesh) UI.drawZonePreview(p.canvas, targets.get(mesh), mesh.userData.paintCache, p.part.tris, state.showWire);
+  }
 }
 
 /** Перерисовать карты всех строк — после загрузки и при смене сетки. */
@@ -4888,7 +4966,7 @@ window.__paint = { viewport, uvEditor, viewCube, menuBar, brushModal, materialMo
   faceOverlay: наложитьСпереди, faceOverlayEdit: поправитьНаложение, faceClear: стеретьВыражение, decal, cancelDecal, applyDecal, faceFiles: файлыЛица, faceCommit: () => SLOTS.forEach(зафиксировать), setMouth: включитьРот, blink: моргнуть, talk: говорить,
   // Зоны и выгрузка «Для игры» — те же функции, что у кнопок панели «Зоны».
   zoneFromSelection: (имя) => создатьЗону(имя), zoneUpdate: обновитьЗону, zoneSelect: выбратьЗону, zoneDelete: (k) => { state.zones.splice(k, 1); syncZones(); syncZoneHighlight(); },
-  zoneRename: переименоватьЗону, zoneEye: глазЗоны, gameFiles: файлыДляИгры, exportOBJ: (основа) => viewport.inFileSpace(() => exportOBJ(viewport.model, картыДляЭкспорта(), основа)),
+  zoneRename: переименоватьЗону, zoneEye: глазЗоны, uvPart: () => (открытаЧасть?.name ?? открытаЧасть), gameFiles: файлыДляИгры, exportOBJ: (основа) => viewport.inFileSpace(() => exportOBJ(viewport.model, картыДляЭкспорта(), основа)),
   selectTris: (mesh, tris) => {
     const tg = targets.get(mesh);
     applySelection(new Map([[tg, faceMaskOf(mesh.userData.paintCache, tg.size, tris).mask]]), 'new');

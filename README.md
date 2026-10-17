@@ -168,7 +168,9 @@ and talk.
 part the game recolours or lights up itself). Inside the app a zone paints
 like everything else; on export its triangles become a separate primitive with
 a material named exactly like the zone, on the same UVs and maps. The face is
-the special case with expressions.
+the special case with expressions. The face and each zone also show up under
+their mesh in the UV objects list, the way separate meshes do in the exported
+GLB: a click opens just that part's islands, with its faces selected.
 **Export for game** — one export that always carries everything: the GLB with
 skeleton, skin and every animation clip, the “Face” material and the zones as
 their own materials (vertex and triangle counts as in the source), plus the

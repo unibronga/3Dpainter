@@ -185,6 +185,24 @@ export class UVEditor {
     return true;
   }
 
+  /**
+   * Вписать в вид кусок развёртки — острова зоны (u, v от 0 до 1). Мелкую
+   * деталь вроде кулона не разглядеть во всём атласе.
+   */
+  fitRect(u0, v0, u1, v1) {
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
+    if (!(w > 1 && h > 1)) return false;
+    const du = Math.max(u1 - u0, 1e-3), dv = Math.max(v1 - v0, 1e-3);
+    // Не крупнее, чем атлас в 40 раз: дальше тексели — уже кубики.
+    const s = Math.min(Math.min(w / du, h / dv) * 0.8, Math.min(w, h) * 40);
+    this.view.scale = s;
+    this.view.ox = w / 2 - ((u0 + u1) / 2) * s;
+    this.view.oy = h / 2 - (1 - (v0 + v1) / 2) * s;
+    this.draw();
+    return true;
+  }
+
   /* ── Отрисовка ───────────────────────────────────────────────── */
 
   resize() {
