@@ -70,6 +70,7 @@ jobs:
       - name: Отложить собранное
         uses: actions/upload-artifact@v4
         with:
+          retention-days: 1
           name: build-${{ matrix.label }}
           path: |
             release/*.dmg
